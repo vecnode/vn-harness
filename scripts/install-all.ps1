@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Installs the dsh-vn-plugins bundle set into the DeepSeek Harness web profile
+    Installs the vn-harness bundle set into the DeepSeek Harness web profile
     on this machine.
 
 .DESCRIPTION
@@ -116,7 +116,7 @@ function Get-PnpmBinName {
     return 'pnpm'
 }
 
-function Write-Step($msg) { Write-Host "[dsh-vn-plugins] $msg" -ForegroundColor Cyan }
+function Write-Step($msg) { Write-Host "[vn-harness] $msg" -ForegroundColor Cyan }
 
 function Get-DshPin {
     $manifest = Join-Path $repoRoot '.dsh-version.json'

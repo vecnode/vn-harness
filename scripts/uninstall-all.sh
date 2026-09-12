@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================
-#  dsh-vn-plugins uninstaller - macOS / Linux.
+#  vn-harness uninstaller - macOS / Linux.
 #
 #  Removes this pack's bundles from the DeepSeek Harness WEB profile (DSH_HOME,
 #  else ~/.dsh, profile "web" by default), together with any retired bundle name
@@ -58,7 +58,7 @@ while [ $# -gt 0 ]; do
     -Target=*|--target=*) target_arg=${1#*=} ;;
     -h|--help) usage; exit 0 ;;
     *)
-      printf 'dsh-vn-plugins: unknown option "%s"\n' "$1" >&2
+      printf 'vn-harness: unknown option "%s"\n' "$1" >&2
       printf 'Run "sh scripts/uninstall-all.sh --help" for the accepted options.\n' >&2
       exit 2
       ;;
@@ -69,15 +69,15 @@ done
 case "$target_arg" in
   ''|web|cli) ;;
   *)
-    printf 'dsh-vn-plugins: -Target accepts only "web" or "cli" (both mean the web profile); got "%s".\n' "$target_arg" >&2
+    printf 'vn-harness: -Target accepts only "web" or "cli" (both mean the web profile); got "%s".\n' "$target_arg" >&2
     printf 'DSH Desktop is not a target of this pack.\n' >&2
     exit 2
     ;;
 esac
 
-step() { printf '[dsh-vn-plugins] %s\n' "$1"; }
+step() { printf '[vn-harness] %s\n' "$1"; }
 fail() {
-  printf 'dsh-vn-plugins: %s\n' "$1" >&2
+  printf 'vn-harness: %s\n' "$1" >&2
   exit 1
 }
 

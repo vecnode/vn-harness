@@ -1,4 +1,4 @@
-# dsh-vn-plugins
+# vn-harness
 
 ![Language: JavaScript](https://img.shields.io/badge/language-JavaScript-f7df1e?logo=javascript&logoColor=black)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)

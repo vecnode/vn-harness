@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Removes the dsh-vn-plugins bundle set from the DeepSeek Harness web profile,
+    Removes the vn-harness bundle set from the DeepSeek Harness web profile,
     together with any retired bundle name this pack shipped before (dsh-focus,
     dsh-files). Removing a bundle also removes its patch layer.
 
@@ -88,7 +88,7 @@ function Get-PnpmBinName {
     return 'pnpm'
 }
 
-function Write-Step($msg) { Write-Host "[dsh-vn-plugins] $msg" -ForegroundColor Yellow }
+function Write-Step($msg) { Write-Host "[vn-harness] $msg" -ForegroundColor Yellow }
 
 function Get-DshPin {
     $manifest = Join-Path $repoRoot '.dsh-version.json'

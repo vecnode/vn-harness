@@ -1,4 +1,4 @@
-# ARCHITECTURE.md - dsh-vn-plugins deep dive
+# ARCHITECTURE.md - vn-harness deep dive
 
 This document explains how the repo, the installer, and the Editor plugin
 actually work against the DeepSeek Harness line they target

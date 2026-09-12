@@ -1,7 +1,7 @@
 {
   "name": "dsh-open-in-app",
   "version": "0.1.0-alpha.1",
-  "description": "Open In: the pack's own cross-platform file-browser launcher for the dsh-vn-plugins Web GUI. Forks the shipped @deepseek-ai/dsh-client-ui-open-in-app browser bundle so the File Explorer / Finder / Files menu entries post to a route this package owns, which opens the OS's file browser directly (explorer.exe, open, xdg-open, WSL-aware) instead of the shell's open verb. Alpha.",
+  "description": "Open In: the pack's own cross-platform file-browser launcher for the vn-harness Web GUI. Forks the shipped @deepseek-ai/dsh-client-ui-open-in-app browser bundle so the File Explorer / Finder / Files menu entries post to a route this package owns, which opens the OS's file browser directly (explorer.exe, open, xdg-open, WSL-aware) instead of the shell's open verb. Alpha.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

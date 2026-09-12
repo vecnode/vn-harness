@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  dsh-vn-plugins installer (double-click friendly)
+rem  vn-harness installer (double-click friendly)
 rem  Installs the plugin pack into the DeepSeek Harness WEB
 rem  profile only - the raw install used by "npx dsh web"
 rem  (DSH_HOME or %USERPROFILE%\.dsh, profile web).
@@ -21,9 +21,9 @@ set "EXITCODE=%ERRORLEVEL%"
 echo.
 echo ============================================================
 if "%EXITCODE%"=="0" (
-  echo  dsh-vn-plugins installed successfully.
+  echo  vn-harness installed successfully.
 ) else (
-  echo  dsh-vn-plugins install FAILED - see the messages above.
+  echo  vn-harness install FAILED - see the messages above.
 )
 echo ============================================================
 echo.

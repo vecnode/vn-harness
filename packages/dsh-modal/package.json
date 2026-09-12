@@ -1,7 +1,7 @@
 {
   "name": "dsh-modal",
   "version": "0.1.0-alpha.1",
-  "description": "Modal: the pack's shared dialog surface for the dsh-vn-plugins Web GUI. A body-level overlay any client plugin reaches through ctx.get('modals') - open/alert/confirm/prompt, with async submit work that keeps the dialog open and shows the failure inline. Alpha.",
+  "description": "Modal: the pack's shared dialog surface for the vn-harness Web GUI. A body-level overlay any client plugin reaches through ctx.get('modals') - open/alert/confirm/prompt, with async submit work that keeps the dialog open and shows the failure inline. Alpha.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

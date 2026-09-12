@@ -1,7 +1,7 @@
 {
   "name": "dsh-rightbar-files",
   "version": "0.1.0-alpha.1",
-  "description": "Right bar Files tab: dsh-vn-plugins' own workspace file tree for the right bar. Vendored from the shipped @deepseek-ai/dsh-client-ui-sidebar-files bundle (a tab type registering into dsh-rightbar's sidebarRightTabs registry); the dsh-rightbar layer disables the core row. Alpha.",
+  "description": "Right bar Files tab: vn-harness' own workspace file tree for the right bar. Vendored from the shipped @deepseek-ai/dsh-client-ui-sidebar-files bundle (a tab type registering into dsh-rightbar's sidebarRightTabs registry); the dsh-rightbar layer disables the core row. Alpha.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

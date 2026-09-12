@@ -1,6 +1,6 @@
 # Security Policy
 
-**dsh-vn-plugins** is a personal, MIT-licensed plugin pack for DeepSeek Harness.
+**vn-harness** is a personal, MIT-licensed plugin pack for DeepSeek Harness.
 It follows a small, deliberately hard surface:
 
 - **No secrets in this repository.** API keys live in your own harness

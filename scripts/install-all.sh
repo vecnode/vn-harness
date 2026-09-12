@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================
-#  dsh-vn-plugins installer - macOS / Linux.
+#  vn-harness installer - macOS / Linux.
 #
 #  Installs this pack's bundles into the DeepSeek Harness WEB profile: the raw
 #  install used by "npx @deepseek-ai/dsh web" (DSH_HOME, else ~/.dsh, profile
@@ -67,7 +67,7 @@ while [ $# -gt 0 ]; do
     -Target=*|--target=*) target_arg=${1#*=} ;;
     -h|--help) usage; exit 0 ;;
     *)
-      printf 'dsh-vn-plugins: unknown option "%s"\n' "$1" >&2
+      printf 'vn-harness: unknown option "%s"\n' "$1" >&2
       printf 'Run "sh scripts/install-all.sh --help" for the accepted options.\n' >&2
       exit 2
       ;;
@@ -78,15 +78,15 @@ done
 case "$target_arg" in
   ''|web|cli) ;;
   *)
-    printf 'dsh-vn-plugins: -Target accepts only "web" or "cli" (both mean the web profile); got "%s".\n' "$target_arg" >&2
+    printf 'vn-harness: -Target accepts only "web" or "cli" (both mean the web profile); got "%s".\n' "$target_arg" >&2
     printf 'DSH Desktop is not a target of this pack.\n' >&2
     exit 2
     ;;
 esac
 
-step() { printf '[dsh-vn-plugins] %s\n' "$1"; }
+step() { printf '[vn-harness] %s\n' "$1"; }
 fail() {
-  printf 'dsh-vn-plugins: %s\n' "$1" >&2
+  printf 'vn-harness: %s\n' "$1" >&2
   exit 1
 }
 

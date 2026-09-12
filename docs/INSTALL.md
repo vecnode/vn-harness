@@ -1,4 +1,4 @@
-# Installing dsh-vn-plugins (Windows, macOS, Linux)
+# Installing vn-harness (Windows, macOS, Linux)
 
 Quickest path: double-click **`install.bat`** on Windows, or run
 **`./install.sh`** on macOS/Linux. Windows runs the PowerShell half
@@ -58,13 +58,13 @@ version. Both halves accept the same flags (`-Force`, `-Plugin`, `-DshHome`,
 ```bat
 :: Windows
 set DSH_HOME=C:\Users\you\.dsh
-npx --yes @deepseek-ai/dsh@0.1.5-rc.1 plugin --profile web add C:\path\to\dsh-vn-plugins\packages\dsh-editor
+npx --yes @deepseek-ai/dsh@0.1.5-rc.1 plugin --profile web add C:\path\to\vn-harness\packages\dsh-editor
 ```
 
 ```sh
 # macOS / Linux
 export DSH_HOME="$HOME/.dsh"
-npx --yes @deepseek-ai/dsh@0.1.5-rc.1 plugin --profile web add /path/to/dsh-vn-plugins/packages/dsh-editor
+npx --yes @deepseek-ai/dsh@0.1.5-rc.1 plugin --profile web add /path/to/vn-harness/packages/dsh-editor
 ```
 
 (Requires `pnpm` on PATH.) Remove with the same command but `remove dsh-editor`.

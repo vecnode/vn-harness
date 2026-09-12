@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================
-#  dsh-vn-plugins installer (macOS / Linux; the Windows twin is install.bat)
+#  vn-harness installer (macOS / Linux; the Windows twin is install.bat)
 #  Installs the plugin pack into the DeepSeek Harness WEB profile only - the
 #  raw install used by "npx @deepseek-ai/dsh web" (DSH_HOME, else ~/.dsh,
 #  profile web). DSH Desktop is not supported by this pack.
@@ -35,9 +35,9 @@ status=$?
 echo
 echo "============================================================"
 if [ "$status" -eq 0 ]; then
-    echo " dsh-vn-plugins installed successfully."
+    echo " vn-harness installed successfully."
 else
-    echo " dsh-vn-plugins install FAILED - see the messages above."
+    echo " vn-harness install FAILED - see the messages above."
 fi
 echo "============================================================"
 echo

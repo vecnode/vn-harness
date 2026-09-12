@@ -1,4 +1,4 @@
-# AGENTS.md - guidance for coding agents in dsh-vn-plugins
+# AGENTS.md - guidance for coding agents in vn-harness
 
 This file is the quick-start brief. Read `ARCHITECTURE.md` for the deep dive.
 
@@ -115,7 +115,7 @@ tooling for moving the forks forward, and it wants `pwsh` on macOS/Linux.
    `-DshHome`, `-ProfileName`, `-DshVersion`, `-Target web|cli`), same messages,
    same behaviour. After editing a `.ps1`, parse-check it; after editing a `.sh`,
    run `sh -n` (see below).
-7. When the pack branding is mentioned, the repo name is `dsh-vn-plugins`.
+7. When the pack branding is mentioned, the repo name is `vn-harness`.
    Commits are authored as `vecnode <vecnode@users.noreply.github.com>`
    (git config is set in the repo).
 

@@ -1,5 +1,5 @@
 {
-  "name": "dsh-vn-plugins",
+  "name": "vn-harness",
   "version": "0.1.0-alpha.0",
   "private": true,
   "description": "Personal plugin pack for DeepSeek Harness (Windows/MacOS/Linux). Installs into the raw web/CLI profile only (npx @deepseek-ai/dsh web).",
