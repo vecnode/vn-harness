@@ -403,4 +403,7 @@ printf "    pack's own cross-platform launcher (see packages/dsh-open-in-app).\n
 printf '  - The Themes button sits in that same header group, immediately left of\n'
 printf '    "Open In...": it switches Light / Dark / System, the same preference\n'
 printf '    Settings > General > Appearance owns (see packages/dsh-themes).\n'
+printf '  - The camera button, left of the Themes button, screenshots the whole\n'
+printf '    window: the browser captures the tab and the pack writes the PNG to\n'
+printf '    this machine'"'"'s Desktop as vn-harness-<timestamp>.png.\n'
 printf '  - API keys are never touched by this installer - add your key in Settings > Models.\n'

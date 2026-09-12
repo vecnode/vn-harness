@@ -98,7 +98,7 @@
       "rowOverrides": []
     },
     "dsh-themes": {
-      "version": "0.1.0-alpha.9",
+      "version": "0.1.0-alpha.10",
       "rows": [
         "themes"
       ],
@@ -107,6 +107,7 @@
         "@deepseek-ai/dsh-client-ui-theme",
         "@deepseek-ai/dsh-session-log-export"
       ],
+      "role": "the pack's conversation-header package, owning three controls in the header utilities list: the Screenshot control (order -30, one step left of Themes) captures the whole window in the browser - getDisplayMedia on the current tab, one frame into a canvas, PNG out; the app is a fixed-viewport shell, so 100% width and 100% height are exactly the tab's box - and POSTs the bytes to this package's own authenticated host route (/api/dsh-themes/screenshot), which resolves the host's Desktop per request (Windows plain or OneDrive-redirected, XDG on Linux, home as the last resort), validates the PNG signature and size, and writes the file create-exclusively as vn-harness-<timestamp>.png, answering the path; a profile without that row falls back to an ordinary browser download. The Themes control (order -20) drives ui-theme's own preference, and the Session-log download seat (priority -10) shadows the shipped three-dot button with one download icon while the shipped controller keeps doing the export",
       "overrides": [
         "markdown paper: re-declares ui-theme's light declarations on the rendered Markdown root, so the page stays white in the dark theme",
         "markdown chrome: hides the preview header's viewer menu on Markdown tabs (the page has exactly one renderer; the editor's Edit button is the way back to editing)",
@@ -115,7 +116,8 @@
         "branding type: the VN Harness text wears the conversation title's own type - 14px/20px at weight 500, the size of ui-conversation's current crumb - instead of the shipped brand name's 18px/600, which sat in the same 30px strip",
         "branding mark: the drawn disc is replaced by the app icon itself - assets/vn-harness.svg at the pack root, a black circle centred on (12,12) with a 1px transparent margin inside its box - inlined as a data URI so no route or request is needed, and painted at 24px in the left bar (wide row and rail) and 26px in the empty conversation hero, where the shipped whale is also hidden",
         "header ring: the right bar's own collapse/expand toggle in the header corner wears the same .5px round hairline outline as this package's own header icon buttons, keyed on the header's stable data-conversation-header-corner marker rather than a hashed class",
-        "session-log download seat: the shipped @deepseek-ai/dsh-session-log-export browser half's three-dot button - whose one menu item was Download session log - is shadowed by registering the SAME occupant id (session-log-download) at priority -10, which is a list slot's own lowest-renders rule, so the seat draws one plain download icon button that starts the export on the first click; nothing shipped is disabled, because that row owns the host half (/api/session.export and the /export command) and publishes the sessionLogDownload controller this button drives, and the seat's preparing/success/error dialog is rendered here from that same store so /export keeps its feedback"
+        "session-log download seat: the shipped @deepseek-ai/dsh-session-log-export browser half's three-dot button - whose one menu item was Download session log - is shadowed by registering the SAME occupant id (session-log-download) at priority -10, which is a list slot's own lowest-renders rule, so the seat draws one plain download icon button that starts the export on the first click; nothing shipped is disabled, because that row owns the host half (/api/session.export and the /export command) and publishes the sessionLogDownload controller this button drives, and the seat's preparing/success/error dialog is rendered here from that same store so /export keeps its feedback",
+        "capture rule: for the one frame the Screenshot control grabs, html[data-dsh-screenshot] hides this package's three header controls (and any tooltip hanging off them), so the picture is the app rather than the buttons that took it"
       ]
     },
     "dsh-open-in-app": {

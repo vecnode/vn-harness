@@ -436,6 +436,56 @@ function loadFromHarness(name) {
   }
 }
 
+// --------------------------------------------------------------- dsh-themes
+// The screenshot route: the client's PNG body is written to the host's Desktop.
+// HOME / USERPROFILE point at a temp folder for this block, so the check never
+// touches the real Desktop - the route resolves the folder per request, which is
+// exactly what makes that possible.
+const themesHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'dsh-themes-home-'))
+await fsp.mkdir(path.join(themesHome, 'Desktop'))
+const previousHome = process.env.HOME
+const previousProfile = process.env.USERPROFILE
+process.env.HOME = themesHome
+process.env.USERPROFILE = themesHome
+try {
+  const screenshotHandler = await capture(path.join(repo, 'packages/dsh-themes/lib/index.js'), '/api/dsh-themes/screenshot', {})
+  const postShot = (body, type) =>
+    screenshotHandler(
+      new Request('http://x/api/dsh-themes/screenshot', {
+        method: 'POST',
+        headers: { 'content-type': type === undefined ? 'image/png' : type },
+        body,
+      }),
+    )
+  // A real 1x1 PNG: the signature check is exercised by an actual picture.
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  check('screenshot rejects another content type', (await postShot(png, 'application/json')).status, 415)
+  check('screenshot rejects an empty body', (await postShot(Buffer.alloc(0))).status, 400)
+  check('screenshot rejects a body that is not a PNG', (await postShot(Buffer.from('not a png at all'))).status, 415)
+  const saved = await (await postShot(png)).json()
+  check('screenshot reports the save', saved.ok, true)
+  check('screenshot writes to the Desktop', saved.directory, path.join(themesHome, 'Desktop'))
+  const written = await fsp.readFile(saved.path).catch(() => null)
+  check('screenshot bytes are on disk', written !== null && written.equals(png))
+  check(
+    'screenshot name carries the pack name',
+    path.basename(saved.path).startsWith('vn-harness-') && saved.path.endsWith('.png'),
+  )
+  const again = await (await postShot(png)).json()
+  check('a second shot takes the next free name', again.path !== saved.path, true)
+  check('the first shot survives the second', existsSync(saved.path))
+  check('screenshot refuses a GET', (await screenshotHandler(new Request('http://x/api/dsh-themes/screenshot'))).status, 405)
+} finally {
+  if (previousHome === undefined) delete process.env.HOME
+  else process.env.HOME = previousHome
+  if (previousProfile === undefined) delete process.env.USERPROFILE
+  else process.env.USERPROFILE = previousProfile
+  await fsp.rm(themesHome, { recursive: true, force: true })
+}
+
 console.log('')
 console.log(failures === 0 ? 'all node-route checks passed' : failures + ' check(s) FAILED')
 process.exitCode = failures === 0 ? 0 : 1

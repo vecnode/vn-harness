@@ -1,4 +1,4 @@
-﻿// check-client-bundles.mjs - load the pack's browser bundles the way the shell
+// check-client-bundles.mjs - load the pack's browser bundles the way the shell
 // does (module table + factory) and drive them with a REAL React runtime.
 //
 // Why this exists: the client halves have no build step and no type checker, so
@@ -149,11 +149,16 @@ function loadBundle(relative, extraRequire) {
         MarkdownText: Text,
         Modal: Dialog,
         Button: Push,
+        // The toast portals a message anchored to a control; a static render only
+        // needs it to exist (it is rendered after an attempt, never at rest).
+        Toast: Null,
         IconChevronDownOutline14: Null,
         IconLightOutline16: Null,
         IconDarkOutline16: Null,
         IconFollowsystemOutline16: Null,
         IconDownloadOutline16: Null,
+        IconCheckOutline16: Null,
+        IconWarningOutline16: Null,
       }
     }
     throw new Error('unexpected require in a client bundle: ' + name)
@@ -407,8 +412,9 @@ const themeService = {
   },
 }
 const themeEvents = []
-// The package registers TWO occupants of the same list slot (the Themes control
-// and the Session-log download seat), so the stand-in keys by slot#id.
+// The package registers THREE occupants of the same list slot (the screenshot
+// control, the Themes control and the Session-log download seat), so the
+// stand-in keys by slot#id.
 const themesSeats = {}
 const themeLocales = {}
 // A stand-in for the shipped export controller's store - the shape the renderer
@@ -449,7 +455,7 @@ themes.exports.apply({
 check(
   'themes header seats',
   Object.keys(themesSeats).join(','),
-  'conversation.session.header.utilities#dsh-themes,conversation.session.header.utilities#session-log-download',
+  'conversation.session.header.utilities#dsh-themes,conversation.session.header.utilities#dsh-themes-screenshot,conversation.session.header.utilities#session-log-download',
 )
 const themesSpec = themesSeats['conversation.session.header.utilities#dsh-themes'].spec
 check('themes seat id', themesSpec.id, 'dsh-themes')
@@ -474,6 +480,13 @@ const themesCopy = {
   'download.errorTitle': 'Session export failed',
   'download.close': 'Close',
   'download.commandFailed': 'Could not start the Session export.',
+  'screenshot.title': 'Screenshot to the Desktop',
+  'screenshot.busy': 'Capturing the window',
+  'screenshot.saved': 'Screenshot saved to {path}',
+  'screenshot.downloaded': 'Screenshot handed to the browser download',
+  'screenshot.failed': 'The screenshot failed',
+  'screenshot.unsupported': 'This browser cannot capture the page here (HTTPS or localhost is required)',
+  'screenshot.cancelled': 'The screenshot was cancelled',
 }
 const themesT = (key, vars) => {
   const text = themesCopy[key] === undefined ? key : themesCopy[key]
@@ -546,6 +559,29 @@ check('download seat draws the success state', renderSeat().includes('Session do
 logEntry = { open: true, status: 'error', error: 'HTTP 500' }
 check('download seat draws the error state', renderSeat().includes('HTTP 500'))
 logEntry = undefined
+
+// ------------------------------------------------------ the screenshot control
+// alpha.10: one more occupant of the same list, one order step LEFT of the
+// Themes control. It captures the tab with `getDisplayMedia` and hands the PNG
+// to the package's host route (the browser download is the fallback), so the
+// static checks here are about the seat, the dress and the copy - the capture
+// itself needs a real browser surface.
+const shotSpec = themesSeats['conversation.session.header.utilities#dsh-themes-screenshot'].spec
+check('screenshot seat id', shotSpec.id, 'dsh-themes-screenshot')
+check('screenshot sits left of the theme control', shotSpec.order < themesSpec.order, true)
+check('screenshot shares the header locale namespace', shotSpec.locale, 'themes')
+const ScreenshotAction = themesSeats['conversation.session.header.utilities#dsh-themes-screenshot'].component
+const shotMarkup = renderToStaticMarkup(h(ScreenshotAction, { t: themesT }))
+check('screenshot button renders', shotMarkup.includes('class="dst-button"') && shotMarkup.includes('data-dsh-screenshot'))
+check('screenshot button is labelled', shotMarkup.includes('aria-label="Screenshot to the Desktop"'))
+check('screenshot button is idle at rest', shotMarkup.includes('aria-busy="false"') && shotMarkup.includes('disabled'), false)
+check('screenshot button opens no menu', shotMarkup.includes('aria-haspopup="menu"'), false)
+check('screenshot button draws no toast at rest', shotMarkup.includes('Screenshot saved'), false)
+check('screenshot copy is registered', themeLocales.themes.en['screenshot.title'], 'Screenshot to the Desktop')
+check(
+  'screenshot copy carries the saved path',
+  themeLocales.themes.en['screenshot.saved'].includes('{path}') && themeLocales.themes.zh['screenshot.saved'].includes('{path}'),
+)
 
 // A profile that never mounts ui-theme: the control still renders (disabled,
 // with its own copy) instead of taking the header down.
@@ -737,6 +773,13 @@ check(
   'theme button wears the header ring',
   themesCss.includes('.dst-button{width:28px;height:28px;box-sizing:border-box;') &&
     themesCss.includes('border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:28px'),
+)
+// alpha.10: the captured frame leaves the pack's own controls out of the shot.
+// Both selectors matter: the Themes and Screenshot controls carry a `.dst-slot`
+// wrapper (and their tooltip bubble with it), the download seat does not.
+check(
+  'capture rule hides the pack controls',
+  themesCss.includes('html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibility:hidden}'),
 )
 const ringTag = themes.document.head.children.filter((tag) => tag.dataset && tag.dataset.pluginCss === 'dsh-themes/header-ring.css').pop()
 const headerRing = ringTag ? ringTag.textContent : ''

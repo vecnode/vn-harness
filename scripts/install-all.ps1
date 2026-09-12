@@ -423,4 +423,7 @@ Write-Host '    pack''s own cross-platform launcher (see packages/dsh-open-in-ap
 Write-Host '  - The Themes button sits in that same header group, immediately left of'
 Write-Host '    "Open In...": it switches Light / Dark / System, the same preference'
 Write-Host '    Settings > General > Appearance owns (see packages/dsh-themes).'
+Write-Host '  - The camera button, left of the Themes button, screenshots the whole'
+Write-Host '    window: the browser captures the tab and the pack writes the PNG to'
+Write-Host '    this machine''s Desktop as vn-harness-<timestamp>.png.'
 Write-Host '  - API keys are never touched by this installer - add your key in Settings > Models.'

@@ -1,8 +1,8 @@
 /**
  * dsh-themes - browser half: the pack's CONVERSATION HEADER package.
  *
- * It owns two controls on that header and the appearance overrides that go with
- * them.
+ * It owns three controls on that header and the appearance overrides that go
+ * with them.
  *
  * 1. THE THEMES CONTROL. One small button, the same size and dress as the
  *    header's other icon buttons, sitting immediately LEFT of the shipped
@@ -41,6 +41,26 @@
  *    same store, so `/export` keeps its feedback. See the download seat section
  *    below.
  *
+ * 3. THE SCREENSHOT CONTROL (alpha.10). One more button on the same row, left of
+ *    the Themes control (order -30 against its -20), which captures the WHOLE
+ *    window - the app is a fixed-viewport shell, so its 100% width and 100%
+ *    height are exactly what fills the tab - and saves the PNG to the Desktop of
+ *    the machine running the app. The capture itself can only happen in this
+ *    page: `getDisplayMedia` asks the browser for the current tab's own surface,
+ *    one frame is drawn into a canvas and encoded as a PNG. Real pixels, so what
+ *    the app draws with canvas (the terminal dock's xterm surface), with
+ *    compositor effects or inside an open dialog is in the picture - which is
+ *    why this is used instead of a DOM-to-canvas library.
+ *
+ *    The FILE does not go through the browser's downloads: the PNG is POSTed to
+ *    this package's own host route (`/api/dsh-themes/screenshot`), which writes
+ *    it to the host's Desktop under `vn-harness-<timestamp>.png` and answers the
+ *    path, so one click produces a real file on the host with no save dialog and
+ *    no clutter in the download folder. A profile that runs this bundle without
+ *    its Node half still gets the picture: the browser's own download is the
+ *    fallback, and the toast says which of the two happened. See the screenshot
+ *    section below.
+ *
  * It also carries the pack's appearance OVERRIDES - rules that hold one surface
  * on a fixed palette regardless of the app theme, or give a core surface the
  * frame's own dress. The first (alpha.2) is the
@@ -74,9 +94,12 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
     const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
-    const { Button, Menu, Modal, Tooltip } = primitives
+    const { Button, Menu, Modal, Toast, Tooltip } = primitives
     /** The shipped download glyph the removed Session-log menu item carried. */
     const DownloadGlyph = primitives.IconDownloadOutline16
+    /** The status glyphs the screenshot toast wears (the shipped check / warning pair). */
+    const CheckGlyph = primitives.IconCheckOutline16
+    const WarningGlyph = primitives.IconWarningOutline16
 
     // ---------------------------------------------------------------------
     // Constants
@@ -84,7 +107,7 @@ window.__ModuleLoader__.load({
     /** The slot id of the Themes occupant in the header utilities list. */
     const THEMES_ID = 'dsh-themes'
     /** Version marker, logged at activation so a fresh bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.9'
+    const PLUGIN_VERSION = '0.1.0-alpha.10'
     /** The client service (@deepseek-ai/dsh-client-ui-theme) that owns the preference. */
     const THEME_SERVICE = 'theme'
     /** The Session header's utilities slot (the group the Open In control sits in). */
@@ -112,6 +135,17 @@ window.__ModuleLoader__.load({
      * `download(sessionId)` / `dismiss(sessionId)` / `.store`).
      */
     const DOWNLOAD_SERVICE = 'sessionLogDownload'
+    /**
+     * The screenshot control (alpha.10): its occupant id in the same utilities
+     * list, and its order - one step LEFT of the Themes control, because a list
+     * slot renders lowest order first.
+     */
+    const SCREENSHOT_ID = 'dsh-themes-screenshot'
+    const SCREENSHOT_ORDER = HEADER_ORDER - 10
+    /** The host route that writes the PNG to this machine's Desktop. */
+    const SCREENSHOT_ROUTE = '/api/dsh-themes/screenshot'
+    /** The saved file's name pattern, the same one the Node half falls back to. */
+    const SCREENSHOT_PREFIX = 'vn-harness-'
     /**
      * The app mark, from `assets/vn-harness.svg` at the pack root: a black circle
      * centred on (12,12) in its own 24px box, with a 1px transparent margin.
@@ -148,6 +182,15 @@ window.__ModuleLoader__.load({
     // none, so they sat bare among them. The ring is `--dsw-alias-border-l3` -
     // the token the terminal control already uses - and `box-sizing:border-box`
     // keeps the box exactly 28px with the outline inside it.
+    //
+    // alpha.10 adds the CAPTURE rule. The screenshot control marks the document
+    // (`html[data-dsh-screenshot]`, set for the one frame it grabs) and this rule
+    // takes this package's three controls - and the tooltip the clicked one is
+    // showing - out of the picture, so the shot is the app rather than the buttons
+    // that took it. Both selectors are needed: the Themes and Screenshot controls
+    // sit in a `.dst-slot` wrapper (which is what carries their tooltip bubble,
+    // rendered as a SIBLING by the shipped Tooltip), while the Session-log
+    // download seat registers without that wrapper.
     // ---------------------------------------------------------------------
     const css = `
 .dst-slot{display:inline-flex;align-items:center}
@@ -156,6 +199,7 @@ window.__ModuleLoader__.load({
 .dst-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 .dst-button:disabled{cursor:default;opacity:.5}
 .dst-button:focus-visible{outline:.5px solid var(--dsw-alias-state-accent,#4f8cff);outline-offset:1px}
+html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibility:hidden}
 `
     const CSS_TAG = 'dsh-themes/themes.css'
     if (typeof document !== 'undefined' && !document.querySelector('style[data-plugin-css=' + JSON.stringify(CSS_TAG) + ']')) {
@@ -189,6 +233,13 @@ window.__ModuleLoader__.load({
       'download.errorTitle': 'Session 导出失败',
       'download.close': '关闭',
       'download.commandFailed': '无法启动 Session 导出。',
+      'screenshot.title': '截图并保存到桌面',
+      'screenshot.busy': '正在截图',
+      'screenshot.saved': '截图已保存到 {path}',
+      'screenshot.downloaded': '截图已交给浏览器下载',
+      'screenshot.failed': '截图失败',
+      'screenshot.unsupported': '当前环境不支持网页截图（需要 HTTPS 或 localhost）',
+      'screenshot.cancelled': '截图已取消',
     }
     /** English dictionary, key-identical to the Chinese source of truth. */
     const en = {
@@ -209,6 +260,13 @@ window.__ModuleLoader__.load({
       'download.errorTitle': 'Session export failed',
       'download.close': 'Close',
       'download.commandFailed': 'Could not start the Session export.',
+      'screenshot.title': 'Screenshot to the Desktop',
+      'screenshot.busy': 'Capturing the window',
+      'screenshot.saved': 'Screenshot saved to {path}',
+      'screenshot.downloaded': 'Screenshot handed to the browser download',
+      'screenshot.failed': 'The screenshot failed',
+      'screenshot.unsupported': 'This browser cannot capture the page here (HTTPS or localhost is required)',
+      'screenshot.cancelled': 'The screenshot was cancelled',
     }
 
     /** The three preferences ui-theme owns, in the Settings row's order. */
@@ -906,6 +964,289 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------------------
+    // The screenshot control (alpha.10).
+    //
+    // WHAT "THE WEBPAGE" IS HERE. The Web GUI is a fixed-viewport shell: the
+    // document itself does not scroll - the columns do, each keeping its own
+    // position. So 100% width and 100% height of the page is exactly the tab's
+    // visible box, and one frame of the tab's own surface is the whole thing: no
+    // stitching, no scrolled-out remainder to guess at.
+    //
+    // WHY THE BROWSER TAKES THE PICTURE. Only the page can photograph itself in
+    // real pixels. A DOM-to-canvas render would have to stand in for the engine
+    // (the terminal dock is an xterm canvas, dialogs and menus are portalled, the
+    // app paints itself from layers of hashed stylesheets), and a headless browser
+    // pointed at the same URL would photograph a FRESH load - the open tab, the
+    // editor buffer and the dock are THIS client's state, not the server's.
+    // `getDisplayMedia` with `preferCurrentTab` is the one API that hands the page
+    // its own pixels, so that is what the button asks for: the browser shows its
+    // share prompt, the stream is stopped the instant the frame is grabbed.
+    //
+    // WHERE THE FILE GOES. Not the download folder. The PNG is POSTed to the
+    // package's host route, which writes it to THIS machine's Desktop and answers
+    // the path (see lib/index.js) - and if that row is not mounted, the browser's
+    // own download is the fallback, so the control still produces a picture.
+    // ---------------------------------------------------------------------
+    /**
+     * The screenshot glyph: a camera. The shipped primitive set has no capture
+     * icon, so this draws its own 16px outline in the weight of the icons beside
+     * it, stroked in `currentColor` so it follows the button (and the app theme).
+     */
+    function IconScreenshotOutline16(props) {
+      const size = props && typeof props.size === 'number' ? props.size : 16
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': 'true',
+          focusable: 'false',
+        },
+        h('path', { d: 'M5.6 4.2 6.4 2.6h3.2l.8 1.6' }),
+        h('rect', { x: '1.4', y: '4.2', width: '13.2', height: '9.4', rx: '2' }),
+        h('circle', { cx: '8', cy: '9', r: '2.6' }),
+      )
+    }
+
+    /** One animation frame, so a paint that was just requested has landed. */
+    function nextFrame() {
+      return new Promise((resolve) => {
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(() => resolve())
+        } else {
+          setTimeout(resolve, 60)
+        }
+      })
+    }
+
+    /** Resolve once the capture surface has delivered its first frame. */
+    function firstFrame(video) {
+      if (typeof video.requestVideoFrameCallback === 'function') {
+        return new Promise((resolve) => {
+          video.requestVideoFrameCallback(() => resolve())
+        })
+      }
+      return new Promise((resolve) => {
+        setTimeout(resolve, 160)
+      })
+    }
+
+    /**
+     * Capture this tab at its own size, as a PNG.
+     *
+     * The pack's own header controls are hidden for the one frame that is drawn
+     * (the `html[data-dsh-screenshot]` rule above), because the button that took
+     * the picture - and its tooltip - would otherwise be in it.
+     *
+     * @param t - the locale lookup, for the failure copy the caller shows.
+     * @returns {Promise<{blob: Blob, width: number, height: number}>} the picture.
+     */
+    async function captureTab(t) {
+      const media = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined
+      if (!media || typeof media.getDisplayMedia !== 'function') {
+        throw new Error(t('screenshot.unsupported'))
+      }
+      let stream
+      try {
+        stream = await media.getDisplayMedia({
+          video: { displaySurface: 'browser' },
+          audio: false,
+          // Chrome / Edge hints: offer THIS tab, allow it to be picked, and do not
+          // offer to switch the shared surface mid-capture.
+          preferCurrentTab: true,
+          selfBrowserSurface: 'include',
+          surfaceSwitching: 'exclude',
+        })
+      } catch (err) {
+        // The user dismissed the picker, or the browser refused the surface.
+        throw new Error(t('screenshot.cancelled'))
+      }
+      const root = typeof document !== 'undefined' ? document.documentElement : null
+      try {
+        const video = document.createElement('video')
+        video.muted = true
+        video.playsInline = true
+        video.srcObject = stream
+        await video.play()
+        if (root !== null) root.setAttribute('data-dsh-screenshot', '')
+        if (document.activeElement && typeof document.activeElement.blur === 'function') {
+          document.activeElement.blur()
+        }
+        await firstFrame(video)
+        // Two frames, not one: the first rAF callback can still run before the
+        // repaint that the hidden-controls attribute just caused, and the capture
+        // surface delivers whole composited frames.
+        await nextFrame()
+        await nextFrame()
+        const track = typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks()[0] : undefined
+        const settings = track && typeof track.getSettings === 'function' ? track.getSettings() : {}
+        const width = video.videoWidth || settings.width || 0
+        const height = video.videoHeight || settings.height || 0
+        if (!width || !height) throw new Error(t('screenshot.failed'))
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const painter = canvas.getContext('2d')
+        if (!painter) throw new Error(t('screenshot.failed'))
+        painter.drawImage(video, 0, 0, width, height)
+        const blob = await new Promise((resolve, reject) => {
+          canvas.toBlob((value) => (value ? resolve(value) : reject(new Error(t('screenshot.failed')))), 'image/png')
+        })
+        return { blob: blob, width: width, height: height }
+      } finally {
+        if (root !== null) root.removeAttribute('data-dsh-screenshot')
+        const tracks = typeof stream.getTracks === 'function' ? stream.getTracks() : []
+        for (const track of tracks) {
+          try {
+            track.stop()
+          } catch (err) {}
+        }
+      }
+    }
+
+    /** The PNG's name: the pack's name plus a local timestamp, `-2` on collision. */
+    function screenshotName(date) {
+      const pad = (value) => String(value).padStart(2, '0')
+      return (
+        SCREENSHOT_PREFIX +
+        String(date.getFullYear()) +
+        pad(date.getMonth() + 1) +
+        pad(date.getDate()) +
+        '-' +
+        pad(date.getHours()) +
+        pad(date.getMinutes()) +
+        pad(date.getSeconds()) +
+        '.png'
+      )
+    }
+
+    /** Hand the PNG to the browser's own download (the fallback path). */
+    function downloadPng(blob, name) {
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = name
+      anchor.rel = 'noopener'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
+    }
+
+    /**
+     * Save the PNG: the host route first (the file lands on this machine's
+     * Desktop), the browser's download as the fallback.
+     * @returns {Promise<{path: string|null}>} the saved path, or `null` when the
+     *   browser took the file instead.
+     */
+    async function deliverPng(blob, name) {
+      try {
+        const response = await fetch(SCREENSHOT_ROUTE, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'image/png' },
+          body: blob,
+        })
+        const payload = await response.json().catch(() => null)
+        if (response.ok && payload && payload.ok === true && typeof payload.path === 'string') {
+          return { path: payload.path }
+        }
+      } catch (err) {
+        /* no route (or no host half): the browser download below still saves it */
+      }
+      downloadPng(blob, name)
+      return { path: null }
+    }
+
+    /**
+     * The screenshot button and its toast. One click captures the window; the
+     * toast reports where the file went - the host path the route answered, or
+     * that the browser took the download - and a failure is reported in the same
+     * place instead of being swallowed.
+     */
+    function ScreenshotAction(props) {
+      const t = props.t
+      const anchor = React.useRef(null)
+      const sequence = React.useRef(0)
+      const [busy, setBusy] = React.useState(false)
+      const [toast, setToast] = React.useState(null)
+      const label = busy ? t('screenshot.busy') : t('screenshot.title')
+      const run = async () => {
+        if (busy) return
+        setBusy(true)
+        setToast(null)
+        try {
+          const shot = await captureTab(t)
+          const saved = await deliverPng(shot.blob, screenshotName(new Date()))
+          sequence.current += 1
+          setToast({
+            seq: sequence.current,
+            ok: true,
+            text: saved.path === null ? t('screenshot.downloaded') : t('screenshot.saved', { path: saved.path }),
+          })
+        } catch (err) {
+          sequence.current += 1
+          setToast({
+            seq: sequence.current,
+            ok: false,
+            text: err && err.message ? err.message : t('screenshot.failed'),
+          })
+          // eslint-disable-next-line no-console
+          console.warn('[dsh-themes] screenshot failed', err && err.message ? err.message : err)
+        } finally {
+          setBusy(false)
+        }
+      }
+      return h(
+        React.Fragment,
+        null,
+        h(
+          Tooltip,
+          { label: label, side: 'bottom', delayMs: 500 },
+          h(
+            'div',
+            { className: 'dst-slot', ref: anchor },
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dst-button',
+                'data-dsh-screenshot': '',
+                'aria-label': t('screenshot.title'),
+                'aria-busy': busy ? 'true' : 'false',
+                disabled: busy,
+                onClick: () => {
+                  run()
+                },
+              },
+              h(IconScreenshotOutline16, { size: 15 }),
+            ),
+          ),
+        ),
+        // The shipped Toast portals a one-line message anchored to the control.
+        // It is only reachable after an attempt, so the anchor element exists by
+        // the time it renders.
+        toast !== null && anchor.current !== null
+          ? h(Toast, {
+              key: toast.seq,
+              text: toast.text,
+              icon: h(toast.ok ? CheckGlyph : WarningGlyph, {}),
+              anchor: anchor.current,
+              onDone: () => {
+                setToast(null)
+              },
+            })
+          : null,
+      )
+    }
+
+    // ---------------------------------------------------------------------
     // Plugin entry
     // ---------------------------------------------------------------------
     /** Services required to register copy and take a seat in the header. */
@@ -980,6 +1321,25 @@ window.__ModuleLoader__.load({
             ),
           'dsh-themes: header control',
         )
+        // The screenshot control (alpha.10): one more occupant of the same list,
+        // one order step LEFT of the Themes control (lower renders first), so the
+        // three controls read capture | themes | download next to Open In.
+        ctx.effect(
+          () =>
+            ctx.slots.inject(HEADER_SLOT, () =>
+              ctx.slots.register(
+                {
+                  name: HEADER_SLOT,
+                  id: SCREENSHOT_ID,
+                  order: SCREENSHOT_ORDER,
+                  locale: LOCALE_NS,
+                  inject: () => ({}),
+                },
+                ScreenshotAction,
+              ),
+            ),
+          'dsh-themes: screenshot control',
+        )
         // The Session-log download seat (alpha.9): the SHIPPED occupant's id one
         // priority lower, which in a list slot is what makes this registration the
         // rendered one - the three-dot button with its one-item menu stops
@@ -1018,7 +1378,9 @@ window.__ModuleLoader__.load({
         ctx.logger?.debug?.(
           '[dsh-themes] header controls registered (' +
             PLUGIN_VERSION +
-            '): themes at order ' +
+            '): screenshot at order ' +
+            SCREENSHOT_ORDER +
+            ', themes at order ' +
             HEADER_ORDER +
             ' left of Open In at ' +
             OPEN_IN_APP_ORDER +

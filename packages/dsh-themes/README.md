@@ -1,6 +1,6 @@
-# dsh-themes (alpha.9)
+# dsh-themes (alpha.10)
 
-**The pack's conversation-header package.** It owns two controls on that header
+**The pack's conversation-header package.** It owns three controls on that header
 and the appearance overrides that dress it.
 
 **1. Themes** — one small control in the web GUI's conversation header: a button,
@@ -19,6 +19,12 @@ the shipped row stays mounted and its `sessionLogDownload` controller does the
 work, so the button and the `/export` command stay one implementation. See [The
 Session-log download seat](#the-session-log-download-seat-alpha9).
 
+**3. The Screenshot control** (alpha.10) — one more button on the same row, left of
+the Themes control. It captures the **whole window** (the app is a fixed-viewport
+shell, so the page's 100% width and 100% height are exactly the tab's box) and
+saves the PNG to the **Desktop of the machine running the app**, through this
+package's own host route. See [The screenshot control](#the-screenshot-control-alpha10).
+
 It also carries the pack's **appearance overrides** — rules that hold one surface
 on a fixed palette or a fixed shape whatever the app theme is. The first is the
 **Markdown paper** (alpha.2): the rendered Markdown view stays white in the dark
@@ -32,7 +38,7 @@ fish and wordmark. The fourth (alpha.9) is the **header ring**: the right bar's
 own collapse/expand toggle in the header corner is the one icon button on that bar
 that could not be given the group's round outline where it lives (it belongs to a
 GENERATED forked bundle), so one rule keyed on the header's stable corner marker
-gives it the same ring this package's two header buttons draw themselves. See
+gives it the same ring this package's three header buttons draw themselves. See
 below. All of them are plain engine-neutral CSS, so they hold in whichever browser
 the Web GUI is opened in.
 
@@ -300,6 +306,72 @@ padding, a 15px glyph, `border-radius: 28px` and the group's hairline ring. The
 glyph is the shipped `IconDownloadOutline16` — the icon the removed menu item
 carried.
 
+## The screenshot control (alpha.10)
+
+One more button on the same header row, **left of the Themes control** (order
+`-30` against its `-20`), which captures **the whole window** and saves the PNG to
+the **Desktop of the machine running the app**.
+
+**"100% width and 100% height" is the tab's box.** The Web GUI is a
+fixed-viewport shell — the document itself does not scroll, the columns do (each
+keeping its own position) — so the page's full width and full height are exactly
+what fills the tab. One frame of the tab's own surface is therefore the whole page:
+nothing is stitched together, and there is no scrolled-out remainder to guess at.
+
+**Why the browser takes the picture.** Only the page can photograph itself in real
+pixels:
+
+```js
+const stream = await navigator.mediaDevices.getDisplayMedia({
+  video: { displaySurface: 'browser' },
+  preferCurrentTab: true,       // Chrome / Edge: offer THIS tab first
+  selfBrowserSurface: 'include',
+  surfaceSwitching: 'exclude',
+  audio: false,
+})
+```
+
+That first frame is drawn into a canvas and encoded as `image/png`, so anything the
+app draws with **canvas** (the terminal dock's xterm surface), with compositor
+effects, or inside an open dialog is in the picture. Two alternatives were rejected
+for exactly that reason: a DOM-to-canvas library would have to stand in for the
+engine (portalled dialogs and menus, layered hashed stylesheets, the xterm canvas),
+and a headless browser pointed at the same URL would photograph a **fresh load** —
+the open tab, the editor buffer and the dock are *this client's* state, not the
+server's.
+
+The stream is stopped the instant the frame is grabbed, and this package's three
+controls (and whatever tooltip hangs off them) are hidden for that one frame via
+`html[data-dsh-screenshot]`, so the shot is the app rather than the buttons that
+took it.
+
+**Where the file goes: the host's Desktop, not the download folder.** The PNG is
+POSTed to this package's own authenticated route, which is the one thing here that
+needs the host half (`lib/index.js`):
+
+| Route | Body | Answer |
+|---|---|---|
+| `POST /api/dsh-themes/screenshot` | the PNG (`content-type: image/png`) | `{ ok: true, path, directory, bytes }` |
+
+The route resolves the Desktop **per request** — Windows plain or OneDrive-redirected
+(`%USERPROFILE%\Desktop`, `%USERPROFILE%\OneDrive\Desktop`), macOS/Linux `~/Desktop`
+including the freedesktop `XDG_DESKTOP_DIR`, with the home folder as the last resort
+— then validates what it is about to write: the body must carry `image/png`, really
+start with the PNG signature, and stay under 64 MiB. It is written
+**create-exclusively** as `vn-harness-<timestamp>.png` (`-2`, `-3`, … when that name
+is already taken), so a second shot inside the same second never clobbers the first.
+Failures come back typed (`415` / `400` / `413` / `500` + a code) instead of as a
+stack trace, and the client never names a path: there is no traversal surface and no
+way to ask this host to write anywhere but the Desktop it reports.
+
+If a profile runs this bundle **without** its host row, the browser's own download
+is the fallback and the toast says which of the two happened — the control always
+produces a picture.
+
+**Feedback** is the shipped `Toast`, anchored to the button: the saved path on
+success, and otherwise the reason — a dismissed picker, a browser without
+`getDisplayMedia` (the page is not on HTTPS or localhost), or a write failure.
+
 ## The header ring (alpha.9)
 
 The conversation header's icon buttons are meant to read as one group, and the
@@ -338,14 +410,15 @@ occupant of the **utilities** list:
 
 | Occupant | Order | Position |
 |---|---|---|
-| **Themes** (this package) | `-20` | first — left of Open In |
+| **Screenshot** (this package) | `-30` | first — left of the Themes control |
+| **Themes** (this package) | `-20` | next — left of Open In |
 | Open In… (`open-in-app` / the pack's `dsh-open-in-app`) | `-10` | next |
 | **Session log download** (this package, shadowing the shipped seat) | `0` | after that — was the three-dot button |
 | Terminal (`dsh-terminal`) | `30` | last |
 
-`-20` is the whole placement: the utilities list renders in ascending order, so
-a lower order simply renders further left. Nothing shipped is patched and no
-existing row's order is changed. The download seat is the one place this package
+`-30` and `-20` are the whole placement: the utilities list renders in ascending
+order, so a lower order simply renders further left. Nothing shipped is patched and
+no existing row's order is changed. The download seat is the one place this package
 takes OVER an occupant instead of adding one, and it does that by the registry's
 priority rule (same `id`, lower `priority`) rather than by hiding anything.
 
@@ -353,12 +426,14 @@ priority rule (same `id`, lower `priority`) rather than by hiding anything.
 
 ```
 cordis.patch.yml   bundle layer: inserts the 'themes' row (nothing else patched)
-lib/index.js       Node half: a no-op row, so the client bundle joins the boot graph
-lib/client.js      Browser half: the Themes button + menu, the Session-log download
-                   seat (same slot, shipped id at a lower priority) with its export
-                   dialog, the theme snapshot reader, and the appearance overrides
-                   (the Markdown paper, the Markdown chrome, the left column's top
-                   bar, and the header ring)
+lib/index.js       Node half: one authenticated route, POST /api/dsh-themes/screenshot,
+                   which writes the client's PNG to this machine's Desktop (the
+                   browser bundle needs no host otherwise)
+lib/client.js      Browser half: the Screenshot button (capture + save), the Themes
+                   button + menu, the Session-log download seat (same slot, shipped id
+                   at a lower priority) with its export dialog, the theme snapshot
+                   reader, and the appearance overrides (the Markdown paper, the
+                   Markdown chrome, the left column's top bar, the header ring)
 ```
 
 ## Behaviour worth keeping
@@ -386,6 +461,11 @@ lib/client.js      Browser half: the Themes button + menu, the Session-log downl
   shipped is disabled, and a profile without `sessionLogDownload` degrades to a
   disabled button reading "Session export is unavailable" — the same rule this
   package follows for `theme`.
+- **The screenshot is taken by the page and saved by the host.** The browser half
+  never writes a path and the host half never trusts the client's bytes: the
+  route names the file, resolves the Desktop itself, and validates the PNG before
+  writing it create-exclusively. A missing host row costs the Desktop shortcut,
+  not the feature — the browser download still saves the picture.
 
 ## Install / uninstall
 

@@ -490,16 +490,18 @@ Design points worth keeping:
 
 ## 9. The conversation header (dsh-themes)
 
-`dsh-themes` is the pack's **conversation-header package**: it owns the two
-controls described below — the Themes button and the Session-log download seat —
-plus the appearance overrides that dress the bar and the frame.
+`dsh-themes` is the pack's **conversation-header package**: it owns the three
+controls described below — the Themes button, the Session-log download seat and
+the Screenshot control — plus the appearance overrides that dress the bar and the
+frame.
 
 The conversation header's right-hand group is a slot list
 (`conversation.session.header.utilities`): the shipped **Open In…** split button
-registers there at `order: -10` and the Session-log download seat at the default
-`0` (that seat used to draw a three-dot button — see the download seat below).
-The **Themes** occupant registers at **`order: -20`**, so it renders first —
-immediately left of Open In — and nothing shipped is patched or reordered.
+registers there at `order: -10`, the Session-log download seat at the default `0`
+(that seat used to draw a three-dot button — see the download seat below) and the
+**Screenshot** control at **`-30`**, one step left of the Themes occupant, which
+registers at **`order: -20`** and therefore renders first of the pack's three —
+immediately left of Open In. Nothing shipped is patched or reordered.
 
 **The Themes control.** One icon button with a `Menu`:
 
@@ -732,6 +734,77 @@ with `ctx.get(...)` at use time and is never declared in `inject`; a profile tha
 never mounts the shipped row gets a disabled button reading "Session export is
 unavailable". The inject face hands the renderer a CONSTANT observable source in
 that case, so the component's Hook call order is identical either way.
+
+**The Screenshot control (alpha.10).** One more occupant of the same list, at
+**`order: -30`** — the leftmost of the pack's three header controls — which
+captures the whole window and saves the PNG to the **Desktop of the machine
+running the app**. It is the first control in the pack whose behavior is split
+across both faces of its bundle, so `lib/index.js` is no longer a no-op row.
+
+| Piece | Value |
+|---|---|
+| slot | `conversation.session.header.utilities` (list, session scope) |
+| `id` | `dsh-themes-screenshot` |
+| `order` | `-30` — the list's first occupant, left of the Themes control (`-20`) |
+| capture | `navigator.mediaDevices.getDisplayMedia({preferCurrentTab:true, selfBrowserSurface:'include', video:{displaySurface:'browser'}, audio:false})`, one frame `drawImage`'d into a canvas and encoded as `image/png` |
+| save | `POST /api/dsh-themes/screenshot` (this package's host row) → `%USERPROFILE%\Desktop` / `~/Desktop` / XDG desktop / home, as `vn-harness-<timestamp>.png` |
+| fallback | the browser's own download, when the host route answers nothing |
+| feedback | the shipped `Toast`, anchored to the button: the saved path, or the reason it failed |
+
+**100% width and 100% height is the tab's box.** The Web GUI is a
+**fixed-viewport shell**: the document itself does not scroll — the middle and
+right columns do, each keeping its own scroll position — so the page's full width
+and full height are exactly what fills the tab. One frame of the tab's own surface
+is therefore the whole picture: nothing is stitched, and there is no scrolled-out
+remainder to guess at.
+
+**Why the page takes the picture, and not a library or a second browser.** Two
+alternatives were rejected for the same reason:
+
+- a **DOM-to-canvas** library would have to stand in for the rendering engine:
+  the terminal dock's surface is an xterm **canvas**, dialogs and menus are
+  portalled to `document.body`, and the app paints itself from layers of hashed
+  stylesheets and `@font-face` rules that a foreignObject render does not
+  reproduce faithfully;
+- a **headless browser** on the host pointed at the same URL would photograph a
+  **fresh load**. The open right-bar tab, the editor's buffer and the terminal
+  dock are *this client's* state, not the server's, so the shot would not be what
+  the user is looking at (and it would attach a second client to the
+  conversation).
+
+`getDisplayMedia` with `preferCurrentTab` is the one API that hands the page its
+own pixels, so the browser's share prompt is the price of a truthful shot. The
+stream is stopped the instant the frame is grabbed, and the pack's three controls
+— plus whatever tooltip hangs off them — are hidden for that one frame by
+`html[data-dsh-screenshot]` (the injected `themes.css` rule), so the picture is
+the app rather than the buttons that took it.
+
+**The file lands on the host's Desktop, not in the download folder.** The PNG is
+POSTed to this package's own authenticated route
+(`connection.fetch.register`, `methods: ['POST']`, `requestBody: 'buffered'` —
+the same carrier contract dsh-editor and the shipped file-upload plugin use; the
+bridge buffers bodies up to 300 MiB). The handler, in order:
+
+1. requires `content-type: image/png` (else `415`),
+2. reads the body and refuses an empty one (`400`) or more than 64 MiB (`413`),
+3. requires the real **PNG signature** (`415` otherwise — the file is written to
+   the user's Desktop, so it has to be worth writing),
+4. resolves the Desktop **per request**: `%USERPROFILE%\Desktop`,
+   `%USERPROFILE%\OneDrive\Desktop`, `$HOME/Desktop`, the freedesktop
+   `XDG_DESKTOP_DIR`, `os.homedir()/Desktop`, OneDrive again, and the home folder
+   as the last resort — read fresh every time, because the Desktop can be
+   redirected (OneDrive) or configured (XDG) at any moment,
+5. writes it **create-exclusively** (`flag: 'wx'`) and answers
+   `{ ok, path, directory, bytes }`, taking `-2`, `-3`, … when the timestamped
+   name is already there (a second shot inside the same second never clobbers
+   the first).
+
+The client never names a path, so the route has no traversal surface and no way
+to overwrite a file the user already had; a host with no Desktop and no home
+answers a typed failure (`500` + code) rather than throwing. When the host row is
+absent — an older profile, or `-Plugin dsh-themes` against a partial install —
+`deliverPng` falls back to an `<a download>` of the blob, so the control always
+produces a picture; the toast says which of the two paths happened.
 
 ## 10. The file-manager half of Open In (dsh-open-in-app)
 

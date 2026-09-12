@@ -16,6 +16,7 @@ The pack targets the harness line DeepSeek ships to the raw web install
 | Open In file managers | **owned by the pack** - `dsh-open-in-app` forks `@deepseek-ai/dsh-client-ui-open-in-app` (row `ui-open-in-app` disabled) and launches the OS file browser directly |
 | Session log download | **the seat is the pack's** - `dsh-themes` alpha.9 shadows the shipped header seat (same occupant id, `priority: -10`), so a plain download icon replaces the three-dot button; the shipped `session-log-download` row stays **mounted** for `/api/session.export`, the `/export` command and the `sessionLogDownload` controller the button drives (no row disabled, nothing forked, no new package) |
 | Header icon rings | the header's icon buttons all wear the same `.5px` round outline: the pack's own controls draw it themselves and `dsh-themes` adds one rule for the right bar's toggle in the header corner (keyed on the stable `data-conversation-header-corner` marker) |
+| Window screenshot | **the pack's** - `dsh-themes` alpha.10 adds a Screenshot control (order `-30`, left of Themes): the browser captures the current tab (`getDisplayMedia`, real pixels, so the terminal's xterm canvas and open dialogs are included) and the pack's own host route `POST /api/dsh-themes/screenshot` writes the PNG to the host's Desktop as `vn-harness-<timestamp>.png` (browser download as the fallback); no shipped row is touched |
 
 ## What this means for the plugin
 
@@ -346,6 +347,26 @@ The pack targets the harness line DeepSeek ships to the raw web install
   button lives in a GENERATED forked bundle and could not draw it where it lives).
   No new packages: an install run with `-Force` (or a plain one, since the version
   changed) plus a restart and a hard refresh is enough.
+
+- **themes alpha.10**: the header gains a **Screenshot control**, one order step
+  left of the Themes button (`order: -30`), which captures the whole window and
+  saves the PNG to the **Desktop of the machine running the app**. The capture is
+  the browser's own - `getDisplayMedia({ preferCurrentTab: true,
+  selfBrowserSurface: 'include' })`, one frame drawn into a canvas and encoded as
+  `image/png` - because the Web GUI is a fixed-viewport shell (its 100% width and
+  100% height are exactly the tab's box) and only the page can photograph its own
+  pixels: a DOM-to-canvas library would have to stand in for the engine, and a
+  headless browser at the same URL would photograph a fresh load without this
+  client's open tab, editor buffer or terminal dock. The file does not go through
+  the browser's downloads: `lib/index.js` stops being a no-op row and registers
+  `POST /api/dsh-themes/screenshot`, which resolves the host's Desktop per request
+  (Windows plain or OneDrive-redirected, `~/Desktop`, XDG `XDG_DESKTOP_DIR`, home
+  last), validates the body (`image/png`, the PNG signature, a 64 MiB cap) and
+  writes it create-exclusively (`vn-harness-<timestamp>.png`, `-2` on a
+  collision), answering the path the toast then shows. A profile without that row
+  falls back to an ordinary browser download. Restart `npx @deepseek-ai/dsh web`
+  and hard-refresh; the version changed, so a plain install run (or `-Force`)
+  re-adds the bundle.
 
 ## Alpha policy
 
