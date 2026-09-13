@@ -1,4 +1,23 @@
-# dsh-browser (alpha.1)
+# dsh-browser (alpha.1) — PARKED, NOT DEPLOYED
+
+> **This package is not part of the pack right now.** It is written, verified and
+> documented, but its `package.json` declares **`dsh.bundlePending`** where
+> `dsh.bundle` would go, and both installers discover a bundle by `dsh.bundle`
+> **alone** (`Get-Packages` in `scripts/install-all.ps1`, `list_bundles` in
+> `scripts/install-all.sh`). So `install.bat` / `./install.sh` skip it
+> completely: no `dsh.profile.bundles` entry, no patch layer, nothing added to a
+> running app.
+>
+> - **To ship it:** rename `bundlePending` back to `bundle`, run
+>   `install.bat -Force` (or `./install.sh -Force`), restart
+>   `npx @deepseek-ai/dsh web`, hard-refresh the browser tab.
+> - **To park it again:** uninstall **first** —
+>   `scripts/uninstall-all.ps1 -Plugin dsh-browser` (or the `.sh` twin) — because
+>   the uninstaller finds packages the same way and cannot see a parked one. Then
+>   rename the key back.
+> - The tracked checks still cover it: `check-client-bundles.mjs` and
+>   `check-node-routes.mjs` load it by path, parked or not, so the code cannot rot
+>   while it waits.
 
 **Browser** is a **browser tab for the pack's right bar** — the address bar, back /
 forward / reload / stop, a connection LED, and **Copy** and **Open** beside it.

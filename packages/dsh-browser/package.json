@@ -1,7 +1,7 @@
 {
   "name": "dsh-browser",
   "version": "0.1.0-alpha.1",
-  "description": "Browser (package and row `dsh-browser`, kind/address `browser` / `sidebar://browser`): a BROWSER TAB for the vn-harness right bar (dsh-rightbar) - address bar, back / forward / reload / stop, a connection LED, Copy and Open - whose page is drawn by the browser already showing the GUI (one <iframe>), so the harness ships no engine and downloads nothing. A page type like the editor and History: one guide entry on the tab strip's + / Start page at order 40, no core patches, nothing forked. One host route, /api/dsh-browser/probe, asks an address whether it lets itself be framed (X-Frame-Options / CSP frame-ancestors) before anything loads, which is the one thing a cross-origin frame cannot answer for itself. Alpha.",
+  "description": "PARKED - NOT DEPLOYED. Browser (package and row `dsh-browser`, kind/address `browser` / `sidebar://browser`): a BROWSER TAB for the vn-harness right bar (dsh-rightbar) - address bar, back / forward / reload / stop, a connection LED, Copy and Open - whose page is drawn by the browser already showing the GUI (one <iframe>), so the harness ships no engine and downloads nothing. A page type like the editor and History: one guide entry on the tab strip's + / Start page at order 40, no core patches, nothing forked. One host route, /api/dsh-browser/probe, asks an address whether it lets itself be framed (X-Frame-Options / CSP frame-ancestors) before anything loads, which is the one thing a cross-origin frame cannot answer for itself. Alpha.1 is written and verified but NOT READY TO SHIP: see `dsh.comment` below and the PARKED section of this package's README.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -14,9 +14,10 @@
     "cordis.patch.yml"
   ],
   "dsh": {
-    "bundle": {
+    "bundlePending": {
       "patch": "./cordis.patch.yml"
     },
+    "comment": "PARKED: `bundlePending` is what `bundle` will be called when this package ships. Both installers discover a bundle by `dsh.bundle` ALONE (Get-Packages in scripts/install-all.ps1, list_bundles in scripts/install-all.sh), so with this name the package is skipped entirely - no dsh.profile.bundles entry, no patch layer, nothing to install or uninstall - while the code, the tracked checks and the docs stay in the repo. To deploy: rename `bundlePending` back to `bundle`, run install.bat -Force (or ./install.sh -Force), then restart `npx @deepseek-ai/dsh web` and hard-refresh. To park it again: uninstall FIRST (uninstall-all.ps1 / uninstall-all.sh -Plugin dsh-browser), because the uninstaller finds packages the same way and cannot see a parked one.",
     "client": {
       "platform": "web",
       "inject": [

@@ -85,6 +85,17 @@ packages/dsh-open-in-app/         # the file-manager half of the Open In button
   lib/client.js       # GENERATED + PATCHED fork of the shipped open-in-app client
 ```
 
+A package can also be **parked**: written, checked and documented, but not a
+bundle yet. `packages/dsh-browser/` declares `dsh.bundlePending` where
+`dsh.bundle` would go, and since both installers discover a bundle by
+`dsh.bundle` **alone** (`Get-Packages` / `list_bundles`), a parked package is
+invisible to them: no `dsh.profile.bundles` entry, no patch layer, nothing to
+uninstall, while the code, the tracked checks and the READMEs stay in the repo.
+Renaming the key back and running the installer ships it; the package README's
+PARKED section is the full round trip. The uninstaller discovers packages the
+same way, so **uninstall before parking** - a parked package can no longer be
+found by name.
+
 **The master is a separate, blank bundle.** `dsh-vn-master` carries the pack's
 bundle layer and nothing else: no `dsh.client` (so it contributes no node to the
 boot graph), no service, no `inject` edge and no core-row disables. That is what
