@@ -1,0 +1,29 @@
+{
+  "name": "dsh-browser",
+  "version": "0.1.0-alpha.1",
+  "description": "Browser (package and row `dsh-browser`, kind/address `browser` / `sidebar://browser`): a BROWSER TAB for the vn-harness right bar (dsh-rightbar) - address bar, back / forward / reload / stop, a connection LED, Copy and Open - whose page is drawn by the browser already showing the GUI (one <iframe>), so the harness ships no engine and downloads nothing. A page type like the editor and History: one guide entry on the tab strip's + / Start page at order 40, no core patches, nothing forked. One host route, /api/dsh-browser/probe, asks an address whether it lets itself be framed (X-Frame-Options / CSP frame-ancestors) before anything loads, which is the one thing a cross-origin frame cannot answer for itself. Alpha.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-session",
+        "dsh-rightbar"
+      ]
+    }
+  },
+  "license": "MIT"
+}

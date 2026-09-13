@@ -71,6 +71,17 @@
         "git on PATH"
       ]
     },
+    "dsh-browser": {
+      "version": "0.1.0-alpha.1",
+      "rows": [
+        "browser"
+      ],
+      "rowOverrides": [],
+      "role": "a BROWSER TAB on the bar - an address bar, back / forward / reload / stop, a connection LED, Copy and Open - whose page is drawn by the browser already showing the GUI (one iframe), so the harness ships no engine and downloads nothing; the page type carries one guide entry at order 40, so Browser sits on the Start page beside Files (10), Editor (20) and History (30). Its only host surface is GET /api/dsh-browser/probe, which fetches an address from the host (Node's own TLS, never system tools) and reports X-Frame-Options / CSP frame-ancestors, so the tab blocks only a REAL framing refusal and annotates every other answer (401, DNS, timeout, non-HTML) as a note - the frame uses the browser's own session, so an anonymous check must not stop it. A cross-origin frame is opaque: in-frame navigation is invisible, so back/forward replay the addresses the tab loaded, and the render surface is one entry in a SURFACES map, so a harness-owned engine (CDP streamed into a canvas) can be added later without touching the toolbar, the tab type or the Start entry",
+      "uses": [
+        "dsh-rightbar"
+      ]
+    },
     "dsh-terminal": {
       "version": "0.1.0-alpha.3",
       "rows": [

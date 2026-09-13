@@ -235,6 +235,96 @@ if (!hasGit) {
   await fsp.rm(gitRoot, { recursive: true, force: true })
 }
 
+// -------------------------------------------------------------- dsh-browser
+// The framing probe, driven against a REAL local HTTP server this block starts:
+// the header classification (X-Frame-Options, frame-ancestors, and the precedence
+// between them), the title sniff, the notes, and the guards. The probe request's
+// own origin is `http://x`, so "same origin" and a `frame-ancestors http://x`
+// source can both be exercised without a second host.
+//
+// This block runs BEFORE the terminal's: the terminal's checks spawn a real PTY,
+// which a sandbox without a console host cannot do, and that failure takes the
+// process down with it - the browser's checks must not be collateral.
+const { createServer } = await import('node:http')
+const browserPages = {
+  '/plain': { type: 'text/html; charset=utf-8', body: '<!doctype html><title>Plain &amp; Simple</title><h1>ok</h1>' },
+  '/deny': { type: 'text/html', headers: { 'x-frame-options': 'DENY' }, body: '<title>Denied</title>' },
+  '/sameorigin': { type: 'text/html', headers: { 'x-frame-options': 'SAMEORIGIN' }, body: '<title>Same</title>' },
+  '/csp-none': { type: 'text/html', headers: { 'content-security-policy': "default-src 'self'; frame-ancestors 'none'; script-src 'self'" }, body: '<title>None</title>' },
+  '/csp-empty': { type: 'text/html', headers: { 'content-security-policy': 'frame-ancestors' }, body: '<title>Empty</title>' },
+  '/csp-star': { type: 'text/html', headers: { 'content-security-policy': 'frame-ancestors *', 'x-frame-options': 'SAMEORIGIN' }, body: '<title>Star</title>' },
+  '/csp-origin': { type: 'text/html', headers: { 'content-security-policy': 'frame-ancestors http://x' }, body: '<title>Origin</title>' },
+  '/csp-self': { type: 'text/html', headers: { 'content-security-policy': "frame-ancestors 'self'" }, body: '<title>Self</title>' },
+  '/head-refused': { type: 'text/html', body: '<title>Sniffed</title>', refuseHead: true },
+  '/attachment': { type: 'application/zip', headers: { 'content-disposition': 'attachment; filename="a.zip"' }, body: 'PK' },
+  '/nothtml': { type: 'application/octet-stream', body: 'binary' },
+  '/no-title': { type: 'text/html', body: '<!doctype html><h1>No title here</h1>' },
+}
+const browserServer = createServer((request, response) => {
+  const route = browserPages[String(request.url).split('?')[0]]
+  if (route === undefined) {
+    response.writeHead(404, { 'content-type': 'text/plain' })
+    response.end('not here')
+    return
+  }
+  if (route.refuseHead === true && request.method === 'HEAD') {
+    response.writeHead(405, { 'content-type': 'text/plain' })
+    response.end()
+    return
+  }
+  response.writeHead(200, { 'content-type': route.type, ...(route.headers || {}) })
+  if (request.method === 'HEAD') response.end()
+  else response.end(route.body)
+})
+await new Promise((resolve) => browserServer.listen(0, '127.0.0.1', resolve))
+const browserBase = 'http://127.0.0.1:' + String(browserServer.address().port)
+
+const probeHandler = await capture(path.join(repo, 'packages/dsh-browser/lib/index.js'), '/api/dsh-browser/probe', {})
+// The directive stands on the host side too: no engine is installed, downloaded
+// or looked up on this machine - the probe is Node's own fetch and nothing else.
+const browserNodeSource = await fsp.readFile(path.join(repo, 'packages/dsh-browser/lib/index.js'), 'utf8')
+check('probe host reaches for no OS browser', /msedge|chrome\.exe|Google Chrome|playwright|puppeteer|chrome-headless|child_process/i.test(browserNodeSource), false)
+const probe = (url) => probeHandler(new Request('http://x/api/dsh-browser/probe?url=' + encodeURIComponent(url), { method: 'GET' }))
+const probeJson = async (routePath) => {
+  const response = await probe(browserBase + routePath)
+  const body = await response.json().catch(() => null)
+  return { status: response.status, body: body === null ? {} : body }
+}
+const noteOf = (payload) => String(payload.body.note || '')
+
+const plain = await probeJson('/plain')
+check('probe allows an ordinary page', plain.body.frameable, true)
+check('probe reads the document title', plain.body.title, 'Plain & Simple')
+check('probe reports the status', plain.body.status, 200)
+check('probe reports the final address', plain.body.finalUrl, browserBase + '/plain')
+const deny = await probeJson('/deny')
+check('probe catches X-Frame-Options DENY', deny.body.frameable, false)
+check('probe names the header', deny.body.blockedBy && deny.body.blockedBy.value, 'X-Frame-Options: DENY')
+check('probe names the kind', deny.body.blockedBy && deny.body.blockedBy.kind, 'xfo')
+check('probe catches SAMEORIGIN from another origin', (await probeJson('/sameorigin')).body.frameable, false)
+const cspNone = await probeJson('/csp-none')
+check('probe catches frame-ancestors none', cspNone.body.frameable, false)
+check('probe names the directive', cspNone.body.blockedBy && cspNone.body.blockedBy.value, "frame-ancestors 'none'")
+check('probe catches an empty directive', (await probeJson('/csp-empty')).body.frameable, false)
+check('probe lets a star through', (await probeJson('/csp-star')).body.frameable, true)
+check('probe lets THIS origin through', (await probeJson('/csp-origin')).body.frameable, true)
+check("probe refuses frame-ancestors 'self'", (await probeJson('/csp-self')).body.frameable, false)
+const sniffed = await probeJson('/head-refused')
+check('probe ignores a server that refuses HEAD', sniffed.body.frameable, true)
+check('probe still reads that title', sniffed.body.title, 'Sniffed')
+check('probe notes a download', noteOf(await probeJson('/attachment')).includes('downloads a file'), true)
+check('probe notes a non-page type', noteOf(await probeJson('/nothtml')).includes('application/octet-stream'), true)
+check('probe leaves an absent title empty', (await probeJson('/no-title')).body.title, '')
+check('probe requires a url', (await probeHandler(new Request('http://x/api/dsh-browser/probe'))).status, 400)
+check('probe rejects a non-address', (await probe('notaurl')).status, 400)
+check('probe rejects a non-http scheme', (await probe('file:///etc/passwd')).status, 400)
+check('probe rejects credentials in the address', (await probe('http://user:pass@127.0.0.1:1/x')).status, 400)
+check('probe refuses an overlong address', (await probe('http://example.com/' + 'a'.repeat(2100))).status, 414)
+const dead = await probe('http://127.0.0.1:1/')
+check('probe reports an unreachable host', dead.status, 502)
+check('probe types the failure', (await dead.json()).error.code, 'UNREACHABLE')
+browserServer.close()
+
 // ------------------------------------------------------------ dsh-terminal
 // The terminal's Node half is three HTTP routes and ONE WebSocket upgrade. The
 // HTTP ones are driven directly; the upgrade is driven over a real socket

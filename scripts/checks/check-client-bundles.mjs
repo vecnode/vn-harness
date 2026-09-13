@@ -842,6 +842,94 @@ check(
   '<span class="dsg-title">History</span>',
 )
 
+// ---------------------------------------------------------------- dsh-browser
+const browser = loadBundle('packages/dsh-browser/lib/client.js', {})
+const browserCssTag = browser.document.head.children.filter((tag) => tag.dataset && tag.dataset.pluginCss === 'dsh-browser/browser.css').pop()
+const browserCss = browserCssTag ? browserCssTag.textContent : ''
+const browserSource = readFileSync(path.join(repo, 'packages/dsh-browser/lib/client.js'), 'utf8')
+check('browser bundle id', browser.id, 'dsh-browser')
+check('browser inject', JSON.stringify(browser.exports.inject), '["slots","sidebarRightTabs"]')
+check(
+  'browser stylesheet injected',
+  browserCss.includes('.dsb-root{') && browserCss.includes('.dsb-led[data-dsb-led="live"]') && browserCss.includes('.dsb-frame{'),
+)
+const browserTypes = []
+const browserSeats = {}
+browser.exports.apply({
+  slots: {
+    inject: (name, fn) => fn(),
+    register(spec, component) {
+      browserSeats[spec.name + (spec.key ? '#' + spec.key : '')] = { spec, component }
+      return () => {}
+    },
+  },
+  sidebarRightTabs: { register: (definition) => (browserTypes.push(definition), () => {}), entries: () => [] },
+  effect: (fn) => fn(),
+  logger: { debug() {}, warn() {} },
+})
+check('browser type registered', browserTypes.length === 1 && browserTypes[0].id + '/' + browserTypes[0].kind, 'dsh-browser/browser')
+check('browser is a page type', browserTypes[0].patterns === undefined)
+check('browser chip title', browserTypes[0].title('sidebar://browser'), 'Browser')
+check('browser guide entry', browserTypes[0].guide.map((entry) => entry.order + ':' + entry.title()).join(','), '40:Browser')
+check('browser guide walks the Start page', typeof browserTypes[0].guide[0].icon, 'function')
+check(
+  'browser seats',
+  Object.keys(browserSeats).sort().join(','),
+  'sidebar.right.pane.tab#dsh-browser,sidebar.right.pane.tab.title#dsh-browser',
+)
+const BrowserBody = browserSeats['sidebar.right.pane.tab#dsh-browser'].component
+const browserTab = { id: 'tab5', contentId: 'sidebar://browser', title: 'Browser', navigation: { revision: 0 } }
+const browserMarkup = renderToStaticMarkup(h(BrowserBody, { useTabInfo: () => ({ tab: browserTab }), sessionId: 's1' }))
+check('browser body renders', browserMarkup.includes('data-dsb-tab="tab5"') && browserMarkup.includes('data-dsb-address="sidebar://browser"'))
+check(
+  'browser draws an address bar and the transport',
+  browserMarkup.includes('data-dsb-url') &&
+    browserMarkup.includes('data-dsb-back') &&
+    browserMarkup.includes('data-dsb-forward') &&
+    browserMarkup.includes('data-dsb-reload') &&
+    browserMarkup.includes('data-dsb-copy') &&
+    browserMarkup.includes('data-dsb-open'),
+)
+check('browser starts idle with a grey led', browserMarkup.includes('data-dsb-phase="idle"') && browserMarkup.includes('data-dsb-led="idle"'))
+check('browser cannot go back with no history', /data-dsb-back="[^"]*"[^>]*disabled/.test(browserMarkup))
+check('browser cannot go forward with no history', /data-dsb-forward="[^"]*"[^>]*disabled/.test(browserMarkup))
+check('browser opens on its own card', browserMarkup.includes('data-dsb-card="idle"'))
+check('browser names its surface and version', browserMarkup.includes('data-dsb-surface="iframe"') && browserMarkup.includes('dsh-browser 0.1.0-alpha.1'))
+check(
+  'browser title seat draws the chip',
+  renderToStaticMarkup(h(browserSeats['sidebar.right.pane.tab.title#dsh-browser'].component, {})),
+  '<span class="dsb-chip">Browser</span>',
+)
+// An opener names the first address: `openTab('browser', { params: { url } })`.
+const openedTab = { id: 'tab5', contentId: 'sidebar://browser', title: 'Browser', navigation: { revision: 1, params: { url: 'example.com' } } }
+const openedMarkup = renderToStaticMarkup(h(BrowserBody, { useTabInfo: () => ({ tab: openedTab }), sessionId: 's1' }))
+check('browser adopts an opener address', openedMarkup.includes('value="https://example.com/"'))
+const badOpenerTab = { ...browserTab, navigation: { revision: 1, params: { url: 'javascript:alert(1)' } } }
+const badOpenerMarkup = renderToStaticMarkup(h(BrowserBody, { useTabInfo: () => ({ tab: badOpenerTab }), sessionId: 's1' }))
+check('browser refuses an opener that is not an address', badOpenerMarkup.includes('javascript'), false)
+// The seam: one surface ships, and it is a frame drawn by the browser in front of
+// the user. A second entry in SURFACES (a harness-owned engine) must not need any
+// other change, which is why the contract is asserted here.
+check('browser ships one surface', browserSource.includes('const SURFACES = {') && browserSource.includes('iframe: createIframeSurface'))
+check(
+  'browser surface contract',
+  browserSource.includes('mount()') &&
+    browserSource.includes('goto(address)') &&
+    browserSource.includes('reload()') &&
+    browserSource.includes('stop()') &&
+    browserSource.includes('dispose()'),
+)
+check('browser hides the frame without unmounting it', browserSource.includes("display: showCard ? 'none' : 'flex'"))
+check('browser reports one state shape', browserSource.includes('onState: (patch) => setNav((state) => ({ ...state, ...patch }))'))
+// Only a REAL framing refusal blocks a load: every other probe answer hands the
+// address to the frame, which uses the browser's own session.
+check('browser blocks on a refusal', /answer\.frameable === false\) \{\s*\n\s*setNav\(\{ phase: 'blocked'/.test(browserSource))
+check('browser loads despite a failed check', /answer\.ok !== true\) \{[\s\S]{0,400}?surface\.goto\(address\)/.test(browserSource))
+check('browser re-asks after a refusal', browserSource.includes('probeCacheRef.current.delete(address)'))
+// The directive stands: the harness ships no engine and reaches for no OS browser.
+check('browser reaches for no OS browser', /msedge|chrome\.exe|Google Chrome|playwright|puppeteer|chrome-headless/i.test(browserSource), false)
+check('browser loads no engine', /child_process|webview|require\(['"]electron/.test(browserSource), false)
+
 // -------------------------------------------------------------- dsh-terminal
 const terminal = loadBundle('packages/dsh-terminal/lib/client.js', {})
 const termCssTag = terminal.document.head.children.filter((tag) => tag.dataset && tag.dataset.pluginCss === 'dsh-terminal/terminal.css').pop()

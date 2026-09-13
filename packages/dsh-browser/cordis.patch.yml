@@ -1,0 +1,15 @@
+# dsh-browser bundle layer (alpha).
+#
+# One extra row owns the Browser tab: a page tab type on the pack's right bar -
+# `dsh-rightbar` provides the `sidebarRightTabs` registry and the keyed tab
+# seats this plugin registers into - with one guide entry on the tab strip's
+# "+" / Start page, beside Files (order 10), Editor (20) and History (30).
+#
+# Nothing shipped is patched and no core row is disabled: this package adds
+# surface, it replaces nothing, so there is no `disabled: true` here and nothing
+# for scripts/sync-vendored.ps1 to keep in sync. The row is not a no-op either:
+# its Node half owns the /api/dsh-browser/probe route the tab asks before it
+# loads an address.
+- insert:
+    - id: browser
+      name: 'dsh-browser'
