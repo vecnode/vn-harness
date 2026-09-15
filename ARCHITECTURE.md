@@ -164,9 +164,10 @@ a tab strip, a "+" add control, splits and floating panels. Its strip starts
 with the **Start** tab - the *guide* page, whose body lists one entry capsule
 per registered tab type - and the **Files** tab with the session workspace tree.
 
-**That bar is this pack's.** `dsh-rightbar` ships a byte-for-byte fork of the
-shipped `@deepseek-ai/dsh-client-ui-sidebar-right` bundle (module-table id
-rewritten to `dsh-rightbar`), and `dsh-rightbar-files` does the same for
+**That bar is this pack's.** `dsh-rightbar` ships a fork of the shipped
+`@deepseek-ai/dsh-client-ui-sidebar-right` bundle (module-table id rewritten to
+`dsh-rightbar`, plus the patch list in `scripts/sync-vendored.ps1` applied on
+top), and `dsh-rightbar-files` does the same for
 `@deepseek-ai/dsh-client-ui-sidebar-files`. The bar's bundle layer then
 hard-disables the two core rows:
 
@@ -203,8 +204,37 @@ without waiting for a new seam. The two mechanisms that make it safe:
   `ui-sidebar-documentpreview` row (deliberately left enabled) still loads and
   still finds the `sidebarRightTabs` service, now provided by the pack.
 
-The contract other plugins use is unchanged (that is the point of a
-byte-for-byte fork) and is the seam the pack's own sub-plugins use:
+**The only behavioral patch so far: four docked panes, not two** (alpha.2). The
+docking kit itself allows `MAX_DOCK_PANES = 4` - its `canSplit` means *fewer than
+four* - and resolves five drop zones per pane (`center`/`left`/`right` as the
+`row` axis, `top`/`bottom` as the `column` axis), rendering any tree depth with
+`splitRow`/`splitColumn`, per-split dividers and `planResizeSplit`. The shipped
+sidebar-right bundle caps that at two in five places, and the fork had inherited
+it verbatim. The patch list lifts all five and switches the surface from
+`dropZones: "horizontal"` to `"edges"` (the kit's default), so the ceiling is the
+kit's own again:
+
+| Enforced in core | Now |
+|---|---|
+| the `splitPane` store intent: `dockPaneIds(state).length >= 2` | the kit's `canSplit` only |
+| the `dropTab` store intent: refuses `top`/`bottom`, and any edge drop at two panes | the kit's `planDropTab`, which checks `canSplit` itself |
+| the surface's `canSplit` prop: `canSplit(layout) && dockPaneIds(layout).length < 2` | `canSplit(layout)` |
+| the `split()` command guard: `canSplit(layout) \|\| … >= 2 \|\| !canSplitPane(target)` | `canSplit(layout) \|\| !canSplitPane(target)` |
+| the `dock.splitPaneDisabled` hint: "Two panes is the limit" / the zh twin | "Four panes is the limit" / its zh twin |
+
+Two consequences worth knowing. The **Split control is still row-only** - the
+kit's `planSplitPane` hardcodes `axis: "row", direction: "after"` - so a 2×2 is
+built by **dragging a tab into a pane's top or bottom quarter**; the hints for
+those bands ("Add top split" / "Add bottom split") and their glyphs were already
+in the core bundle and its locale dictionaries, and only the fork's own refusal
+kept them from ever being drawn. And **room still beats count**: the kit hides the
+Split control and refuses a drop when a pane cannot hold two strips
+(`SPLIT_MINIMUMS` ≈ 100px chip + 48px body each side), so four panes want a
+widened bar or the panel's fullscreen mode. Floating panels were never counted
+against the dock ceiling, so they remain the way past four.
+
+The contract other plugins use is unchanged (the fork's patches move one limit,
+never the contract) and is the seam the pack's own sub-plugins use:
 
 ```ts
 ctx.sidebarRightTabs.register({

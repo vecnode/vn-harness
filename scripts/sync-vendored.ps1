@@ -78,15 +78,69 @@ function Write-Step($msg) { Write-Host "[sync-vendored] $msg" -ForegroundColor C
 #>
 function T($n) { return ("`t" * $n) }
 
+# The fork's own Chinese `dock.splitPaneDisabled` label, built from code points
+# so this script keeps its ASCII-only rule (see AGENTS.md): the bundle carries
+# the literal characters, so a patch that matches (and rewrites) them has to
+# produce the same characters without putting them in this file.
+$splitCapTwo = (-join ([char[]](0x5DF2, 0x8FBE, 0x4E24, 0x683C, 0x4E0A, 0x9650)))
+$splitCapFour = (-join ([char[]](0x5DF2, 0x8FBE, 0x56DB, 0x683C, 0x4E0A, 0x9650)))
+
 # Vendored package -> the core package it forks, plus the patches applied after
 # the module-table id is rewritten. A patch is a literal Find/Replace pair: the
 # Find text must appear exactly once (tab-indented), and a re-sync that cannot
 # place one fails loudly instead of shipping a fork that silently lost it.
 $vendored = @(
+    # The sidebar-right bundle caps its dock at TWO panes in five places, while
+    # the docking kit it builds on allows `MAX_DOCK_PANES` (4) and offers all five
+    # of its drop zones. These patches hand the limit back to the kit's own
+    # `canSplit` (fewer than four), re-open the top/bottom bands - a tab dragged
+    # into a pane's upper or lower quarter stacks a pane there, which is how a 2x2
+    # is built, since the Split control itself always adds a column to the right -
+    # and let the disabled Split hint name the ceiling that is actually in force.
     [pscustomobject]@{
         Name    = 'dsh-rightbar'
         Core    = '@deepseek-ai/dsh-client-ui-sidebar-right'
-        Patches = @()
+        Patches = @(
+            [pscustomobject]@{
+                Label   = 'lift the two-pane cap: the split intent is bounded by the kit own canSplit'
+                Find    = '(0, _deepseek_ai_dsh_client_ui_dockkit.dockPaneIds)(state).length >= 2 || '
+                Replace = ''
+            },
+            [pscustomobject]@{
+                Label   = 'lift the two-pane cap: an edge drop is bounded by the kit own canSplit, top and bottom included'
+                Find    = (@(
+                        ((T 7) + 'if (zone === "top" || zone === "bottom") return [];'),
+                        ((T 7) + 'if (zone !== "center" && (0, _deepseek_ai_dsh_client_ui_dockkit.dockPaneIds)(state).length >= 2) return [];'),
+                        ''
+                    ) -join "`n")
+                Replace = ''
+            },
+            [pscustomobject]@{
+                Label   = 'lift the two-pane cap: the dock surface is bounded by the kit own canSplit'
+                Find    = '(0, _deepseek_ai_dsh_client_ui_dockkit.canSplit)(surface.layout) && (0, _deepseek_ai_dsh_client_ui_dockkit.dockPaneIds)(surface.layout).length < 2'
+                Replace = '(0, _deepseek_ai_dsh_client_ui_dockkit.canSplit)(surface.layout)'
+            },
+            [pscustomobject]@{
+                Label   = 'offer every drop band a pane has, not left and right only'
+                Find    = 'dropZones: "horizontal",'
+                Replace = 'dropZones: "edges",'
+            },
+            [pscustomobject]@{
+                Label   = 'lift the two-pane cap: the split command is bounded by the kit own canSplit'
+                Find    = ' || (0, _deepseek_ai_dsh_client_ui_dockkit.dockPaneIds)(layout).length >= 2'
+                Replace = ''
+            },
+            [pscustomobject]@{
+                Label   = 'the disabled split hint names the kit own ceiling'
+                Find    = '"dock.splitPaneDisabled": "Two panes is the limit",'
+                Replace = '"dock.splitPaneDisabled": "Four panes is the limit",'
+            },
+            [pscustomobject]@{
+                Label   = 'the Chinese disabled split hint names the same ceiling'
+                Find    = '"dock.splitPaneDisabled": "' + $splitCapTwo + '",'
+                Replace = '"dock.splitPaneDisabled": "' + $splitCapFour + '",'
+            }
+        )
     },
     [pscustomobject]@{
         Name    = 'dsh-rightbar-files'

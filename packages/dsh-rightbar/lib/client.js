@@ -1,7 +1,15 @@
 // GENERATED - do not edit by hand.
 //
-// Byte-for-byte fork of @deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-rc.1
-// (lib/client.js) with only the module-table id rewritten to "dsh-rightbar".
+// Fork of @deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-rc.1 (lib/client.js): the module-table id is
+// rewritten to "dsh-rightbar", and these patches from scripts\sync-vendored.ps1
+// are applied on top:
+//   - lift the two-pane cap: the split intent is bounded by the kit own canSplit
+//   - lift the two-pane cap: an edge drop is bounded by the kit own canSplit, top and bottom included
+//   - lift the two-pane cap: the dock surface is bounded by the kit own canSplit
+//   - offer every drop band a pane has, not left and right only
+//   - lift the two-pane cap: the split command is bounded by the kit own canSplit
+//   - the disabled split hint names the kit own ceiling
+//   - the Chinese disabled split hint names the same ceiling
 // The pack's bundle layer disables the core row, so this copy is the one that
 // runs. Re-sync with:  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\sync-vendored.ps1
 //
@@ -494,7 +502,7 @@ window.__ModuleLoader__.load({
 					},
 					splitPane: (d, sessionId, paneId, settled) => {
 						d.bySession = seat(d, sessionId, (s) => {
-							const next = advance(s, (state, mint, makeTab) => (0, _deepseek_ai_dsh_client_ui_dockkit.dockPaneIds)(state).length >= 2 || (0, _deepseek_ai_dsh_client_ui_dockkit.getPane)(state, paneId ?? (0, _deepseek_ai_dsh_client_ui_dockkit.activeDockPaneId)(state)).tabs.length === 0 ? [] : (0, _deepseek_ai_dsh_client_ui_dockkit.planSplitPane)(state, mint, paneId, makeTab), seed);
+							const next = advance(s, (state, mint, makeTab) => (0, _deepseek_ai_dsh_client_ui_dockkit.getPane)(state, paneId ?? (0, _deepseek_ai_dsh_client_ui_dockkit.activeDockPaneId)(state)).tabs.length === 0 ? [] : (0, _deepseek_ai_dsh_client_ui_dockkit.planSplitPane)(state, mint, paneId, makeTab), seed);
 							if (settled !== void 0 && next !== s) {
 								const before = new Set((0, _deepseek_ai_dsh_client_ui_dockkit.dockPaneIds)(s.layout));
 								for (const id of (0, _deepseek_ai_dsh_client_ui_dockkit.dockPaneIds)(next.layout)) if (!before.has(id)) settled(id);
@@ -566,8 +574,6 @@ window.__ModuleLoader__.load({
 					},
 					dropTab: (d, sessionId, tabId, paneId, zone) => {
 						d.bySession = seat(d, sessionId, (s) => advance(s, (state, mint, makeTab) => {
-							if (zone === "top" || zone === "bottom") return [];
-							if (zone !== "center" && (0, _deepseek_ai_dsh_client_ui_dockkit.dockPaneIds)(state).length >= 2) return [];
 							const plan = () => (0, _deepseek_ai_dsh_client_ui_dockkit.planDropTab)(state, mint, tabId, paneId, zone, makeTab);
 							return zone === "center" ? arriving(state, tabId, paneId, plan) : plan();
 						}, seed));
@@ -867,9 +873,9 @@ window.__ModuleLoader__.load({
 					className: SidebarRight_module_css_default.panelBody,
 					children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_dockkit.DockSurface, {
 						state: surface.layout,
-						canSplit: (0, _deepseek_ai_dsh_client_ui_dockkit.canSplit)(surface.layout) && (0, _deepseek_ai_dsh_client_ui_dockkit.dockPaneIds)(surface.layout).length < 2,
+						canSplit: (0, _deepseek_ai_dsh_client_ui_dockkit.canSplit)(surface.layout),
 						hideSplitWhenBlocked: true,
-						dropZones: "horizontal",
+						dropZones: "edges",
 						minPaneFraction: .2,
 						canAddTab: (paneId) => guideIn(surface.layout, paneId) === void 0,
 						canCloseTab: (tabId) => canCloseTab(surface, tabId),
@@ -1357,7 +1363,7 @@ window.__ModuleLoader__.load({
 				const target = paneId ?? (0, _deepseek_ai_dsh_client_ui_dockkit.activeDockPaneId)(layout);
 				const node = layout.nodes[target];
 				if (node === void 0 || node.kind !== "pane" || node.host !== "dock") return void 0;
-				if (!(0, _deepseek_ai_dsh_client_ui_dockkit.canSplit)(layout) || (0, _deepseek_ai_dsh_client_ui_dockkit.dockPaneIds)(layout).length >= 2 || !canSplitPane(target)) return void 0;
+				if (!(0, _deepseek_ai_dsh_client_ui_dockkit.canSplit)(layout) || !canSplitPane(target)) return void 0;
 				let created;
 				actions.splitPane(sessionId, target, (id) => {
 					created = id;
@@ -3537,7 +3543,7 @@ window.__ModuleLoader__.load({
 			"chrome.exitFullscreen": "退出全屏",
 			"dock.emptyPane": "空面板",
 			"dock.splitPane": "分栏",
-			"dock.splitPaneDisabled": "已达两格上限",
+			"dock.splitPaneDisabled": "已达四格上限",
 			"dock.splitPaneNarrow": "栏宽不足，拖宽侧边栏后再分栏",
 			"dock.closeTab": "关闭",
 			"dock.addTab": "新标签页",
@@ -3561,7 +3567,7 @@ window.__ModuleLoader__.load({
 			"chrome.exitFullscreen": "Exit fullscreen",
 			"dock.emptyPane": "Empty pane",
 			"dock.splitPane": "Split",
-			"dock.splitPaneDisabled": "Two panes is the limit",
+			"dock.splitPaneDisabled": "Four panes is the limit",
 			"dock.splitPaneNarrow": "Not enough width to split, widen the sidebar",
 			"dock.closeTab": "Close",
 			"dock.addTab": "New tab",

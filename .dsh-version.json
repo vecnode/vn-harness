@@ -18,7 +18,7 @@
       "rowOverrides": []
     },
     "dsh-rightbar": {
-      "version": "0.1.0-alpha.1",
+      "version": "0.1.0-alpha.2",
       "rows": [
         "rightbar"
       ],
@@ -28,7 +28,9 @@
       ],
       "vendors": [
         "@deepseek-ai/dsh-client-ui-sidebar-right"
-      ]
+      ],
+      "vendoredPatches": 7,
+      "role": "the pack's right bar, forked from the shipped bundle and patched by scripts/sync-vendored.ps1. Its seven patches lift the dock's TWO-pane cap in the five places the core bundle enforces it (the split intent, the edge-drop intent, the surface's canSplit prop, the split command) and re-open the top/bottom drop bands ('Add top split' / 'Add bottom split' were already in the core locales and glyphs), so the ceiling is the docking kit's own canSplit: four docked panes, with the disabled-hint label in both languages naming that ceiling. The 2x2 is built by dragging a tab into a pane's top or bottom quarter; floating panels were never counted, so they remain the way past four. Nothing else in the fork differs from core - no contract, slot or service change"
     },
     "dsh-rightbar-files": {
       "version": "0.1.0-alpha.1",

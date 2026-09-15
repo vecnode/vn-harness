@@ -928,6 +928,29 @@ check('terminal tracks the animated left bar', termSource.includes('new ResizeOb
 check('terminal also snaps on transitionend', termSource.includes("frame.addEventListener('transitionend', onTransitionEnd)"))
 check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.3'))
 
+// -------------------------------------------------------------- dsh-rightbar
+// The right bar is a GENERATED fork, so these are source-level checks (like the
+// terminal's): what the fork must - and must not - contain once
+// `sync-vendored.ps1` has rebuilt it from the core bundle plus its patch list.
+// The dock's ceiling belongs to the kit (`MAX_DOCK_PANES = 4`, and the kit's own
+// `canSplit` means "fewer than four"); the core bundle caps it at TWO in five
+// places, which is what these assert the fork no longer does. A hand edit that
+// skipped the patch list would show up here on the next re-sync.
+const barSource = readFileSync(path.join(repo, 'packages/dsh-rightbar/lib/client.js'), 'utf8')
+const syncSource = readFileSync(path.join(repo, 'scripts/sync-vendored.ps1'), 'utf8')
+check('right bar has no two-pane cap', /dockPaneIds\)\((?:state|layout|surface\.layout)\)\.length [<>]=? 2/.test(barSource), false)
+check('right bar offers every drop band', barSource.includes('dropZones: "edges",') && barSource.includes('dropZones: "horizontal"') === false)
+check('right bar hands the limit to the kit', barSource.includes('canSplit: (0, _deepseek_ai_dsh_client_ui_dockkit.canSplit)(surface.layout),'))
+check(
+  'right bar names the four-pane ceiling',
+  barSource.includes('"dock.splitPaneDisabled": "Four panes is the limit",') &&
+    barSource.includes('"dock.splitPaneDisabled": "\u5df2\u8fbe\u56db\u683c\u4e0a\u9650",'),
+)
+check(
+  'right bar cap lift is a recorded patch',
+  syncSource.includes('lift the two-pane cap') && syncSource.includes('offer every drop band a pane has'),
+)
+
 console.log('')
 console.log(failures === 0 ? 'all client-bundle checks passed' : failures + ' check(s) FAILED')
 process.exitCode = failures === 0 ? 0 : 1

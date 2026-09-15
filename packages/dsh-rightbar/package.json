@@ -1,7 +1,7 @@
 {
   "name": "dsh-rightbar",
-  "version": "0.1.0-alpha.1",
-  "description": "Right bar: vn-harness' own right Sidebar for the DeepSeek Harness web GUI - the tab strip, the docking panel, the expand control, the tab-type registry (sidebarRightTabs/sidebarRight), the keyed tab seats and the Start/guide page. Vendored from the shipped @deepseek-ai/dsh-client-ui-sidebar-right bundle so the pack owns the code; the bundle layer disables the core row. Alpha.",
+  "version": "0.1.0-alpha.2",
+  "description": "Right bar: vn-harness' own right Sidebar for the DeepSeek Harness web GUI - the tab strip, the docking panel, the expand control, the tab-type registry (sidebarRightTabs/sidebarRight), the keyed tab seats and the Start/guide page. Vendored from the shipped @deepseek-ai/dsh-client-ui-sidebar-right bundle so the pack owns the code, with the patch list in scripts/sync-vendored.ps1 applied on top (today: the dock's two-pane cap lifted to the kit's own four); the bundle layer disables the core row. Alpha.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
