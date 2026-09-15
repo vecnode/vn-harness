@@ -20,8 +20,8 @@ way and what it touches; the table below is the map.
 | [`dsh-vn-master`](packages/dsh-vn-master/README.md) | [`README.md`](packages/dsh-vn-master/README.md) | alpha `0.1.0-alpha.1` |
 | [`dsh-rightbar`](packages/dsh-rightbar/README.md) | [`README.md`](packages/dsh-rightbar/README.md) | alpha `0.1.0-alpha.1` |
 | [`dsh-rightbar-files`](packages/dsh-rightbar-files/README.md) | [`README.md`](packages/dsh-rightbar-files/README.md) | alpha `0.1.0-alpha.1` |
-| [`dsh-editor`](packages/dsh-editor/README.md) | [`README.md`](packages/dsh-editor/README.md) | alpha `0.1.0-alpha.8` |
-| [`dsh-gittree`](packages/dsh-gittree/README.md) | [`README.md`](packages/dsh-gittree/README.md) | alpha `0.1.0-alpha.3` |
+| [`dsh-editor`](packages/dsh-editor/README.md) | [`README.md`](packages/dsh-editor/README.md) | alpha `0.1.0-alpha.9` |
+| [`dsh-gittree`](packages/dsh-gittree/README.md) | [`README.md`](packages/dsh-gittree/README.md) | alpha `0.1.0-alpha.4` |
 | [`dsh-terminal`](packages/dsh-terminal/README.md) | [`README.md`](packages/dsh-terminal/README.md) | alpha `0.1.0-alpha.3` |
 | [`dsh-themes`](packages/dsh-themes/README.md) | [`README.md`](packages/dsh-themes/README.md) | alpha `0.1.0-alpha.10` |
 | [`dsh-modal`](packages/dsh-modal/README.md) | [`README.md`](packages/dsh-modal/README.md) | alpha `0.1.0-alpha.1` |

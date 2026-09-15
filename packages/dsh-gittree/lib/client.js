@@ -76,7 +76,7 @@ window.__ModuleLoader__.load({
     const FILE_PREFIX = 'dsh-resource://file/'
     const SESSION_SEGMENT = 'session/'
     /** Version marker shown on the tool bar so a freshly loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.3'
+    const PLUGIN_VERSION = '0.1.0-alpha.4'
     /** The keyed seats every tab type occupies. */
     const TAB_SLOT = 'sidebar.right.pane.tab'
     const TITLE_SLOT = 'sidebar.right.pane.tab.title'
@@ -88,11 +88,18 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     const css = `
 .dsg-root{height:100%;min-height:0;flex:auto;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;color:var(--dsw-alias-label-primary,#1f1f1f);font-size:13px;line-height:1.5}
-.dsg-tools{flex:none;display:flex;align-items:center;gap:6px;padding:8px 10px 8px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18))}
+/* The toolbar IS this tab's top bar, and every column's top band ends in the
+   same hairline at y=76: the docking strip above a pane is 38px (28px + 10px
+   top padding) and the conversation header is min-height:76px, which is why the
+   shipped Files tab's own 38px header lands exactly on that line. This bar was
+   26px of control in 8px/8px of padding (42.5px), so its rule sat ~4.5px BELOW
+   the other two columns'. It is now the same 38px box, with a size-down 24px
+   control inside it, so the three hairlines are one line. */
+.dsg-tools{flex:none;display:flex;align-items:center;gap:6px;box-sizing:border-box;height:38px;padding:0 10px 0 12px;border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18))}
 .dsg-scope{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-tertiary,#999)}
 .dsg-title{white-space:nowrap}
 .dsg-glyph{flex:none;color:var(--dsw-alias-label-tertiary,#999)}
-.dsg-btn{flex:none;display:inline-flex;align-items:center;height:26px;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary,#1f1f1f);font:inherit;font-size:12.5px;padding:0 10px;cursor:pointer;white-space:nowrap}
+.dsg-btn{flex:none;display:inline-flex;align-items:center;height:24px;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary,#1f1f1f);font:inherit;font-size:12px;padding:0 9px;cursor:pointer;white-space:nowrap}
 .dsg-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
 .dsg-fileBar{flex:none;display:flex;align-items:center;gap:8px;padding:4px 10px 5px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.14));font-size:11.5px;color:var(--dsw-alias-label-tertiary,#999);min-width:0}
 .dsg-branch{flex:none;display:inline-flex;align-items:center;gap:5px;color:var(--dsw-alias-label-secondary,#666);min-width:0}

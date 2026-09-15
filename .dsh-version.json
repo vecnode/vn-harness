@@ -40,11 +40,12 @@
       ]
     },
     "dsh-editor": {
-      "version": "0.1.0-alpha.8",
+      "version": "0.1.0-alpha.9",
       "rows": [
         "editor"
       ],
       "rowOverrides": [],
+      "role": "the editable text/code tab type (kind `editor`): CodeMirror 6 in the right bar's pane, Markdown included, blank documents created through the + control, and a Preview hand-off to the shipped rendered view. Its toolbar is the tab's own TOP BAR (alpha.9): 38px with box-sizing:border-box, the same box the shipped Files tab and the document preview use, so the pane's first hairline lands on the y=76 line the 38px docking strip, the conversation header (min-height:76px) and the left column's branding band all end on - it was 42.5px (8px padding around a 26px control) and sat ~4.5px low",
       "uses": [
         "dsh-modal",
         "@deepseek-ai/dsh-client-ui-theme",
@@ -60,12 +61,12 @@
       ]
     },
     "dsh-gittree": {
-      "version": "0.1.0-alpha.3",
+      "version": "0.1.0-alpha.4",
       "rows": [
         "gittree"
       ],
       "rowOverrides": [],
-      "role": "the workspace's COMMIT HISTORY as a page tab type, labelled History in the capsule and the chip while the package, row and address keep the gittree name (guide order 30, after Files and Editor), with the branch and current commit in its file bar; its Node half owns read-only /api/dsh-gittree routes, and the tab reads state with brief=1 so no file list is ever built - no fork, no core row disabled, nothing for sync-vendored.ps1 to track",
+      "role": "the workspace's COMMIT HISTORY as a page tab type, labelled History in the capsule and the chip while the package, row and address keep the gittree name (guide order 30, after Files and Editor), with the branch and current commit in its file bar; its Node half owns read-only /api/dsh-gittree routes, and the tab reads state with brief=1 so no file list is ever built - no fork, no core row disabled, nothing for sync-vendored.ps1 to track. Its toolbar is the tab's own TOP BAR (alpha.4): 38px with box-sizing:border-box, the same box the shipped Files tab and the document preview use, so the pane's first hairline lands on the y=76 line the 38px docking strip, the conversation header (min-height:76px) and the left column's branding band all end on - it was 42.5px (8px padding around a 26px control) and sat ~4.5px low",
       "uses": [
         "dsh-rightbar",
         "git on PATH"

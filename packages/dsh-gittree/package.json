@@ -1,6 +1,6 @@
 {
   "name": "dsh-gittree",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "History (package and row `dsh-gittree`, kind/address `gittree` / `sidebar://gittree`): a READ-ONLY git history tab type for the vn-harness right bar (dsh-rightbar). Lists the session workspace's commits (short id, subject, author, date) in the bar's own dress, with the branch and the current commit kept in the file bar above it; picking a commit shows its message and the files it touched, and any of those files opens through the ordinary file address (so the editor or a shipped preview claims it). A page type like the editor: one guide entry on the tab strip's + / Start page, no core patches, nothing forked, and no git command that can write. Alpha.",
   "type": "module",
   "main": "lib/index.js",

@@ -109,7 +109,7 @@ window.__ModuleLoader__.load({
     const FILE_PREFIX = 'dsh-resource://file/'
     const SESSION_SEGMENT = 'session/'
     /** Version marker shown on the toolbar so a freshly loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.8'
+    const PLUGIN_VERSION = '0.1.0-alpha.9'
     /** The client service dsh-modal provides; resolved lazily, never required. */
     const MODAL_SERVICE = 'modals'
     /** The client service @deepseek-ai/dsh-client-ui-theme provides; resolved lazily too. */
@@ -138,9 +138,16 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     const css = `
 .dse-root{height:100%;min-height:0;flex:auto;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;color:var(--dsw-alias-label-primary,#1f1f1f);font-size:13px;line-height:1.5}
-.dse-tools{flex:none;display:flex;align-items:center;gap:6px;padding:8px 10px 8px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18))}
+/* The toolbar IS this tab's top bar, and every column's top band ends in the
+   same hairline at y=76: the docking strip above a pane is 38px (28px + 10px
+   top padding) and the conversation header is min-height:76px, which is why
+   the shipped Files tab's own 38px header lands exactly on that line. This bar
+   was 26px of control in 8px/8px of padding (42.5px), so its rule sat ~4.5px
+   BELOW the other two columns'. It is now the same 38px box, with a size-down
+   24px control inside it, so the three hairlines are one line. */
+.dse-tools{flex:none;display:flex;align-items:center;gap:6px;box-sizing:border-box;height:38px;padding:0 10px 0 12px;border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18))}
 .dse-searchWrap{position:relative;flex:1;min-width:0;display:flex;align-items:center}
-.dse-find{flex:1;min-width:0;height:26px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18));border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary,#1f1f1f);padding:0 26px 0 8px;font:inherit;font-size:12.5px;outline:none}
+.dse-find{flex:1;min-width:0;height:24px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18));border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary,#1f1f1f);padding:0 26px 0 8px;font:inherit;font-size:12px;outline:none}
 .dse-find::placeholder{color:var(--dsw-alias-label-tertiary,#999)}
 .dse-find:focus{border-color:var(--dsw-alias-state-accent,#4f8cff)}
 .dse-find:disabled{opacity:.5}
@@ -150,10 +157,10 @@ window.__ModuleLoader__.load({
 .dse-saveStatus{flex:none;font-size:11px;line-height:1;color:var(--dsw-alias-label-tertiary,#999);white-space:nowrap}
 .dse-saveStatus.err{color:var(--dsw-alias-state-error-primary,#d3382c)}
 .dse-saveStatus.warn{color:var(--dsw-alias-state-warning-primary,#d29922)}
-.dse-save{flex:none;display:inline-flex;align-items:center;gap:6px;height:26px;box-sizing:border-box;border:0;border-radius:6px;background:var(--dsw-alias-state-accent,#4f8cff);color:#fff;font:inherit;font-size:12.5px;font-weight:500;padding:0 12px;cursor:pointer;white-space:nowrap}
+.dse-save{flex:none;display:inline-flex;align-items:center;gap:6px;height:24px;box-sizing:border-box;border:0;border-radius:6px;background:var(--dsw-alias-state-accent,#4f8cff);color:#fff;font:inherit;font-size:12px;font-weight:500;padding:0 10px;cursor:pointer;white-space:nowrap}
 .dse-save:hover:not(:disabled){filter:brightness(1.08)}
 .dse-save:disabled{opacity:.45;cursor:default}
-.dse-preview{flex:none;display:inline-flex;align-items:center;height:26px;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary,#1f1f1f);font:inherit;font-size:12.5px;padding:0 10px;cursor:pointer;white-space:nowrap}
+.dse-preview{flex:none;display:inline-flex;align-items:center;height:24px;box-sizing:border-box;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary,#1f1f1f);font:inherit;font-size:12px;padding:0 9px;cursor:pointer;white-space:nowrap}
 .dse-preview:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
 .dse-preview[hidden]{display:none}
 .dse-fileBar{flex:none;display:flex;align-items:center;gap:8px;padding:4px 10px 5px 12px;border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.14));font-size:11.5px;color:var(--dsw-alias-label-tertiary,#999);min-width:0}

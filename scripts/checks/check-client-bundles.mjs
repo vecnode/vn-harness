@@ -235,6 +235,17 @@ const editorCssTag = editor.document.head.children.filter((tag) => tag.dataset &
 const editorCss = editorCssTag ? editorCssTag.textContent : ''
 check('md paper resets whitespace', editorCss.includes('.dse-mdviewPaper{flex:1;min-height:0;white-space:normal}'))
 check('edit pill keeps the app font', editorCss.includes('var(--dsw-font-family,inherit)') && editorCss.includes('.dse-mdviewEdit{'))
+// The toolbar IS the tab's top bar (alpha.9): 38px with box-sizing:border-box is
+// the box the shipped Files tab and the document preview use, so this pane's
+// first hairline lands on the y=76 line the 38px docking strip and the
+// conversation header (min-height:76px) draw. It was 8px + 26px + 8px = 42.5px.
+check(
+  'editor top bar is the 38px pane header',
+  editorCss.includes('.dse-tools{flex:none;display:flex;align-items:center;gap:6px;box-sizing:border-box;height:38px;padding:0 10px 0 12px;') &&
+    editorCss.includes('.dse-find{flex:1;min-width:0;height:24px;') &&
+    editorCss.includes('gap:6px;height:24px;box-sizing:border-box;border:0;') &&
+    editorCss.includes('.dse-preview{flex:none;display:inline-flex;align-items:center;height:24px;'),
+)
 check('editor bundle id', editor.id, 'dsh-editor')
 check('editor inject', JSON.stringify(editor.exports.inject), '["locale","slots","sidebarRightTabs"]')
 const registered = {}
@@ -795,6 +806,14 @@ const gitCss = gitCssTag ? gitCssTag.textContent : ''
 check('gittree bundle id', gitTree.id, 'dsh-gittree')
 check('gittree inject', JSON.stringify(gitTree.exports.inject), '["slots","sidebarRightTabs"]')
 check('gittree stylesheet injected', gitCss.includes('.dsg-root{') && gitCss.includes('.dsg-badge[data-st="m"]'))
+// The tools bar is the History tab's own top bar (alpha.4), the same 38px
+// border-box pane header the Files tab, the document preview and the editor use,
+// so all four hairlines sit on the y=76 line the other columns draw.
+check(
+  'gittree top bar is the 38px pane header',
+  gitCss.includes('.dsg-tools{flex:none;display:flex;align-items:center;gap:6px;box-sizing:border-box;height:38px;padding:0 10px 0 12px;') &&
+    gitCss.includes('.dsg-btn{flex:none;display:inline-flex;align-items:center;height:24px;'),
+)
 const gitTypes = []
 const gitSeats = {}
 const gitTabTypes = { register: (definition) => (gitTypes.push(definition), () => {}), entries: () => [] }
@@ -828,7 +847,7 @@ check(
   'gittree body is history-only',
   gitMarkup.includes('data-gittree-reload') &&
     gitMarkup.includes('data-gittree-address="sidebar://gittree"') &&
-    gitMarkup.includes('dsh-gittree 0.1.0-alpha.3'),
+    gitMarkup.includes('dsh-gittree 0.1.0-alpha.4'),
 )
 check(
   'gittree has no file-tree view',

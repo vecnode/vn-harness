@@ -1,4 +1,4 @@
-# dsh-gittree (alpha.3)
+# dsh-gittree (alpha.4)
 
 **History** is a **tab type for the pack's right bar**, and it is labelled History in the capsule and the chip while the package, the row and the address keep the `dsh-gittree` / `gittree` name (`dsh-rightbar` — the
 right-hand column of the DeepSeek Harness web GUI, beside the shipped **Start**
@@ -40,8 +40,14 @@ neither the editor nor any preview to exist.
 
 - The **file bar**: the branch (or `(detached)`), the short **HEAD** commit — the
   current commit — `↑ahead`/`↓behind` when there is an upstream, how many files
-  git reports as changed, and the version marker (`dsh-gittree 0.1.0-alpha.3`)
+  git reports as changed, and the version marker (`dsh-gittree 0.1.0-alpha.4`)
   that makes a freshly loaded bundle easy to verify.
+- The **toolbar** is the tab's own **top bar** (alpha.4): the workspace scope and
+  **Reload**, in a 38px `box-sizing:border-box` row with 24px controls — the same
+  box the shipped Files tab and the document preview use, so the pane's first
+  hairline lands on the **y=76** line the 38px docking strip, the conversation
+  header and the left column's branding band all end on. It used to be
+  `8px + 26px + 8px = 42.5px`, i.e. ~4.5px low.
 - The **commit list**: `short sha`, subject, author and date, newest first, up to
   80 commits per load. The toolbar's **Reload** refetches the bar and the list.
 - **A picked commit** opens in place (no navigation, no new tab): its full id,

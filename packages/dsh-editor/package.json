@@ -1,6 +1,6 @@
 {
   "name": "dsh-editor",
-  "version": "0.1.0-alpha.8",
+  "version": "0.1.0-alpha.9",
   "description": "Editor: a CodeMirror 6 text/code editor tab type for the vn-harness right bar (dsh-rightbar). Opens text files editable instead of in the read-only preview - Markdown included, with a Preview/Edit toggle between the editor and the rendered view - starts a blank document from the tab strip's + control, names and creates new files through the shared dsh-modal dialog, and saves through an authenticated plugin route. The editor follows the app's light/dark theme, and the rendered Markdown page resets what the preview's plain-text scrollport imposes (its hard-break whitespace and mono font). Alpha.",
   "type": "module",
   "main": "lib/index.js",

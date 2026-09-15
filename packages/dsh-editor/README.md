@@ -1,4 +1,4 @@
-# dsh-editor (alpha.8)
+# dsh-editor (alpha.9)
 
 **Editor** is a **tab type for the pack's right bar** (`dsh-rightbar` — the
 right-hand column of the DeepSeek Harness web GUI, beside the **Start** page and
@@ -9,7 +9,20 @@ names and creates new files through the shared **`dsh-modal`** dialog, and saves
 them back to disk. It is a **sub-plugin**: it holds no bar code, and its
 host-side half owns the pack's own HTTP routes. Alpha.
 
-## What it does (through alpha.8)
+## What it does (through alpha.9)
+
+- **The toolbar is the tab's own top bar, on the same line as the other two
+  columns** (alpha.9). Every column opens with a band that ends in one hairline at
+  **y=76**: the conversation header is `min-height:76px`, the left column's
+  branding row is given the same 70px band by `dsh-themes`, and the right column's
+  first line is the open tab's own header — the docking strip above a pane is
+  **38px** (28px + 10px top padding), so the shipped Files tab's **38px**
+  `box-sizing:border-box` header lands exactly on that line, and so does the
+  document preview's. This toolbar was `8px + 26px + 8px = 42.5px`, so its rule
+  sat **~4.5px below** the middle column's. It is now the same **38px** box
+  (`box-sizing:border-box`, so the `.5px` rule sits inside it) with the controls a
+  size down (**24px**, 12px type): the find input, **Preview** and **Save**. The
+  panel is taller by a few pixels, and the three hairlines are one line.
 
 - **The rendered page behaves like a document, not like plain text** (alpha.8).
   The shadow body below lives inside the preview's scrollport, which is built for
