@@ -183,12 +183,25 @@ export function normalizeTikzSource(source) {
   const body = lines.slice(index).join('\n').trim()
 
   const hasPicture = PICTURE_ENV.test(body)
-  const picture = hasPicture ? body : ['\\begin{tikzpicture}', body, '\\end{tikzpicture}'].join('\n')
+  // Whether the source already IS a complete picture. Note that `\begin{axis}`
+  // is a picture but is NOT usable at the top level of a `standalone` document:
+  // pdflatex answers "Environment axis undefined" and then every `\addplot` is
+  // an undefined control sequence, while the very same axis INSIDE a
+  // tikzpicture compiles cleanly. So the wrapper is skipped only for the
+  // environments that genuinely stand alone.
+  const insidePicture = /\\begin\{tikzpicture\}/.test(body)
+  const selfContained = /\\begin\{(tikzcd|circuitikz)\}/.test(body)
+  const needsWrapper = !insidePicture && !selfContained
+  const picture = needsWrapper ? ['\\begin{tikzpicture}', body, '\\end{tikzpicture}'].join('\n') : body
   const document = [...PREAMBLE, ...hoisted, '\\begin{document}', picture, '\\end{document}', ''].join('\n')
   return {
     document,
     wrapped: true,
-    note: hasPicture ? 'wrapped in the standard preamble' : 'wrapped in the standard preamble and a tikzpicture',
+    note: needsWrapper
+      ? hasPicture
+        ? 'wrapped in the standard preamble, inside a tikzpicture'
+        : 'wrapped in the standard preamble and a tikzpicture'
+      : 'wrapped in the standard preamble',
   }
 }
 

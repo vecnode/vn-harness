@@ -1,7 +1,7 @@
 ---
 name: tikz-diagrams
-description: "Author TikZ/LaTeX diagrams that compile: use the host's prepared preamble, the right libraries, layout and plot recipes, and read the compiler's line-accurate errors to converge in a couple of writes."
-whenToUse: "Whenever a conversation needs a precise, publication-quality diagram as LaTeX - node-and-edge architecture, layered systems, precise flow charts, state machines, trees, plots, annotated geometry - or when a TikZ diagram already written fails to compile."
+description: "Author TikZ/LaTeX diagrams that compile: use the host's prepared preamble, the right libraries, layout and plot recipes, and read the compiler's line-accurate errors to converge in a couple of writes. A bundled reference covers complex, large pictures."
+whenToUse: "Whenever a conversation needs a precise, publication-quality diagram as LaTeX - node-and-edge architecture, layered systems, precise flow charts, state machines, trees, plots, annotated geometry - or when a TikZ diagram already written fails to compile. Read the bundled reference first for anything over ~20 lines."
 ---
 
 # TikZ diagrams
@@ -31,6 +31,15 @@ Rules that matter:
 - Compiles are cached by content: an unchanged diagram costs nothing, and a
   change costs ~1-2 s. `{ recompile: true }` on the panel side forces a rebuild.
 
+## Complex pictures
+
+This file is the quick-start. For a picture that needs real layout work -
+layered bands, matrices, dense edge routing, pgfplots charts, braces and
+annotations, and the meaning of every compiler error this preamble can produce -
+read `reference/complex-diagrams.md`, which sits beside this file in the same
+skill folder. Every example in it was compiled by the host's own engine, and it
+is the file to open before writing anything over ~20 lines.
+
 ## The verdicts, and the two the compiler cannot give you
 
 | Signal | Question it answers | What to do |
@@ -39,7 +48,23 @@ Rules that matter:
 | `status: "error"` | no, and here is the line | fix `diagnostics`, write again |
 | `status: "unavailable"` | there is no TeX engine here | say so; the source still exports |
 | warnings | it compiled, but is it the picture you meant? | review each one |
-| `Browser: ...` | did the artifact actually load somewhere? | see below |
+| `verification.state` | did the compiled artifact actually load in a browser? | see below |
+
+For TikZ the browser's job is smaller - the host compiled the picture, the client
+fetches the artifact - but the four states are the same, and they carry the
+revision they are about (`revision` = the current one, `reported` = the revision
+the newest report names):
+
+| `verification.state` | What the browser reported | What to do |
+|---|---|---|
+| `drawn` | it loaded this revision's artifact | the picture exists; you may describe it |
+| `failed` | the artifact could not be loaded, with the reason | the compile produced something the client cannot show; check the diagnostics |
+| `stale` | the newest report is about an OLDER revision | this revision has never been shown; that older report is not evidence about it |
+| `pending` | nothing at all | not a failure: no client has shown it yet, which is normal headless |
+
+A compile that FAILED but still produced a PDF is cached on purpose and shown
+flagged as errored, because the partial picture is evidence of what LaTeX did
+understand - so `status: "error"` and a visible artifact are not a contradiction.
 
 Two failures the compiler will never report, and the host now catches:
 
@@ -82,9 +107,10 @@ Leading `\usepackage`, `\usetikzlibrary`, `\usepgfplotslibrary`, `\pgfplotsset`,
 lines are **hoisted into the preamble**, so write them the way you normally
 would: at the top, before the picture.
 
-The supplied preamble is, in full:
+The supplied preamble is, in full (shown for reference - it is not a diagram, so
+the example checker skips it):
 
-```latex
+```latex no-check
 \documentclass[tikz,border=4pt]{standalone}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
@@ -142,9 +168,9 @@ to the panel.
                     box/.style={draw, rounded corners=2pt, fill=blue!6, minimum height=8mm, minimum width=20mm, align=center}]
   \matrix (m) [matrix of nodes, row sep=12mm, column sep=8mm,
                nodes={box}] {
-    Client & CLI & IDE \\\\
-    |[fill=orange!10]| Gateway & |[fill=orange!10]| Auth \\\\
-    |[fill=green!10]| Sessions & |[fill=green!10]| Diagrams \\\\
+    Client & CLI & IDE \\
+    |[fill=orange!10]| Gateway & |[fill=orange!10]| Auth \\
+    |[fill=green!10]| Sessions & |[fill=green!10]| Diagrams \\
   };
   \begin{scope}[on background layer]
     \node[layer, fit=(m-1-1)(m-1-3), label={[font=\scriptsize]left:UI}] {};
@@ -159,6 +185,8 @@ to the panel.
 
 ```latex
 \node[draw, diamond, aspect=2, align=center] (c) {cache\\hit?};
+\node[draw, rounded corners=2pt] (miss) [left=18mm of c] {origin};
+\node[draw, rounded corners=2pt] (hit) [right=18mm of c] {cache};
 \draw[-{Latex}] (c.west) -- node[above,font=\scriptsize]{no} (miss);
 \draw[-{Latex}] (c.east) -- node[above,font=\scriptsize]{yes} (hit);
 ```

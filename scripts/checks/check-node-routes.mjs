@@ -493,8 +493,20 @@ try {
 // with a fake exec, which is the same seam the agent loop uses.
 const diagramsHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'dsh-diagrams-home-'))
 const diagramsWorkspace = await fsp.mkdtemp(path.join(os.tmpdir(), 'dsh-diagrams-ws-'))
+// An export lands on the HOST's Desktop, and the route resolves that folder PER
+// REQUEST from USERPROFILE / HOME / XDG. Both are redirected into a temp profile
+// here: a check must never write to a real person's Desktop, and this is also
+// what proves which folder the answer came from.
+const diagramsProfile = await fsp.mkdtemp(path.join(os.tmpdir(), 'dsh-diagrams-profile-'))
+const diagramsDesktop = path.join(diagramsProfile, 'Desktop')
+await fsp.mkdir(diagramsDesktop, { recursive: true })
 const previousDshHome = process.env.DSH_HOME
+// `previousProfile` / `previousHome` are the originals captured by the themes
+// block above, which restores them in its own finally - so they are still the
+// real values here and are reused rather than redeclared.
 process.env.DSH_HOME = diagramsHome
+process.env.USERPROFILE = diagramsProfile
+delete process.env.HOME
 try {
   const diagramsModule = await import(pathToFileURL(path.join(repo, 'packages/dsh-diagrams/lib/index.js')).href)
   const diagRoutes = new Map()
@@ -603,6 +615,21 @@ try {
   const badMermaid = await tool('diagram_write').execute({ kind: 'mermaid', id: 'broken', source: 'flowchart TD\n  A[Start --> B{{{' }, exec)
   check('diagrams: a broken mermaid is reported', badMermaid.view.status, 'error')
   check('diagrams: the parse error travels to the model', badMermaid.diagnostics.length > 0 && /Parse error|Expecting/.test(badMermaid.diagnostics[0].text), true)
+  // The DOM stub has to expose `window.CSS`: without it the engine's
+  // sequence-diagram box parser takes a `new Option()` fallback that does not
+  // exist in a stub, and EVERY `box` diagram came back "unavailable" - stored
+  // but never checked, with a real browser as the only judge of the source.
+  const boxed = await tool('diagram_write').execute(
+    {
+      kind: 'mermaid',
+      id: 'boxed',
+      title: 'Boxed',
+      source: 'sequenceDiagram\n  box rgb(240,240,255) Team\n    participant A as Alice\n  end\n  A->>A: solo',
+    },
+    exec,
+  )
+  check('diagrams: a boxed sequence diagram validates', boxed.view.status, 'ok')
+  check('diagrams: the boxed diagram is a sequence', boxed.view.diagramType, 'sequence')
 
   const read = await tool('diagram_read').execute({ id: 'auth-flow' }, exec)
   check('diagrams: read returns the source', read.text.includes('flowchart TD') && read.text.includes('Auth flow'), true)
@@ -711,6 +738,106 @@ try {
     400,
   )
 
+  // --- the browser verdict as a pure function: four honest answers, and a
+  // report about an OLDER revision is never read as this revision's picture.
+  const { DiagramStore, verificationOf, MAX_SOURCE_BYTES, MAX_STATE_BYTES } = await import(
+    pathToFileURL(path.join(repo, 'packages/dsh-diagrams/lib/store.js')).href
+  )
+  const drawnState = verificationOf({ revision: 3, render: { revision: 3, ok: true, kind: 'mermaid', at: 'T', theme: 'dark', error: null } })
+  check('diagrams: a report about this revision reads drawn', drawnState.state + ':' + drawnState.revision + ':' + drawnState.reported, 'drawn:3:3')
+  const failedState = verificationOf({ revision: 3, render: { revision: 3, ok: false, kind: 'mermaid', error: 'boom' } })
+  check('diagrams: a failed report reads failed, with its error', failedState.state + ':' + failedState.error, 'failed:boom')
+  const staleState = verificationOf({ revision: 4, render: { revision: 3, ok: true, kind: 'mermaid' } })
+  check('diagrams: a report about an older revision reads stale', staleState.state + ':' + staleState.revision + ':' + staleState.reported, 'stale:4:3')
+  const pendingState = verificationOf({ revision: 4, render: null })
+  check('diagrams: no report at all reads pending', pendingState.state + ':' + pendingState.revision, 'pending:4')
+  // The registry refuses a tool output that does not survive a JSON round trip,
+  // and a property whose value is `undefined` is dropped by `JSON.stringify`.
+  // Comparing the KEYS (not the serialization) is what catches it: a report that
+  // carried `error: null` used to become `undefined` on a DRAWN verdict, and
+  // every diagram the browser had rendered came back "value is not lossless
+  // JSON" - unreadable to the model.
+  const lossless = (value) => {
+    const keys = Object.keys(value)
+    const round = JSON.parse(JSON.stringify(value))
+    return keys.length === Object.keys(round).length && keys.every((key) => round[key] === value[key])
+  }
+  check(
+    'diagrams: every verdict survives a JSON round trip',
+    [drawnState, failedState, staleState, pendingState].every(lossless),
+  )
+
+  // --- hardening: one diagram's ceiling, and the conversation's source budget,
+  // which binds BEFORE the state-file cap. It used to be possible to fill a
+  // conversation past that cap, and the store then read the file as empty -
+  // every diagram in the conversation vanishing at once.
+  const budgetStore = new DiagramStore({ root: path.join(diagramsHome, 'budget-state') })
+  const tooBig = (() => {
+    try {
+      budgetStore.write('session-budget', { kind: 'mermaid', id: 'huge', source: 'x'.repeat(MAX_SOURCE_BYTES + 1), by: 'model' })
+      return 'written'
+    } catch (err) {
+      return err.code
+    }
+  })()
+  check('diagrams: one diagram keeps its own ceiling', tooBig, 'TOO_LARGE')
+  const perDiagram = 200 * 1024
+  const filler = 'flowchart TD\n' + 'A --> B\n'.repeat(Math.ceil(perDiagram / 8)).slice(0, perDiagram)
+  let written = 0
+  let refusal = null
+  for (let index = 0; index < 40 && refusal === null; index += 1) {
+    try {
+      budgetStore.write('session-budget', { kind: 'mermaid', id: 'big-' + index, source: filler, by: 'model' })
+      written += 1
+    } catch (err) {
+      refusal = err.code
+    }
+  }
+  check('diagrams: the conversation source budget is enforced', refusal, 'BUDGET')
+  check('diagrams: the budget admits a real conversation first', written >= 15, true)
+  check('diagrams: the budget binds before the state-file cap', written * perDiagram < MAX_STATE_BYTES, true)
+  const replaced = (() => {
+    try {
+      budgetStore.write('session-budget', { kind: 'mermaid', id: 'big-0', source: filler, by: 'model' })
+      return 'ok'
+    } catch (err) {
+      return err.code
+    }
+  })()
+  check('diagrams: replacing a diagram is charged once, not twice', replaced, 'ok')
+
+  // --- hardening: a cache hit keeps the verdict the compile was cached WITH.
+  // A failed compile that still produced a picture is cached deliberately (the
+  // partial picture is evidence), and reading that back as "ok" was the plugin
+  // telling the model its own diagram was fine.
+  const stubStore = new DiagramStore({ root: path.join(diagramsHome, 'stub-state') })
+  const stubTools = diagramsModule.buildTools({
+    store: stubStore,
+    cache: {
+      keyFor: () => 'a'.repeat(24),
+      meta: () => ({
+        kind: 'tikz',
+        engine: 'stub',
+        pages: 1,
+        width: 20,
+        height: 20,
+        formats: ['pdf'],
+        at: 'now',
+        diagnostics: [{ kind: 'compile', text: 'diagram.tex:3: Package pgf Error: stubbed' }],
+      }),
+      write: () => ({ formats: ['pdf'], at: 'now' }),
+      read: () => null,
+      drop: () => {},
+    },
+    enginesNow: () => ({ available: true, engine: 'stub', svg: 'stub', png: 'stub' }),
+  })
+  stubStore.write('session-cached', { kind: 'tikz', id: 'cached-failure', source: '\\draw (0,0) -- (1,1);', by: 'model' })
+  const cachedVerdict = await stubTools
+    .find((entry) => entry.name === 'diagram_verify')
+    .execute({ id: 'cached-failure' }, { agent: { session: { id: 'session-cached' } }, signal: new AbortController().signal })
+  check('diagrams: a cache hit keeps the verdict it was cached with', cachedVerdict.status, 'error')
+  check('diagrams: the cached diagnostics still reach the model', /stubbed/.test(cachedVerdict.text), true)
+
   // --- the state file is the source of truth for the panels
   const state = await (await getJson('/api/dsh-diagrams/state', 'session=session-diagrams')).json()
   check(
@@ -732,6 +859,13 @@ try {
     'diagrams: state carries the revision the browser draws',
     Number.isInteger(state.diagrams.find((entry) => entry.id === 'auth-flow').revision),
     true,
+  )
+  // The tab pill must not have to recompute the verdict: the state route carries
+  // the same four-state answer the tool result does.
+  check(
+    'diagrams: state carries the browser verdict for the pill',
+    typeof state.diagrams.find((entry) => entry.id === 'auth-flow').verification?.state,
+    'string',
   )
 
   const one = await (await getJson('/api/dsh-diagrams/diagram', 'session=session-diagrams&id=auth-flow')).json()
@@ -760,12 +894,26 @@ try {
   const sourceArtifact = await getJson('/api/dsh-diagrams/artifact', 'session=session-diagrams&id=auth-flow&format=mmd')
   check('diagrams: mermaid source is servable', (await sourceArtifact.text()).startsWith('flowchart LR'), true)
 
-  // --- export writes into the conversation folder, create-exclusively
+  // --- export saves to the HOST's Desktop (never the conversation folder),
+  // create-exclusively, and answers with the absolute path it wrote.
   const export1 = await (await post('/api/dsh-diagrams/export', { session: 'session-diagrams', id: 'auth-flow', format: 'mmd' })).json()
   const export2 = await (await post('/api/dsh-diagrams/export', { session: 'session-diagrams', id: 'auth-flow', format: 'mmd' })).json()
-  check('diagrams: export lands in the workspace', export1.ok === true && existsSync(path.join(diagramsWorkspace, export1.path)))
-  check('diagrams: a second export never clobbers the first', export2.path !== export1.path && existsSync(path.join(diagramsWorkspace, export1.path)))
-  check('diagrams: export refuses an unknown format', (await post('/api/dsh-diagrams/export', { session: 'session-diagrams', id: 'auth-flow', format: 'exe' })).status, 400)
+  check(
+    'diagrams: export lands on the Desktop',
+    export1.ok === true && existsSync(export1.path) && path.dirname(export1.path) === diagramsDesktop,
+  )
+  check(
+    'diagrams: the export answers with an absolute path',
+    path.isAbsolute(export1.path) && export1.name === path.basename(export1.path) && export1.format === 'mmd',
+  )
+  check('diagrams: the export names the Desktop', export1.directory, diagramsDesktop)
+  check('diagrams: a second export never clobbers the first', export2.path !== export1.path && existsSync(export1.path))
+  check('diagrams: export leaves the conversation folder alone', readdirSync(diagramsWorkspace).length, 0)
+  check(
+    'diagrams: export refuses an unknown format',
+    (await post('/api/dsh-diagrams/export', { session: 'session-diagrams', id: 'auth-flow', format: 'exe' })).status,
+    400,
+  )
 
   // --- TikZ: compiled when the host has an engine, stored either way
   const tikz = await tool('diagram_write').execute(
@@ -775,10 +923,23 @@ try {
   if (healthBody.tex.available === true) {
     check('diagrams: tikz compiles', tikz.view.status, 'ok')
     check('diagrams: tikz compiles to an artifact', (await getJson('/api/dsh-diagrams/artifact', 'session=session-diagrams&id=layers&format=svg')).status, 200)
+    // A bare pgfplots body used to come back "Environment axis undefined": at the
+    // top level of a `standalone` document that environment is not usable, so the
+    // host now wraps it in a tikzpicture like any other bare body.
+    const chart = await tool('diagram_write').execute(
+      {
+        kind: 'tikz',
+        id: 'chart',
+        title: 'Chart',
+        source: '\\begin{axis}[width=6cm, height=4cm]\n  \\addplot[domain=0:4, samples=20] {x^2};\n\\end{axis}',
+      },
+      exec,
+    )
+    check('diagrams: a bare axis chart compiles', chart.view.status, 'ok')
     const pdf = await getJson('/api/dsh-diagrams/artifact', 'session=session-diagrams&id=layers&format=pdf')
     check('diagrams: the PDF artifact is cached too', pdf.headers.get('content-type'), 'application/pdf')
     const exported = await (await post('/api/dsh-diagrams/export', { session: 'session-diagrams', id: 'layers', format: 'svg' })).json()
-    check('diagrams: a compiled diagram exports its SVG', exported.ok === true && existsSync(path.join(diagramsWorkspace, exported.path)))
+    check('diagrams: a compiled diagram exports its SVG', exported.ok === true && path.dirname(exported.path) === diagramsDesktop && existsSync(exported.path))
     // A compile error is reported against the wrapped document.
     const badTikz = await tool('diagram_write').execute({ kind: 'tikz', id: 'bad-tikz', source: '\\draw (a) -- (nowhere);' }, exec)
     check('diagrams: a broken tikz is reported', badTikz.view.status, 'error')
@@ -806,8 +967,13 @@ try {
 } finally {
   if (previousDshHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = previousDshHome
+  if (previousProfile === undefined) delete process.env.USERPROFILE
+  else process.env.USERPROFILE = previousProfile
+  if (previousHome === undefined) delete process.env.HOME
+  else process.env.HOME = previousHome
   await fsp.rm(diagramsHome, { recursive: true, force: true })
   await fsp.rm(diagramsWorkspace, { recursive: true, force: true })
+  await fsp.rm(diagramsProfile, { recursive: true, force: true })
 }
 
 console.log('')

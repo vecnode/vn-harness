@@ -125,6 +125,24 @@ const windowStub = {
   innerWidth: 1200,
   innerHeight: 800,
   devicePixelRatio: 1,
+  /**
+   * `window.CSS.supports` exists in every browser this engine was written for,
+   * and the sequence-diagram box parser reaches for it:
+   *
+   *     if (window?.CSS) window.CSS.supports('color', value) || (value = 'transparent')
+   *     else { const probe = new Option().style; ... }
+   *
+   * With no `window.CSS` the engine took the `new Option()` branch, and `Option`
+   * does not exist here - so EVERY `box` diagram died with "Option is not
+   * defined", which the plugin can only report as `unavailable` ("stored but not
+   * validated"). That was a hole in the stub, not in the diagram.
+   *
+   * Answering `true` is the honest emulation of a modern browser, and it cannot
+   * hide a real problem: the only question ever asked is whether a colour string
+   * is valid, and BOTH answers leave the source parsing - the fallback is
+   * `transparent`, which is not a parse error.
+   */
+  CSS: { supports: () => true },
   DOMParser: DOMParserStub,
   XMLSerializer: class {
     serializeToString() {

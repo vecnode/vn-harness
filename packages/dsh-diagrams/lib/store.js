@@ -31,17 +31,79 @@ import path from 'node:path'
 export const MAX_DIAGRAMS = 64
 /** A single diagram's source is cut here (a diagram, not a book). */
 export const MAX_SOURCE_BYTES = 256 * 1024
+/**
+ * All the sources in one conversation together are cut here.
+ *
+ * This is the budget that actually bounds the state file, and it is enforced at
+ * the WRITE - with a typed error the model can act on ("delete or shrink one") -
+ * instead of being discovered later as a file that grew too big to load. Sixteen
+ * average diagrams, or one enormous one plus room to work.
+ */
+export const MAX_CONVERSATION_SOURCE_BYTES = 4 * 1024 * 1024
 /** Title length cap; the id is derived from it. */
 export const MAX_TITLE_CHARS = 120
 /** How many history entries one diagram keeps. */
 export const MAX_HISTORY = 20
-/** The whole per-conversation file is refused above this size. */
-export const MAX_STATE_BYTES = 1024 * 1024
+/**
+ * The whole per-conversation file is refused above this size.
+ *
+ * Deliberately far above {@link MAX_CONVERSATION_SOURCE_BYTES}: because the
+ * source budget is enforced first, nothing this plugin writes can ever reach
+ * this number, so crossing it means the file is not one of ours (hand-edited, or
+ * corrupted). When it is crossed the store reads as empty rather than throwing -
+ * losing diagrams must never break a conversation - which is exactly why the
+ * budget above has to be the thing that binds.
+ */
+export const MAX_STATE_BYTES = 16 * 1024 * 1024
 /** The id grammar; also what the client puts in a tab address. */
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/
 
 /** The diagram kinds this plugin owns. */
 export const KINDS = ['mermaid', 'tikz']
+
+/**
+ * What the BROWSER reported about THIS revision, in one objective word.
+ *
+ * The report is the browser's own and carries the revision it drew, so there
+ * are exactly four honest answers:
+ *
+ *   - `drawn`   - a renderer reported success FOR THIS REVISION.
+ *   - `failed`  - a renderer reported failure FOR THIS REVISION, with its own
+ *                 error; what the user sees is that error, not a picture.
+ *   - `stale`   - the newest report names a DIFFERENT revision, so this revision
+ *                 has never been drawn whatever the older report said.
+ *   - `pending` - no report at all; nothing has drawn it where the host can see.
+ *
+ * `state` is never optimistic and is never inferred from `status`: a source that
+ * parses is not a picture, and only a renderer can report a picture. Both
+ * revision numbers travel with the verdict so it can be checked rather than
+ * trusted. It lives HERE, next to the state that produces it, because the tool
+ * result, the conversation index and the single-diagram route all hand this
+ * verdict out and must not be able to disagree with one another.
+ *
+ * @param entry - the stored diagram.
+ * @returns `{ state, revision, reported, kind, error, at }`.
+ */
+export function verificationOf(entry) {
+  const current = Number.isFinite(entry && entry.revision) ? entry.revision : 0
+  const report = entry ? entry.render : null
+  if (!report) return { state: 'pending', revision: current, reported: null, kind: null }
+  const reported = Number.isFinite(report.revision) ? report.revision : null
+  if (reported === null || reported !== current) {
+    return { state: 'stale', revision: current, reported, kind: report.kind ?? null }
+  }
+  const verdict = { state: report.ok ? 'drawn' : 'failed', revision: current, reported, kind: report.kind ?? null }
+  // `error` and `at` are OMITTED when there is nothing to say, never set to
+  // `undefined`. The tool registry requires the value it is handed to survive a
+  // JSON round trip losslessly, and `JSON.stringify` DROPS a property whose value
+  // is `undefined` - which is exactly how a diagram the browser had DRAWN became
+  // unreadable to the model: the report carried `error: null`, the verdict
+  // turned it into `undefined`, and every `diagram_verify` / `diagram_read` of a
+  // rendered diagram came back as "value is not lossless JSON".
+  if (typeof report.error === 'string' && report.error.length > 0) verdict.error = report.error
+  if (typeof report.at === 'string' && report.at.length > 0) verdict.at = report.at
+  return verdict
+}
 
 /**
  * The harness config root: `$DSH_HOME`, else `~/.dsh` (the same resolution the
@@ -97,6 +159,9 @@ function summarize(entry) {
     diagramType: entry.diagramType ?? null,
     warnings: Array.isArray(entry.warnings) ? entry.warnings : [],
     render: entry.render ?? null,
+    // The browser's verdict on THIS revision, computed in one place so the
+    // conversation card, the index page and the tab pill cannot drift apart.
+    verification: verificationOf(entry),
     // The revision travels with the summary because the browser needs it to
     // answer "is this picture of the CURRENT source?": it keys the artifact
     // request on it and reports the revision it drew. Without it every render
@@ -270,6 +335,7 @@ export class DiagramStore {
       throw storeError('TOO_LARGE', 'The diagram source is larger than ' + Math.round(MAX_SOURCE_BYTES / 1024) + ' KiB.')
     }
     const existing = typeof input.id === 'string' && input.id.length > 0 ? state.diagrams[input.id] : undefined
+    assertSourceBudget(state, existing ? existing.id : null, Buffer.byteLength(source, 'utf8'))
     if (!existing && state.order.length >= MAX_DIAGRAMS) {
       throw storeError('LIMIT', 'This conversation already has ' + MAX_DIAGRAMS + ' diagrams; delete one first.')
     }
@@ -332,6 +398,7 @@ export class DiagramStore {
     if (Buffer.byteLength(source, 'utf8') > MAX_SOURCE_BYTES) {
       throw storeError('TOO_LARGE', 'The diagram source is larger than ' + Math.round(MAX_SOURCE_BYTES / 1024) + ' KiB.')
     }
+    assertSourceBudget(state, existing.id, Buffer.byteLength(source, 'utf8'))
     const now = new Date().toISOString()
     existing.source = source
     existing.updatedAt = now
@@ -444,6 +511,45 @@ function countOccurrences(haystack, needle) {
     index = haystack.indexOf(needle, index + needle.length)
   }
   return count
+}
+
+/** Every source in one conversation, in UTF-8 bytes. */
+function totalSourceBytes(state) {
+  let total = 0
+  for (const id of state.order) {
+    const entry = state.diagrams[id]
+    if (entry && typeof entry.source === 'string') total += Buffer.byteLength(entry.source, 'utf8')
+  }
+  return total
+}
+
+/**
+ * Refuse a write that would push the conversation past its source budget.
+ *
+ * One check, called by both write paths, so the ceiling cannot depend on how a
+ * diagram was edited. The message names the numbers and the way out, because the
+ * model has to be able to act on it in the same turn.
+ *
+ * @param state - the conversation's live state.
+ * @param id - the diagram being written (its current source is replaced, not added).
+ * @param bytes - the new source's size.
+ */
+function assertSourceBudget(state, id, bytes) {
+  const existing = id ? state.diagrams[id] : undefined
+  const previous = existing && typeof existing.source === 'string' ? Buffer.byteLength(existing.source, 'utf8') : 0
+  const next = totalSourceBytes(state) - previous + bytes
+  if (next > MAX_CONVERSATION_SOURCE_BYTES) {
+    throw storeError(
+      'BUDGET',
+      'This conversation already holds ' +
+        Math.round(totalSourceBytes(state) / 1024) +
+        ' KiB of diagram source and this diagram would bring it to ' +
+        Math.round(next / 1024) +
+        ' KiB, over the ' +
+        Math.round(MAX_CONVERSATION_SOURCE_BYTES / 1024) +
+        ' KiB limit. Delete or shrink a diagram first.',
+    )
+  }
 }
 
 /** Every session file the store owns, for diagnostics and pruning. */

@@ -3,12 +3,13 @@
  *
  * One row owns the whole diagram capability:
  *
- *   - **Four tools** (`diagram_write`, `diagram_patch`, `diagram_read`,
- *     `diagram_delete`) registered on `ctx.tools`. Every write is VALIDATED
- *     before it is stored - Mermaid by parsing it headlessly with the same
- *     vendored engine the browser renders with, TikZ by compiling it with the
- *     machine's own TeX engine - so a broken diagram comes back to the model as
- *     the parser's/compiler's own error lines instead of a blank picture.
+ *   - **Five tools** (`diagram_write`, `diagram_patch`, `diagram_read`,
+ *     `diagram_verify`, `diagram_delete`) registered on `ctx.tools`. Every write
+ *     is VALIDATED before it is stored - Mermaid by parsing it headlessly with
+ *     the same vendored engine the browser renders with, TikZ by compiling it
+ *     with the machine's own TeX engine - so a broken diagram comes back to the
+ *     model as the parser's/compiler's own error lines instead of a blank
+ *     picture.
  *   - **Two skills** (`mermaid-diagrams`, `tikz-diagrams`) registered on
  *     `ctx.skills` from this package's own `skills/` folder, so the model gets
  *     the craft and not just the syntax. The installer also copies those
@@ -29,12 +30,13 @@
  */
 import { spawn } from 'node:child_process'
 import { promises as fsp, readFileSync } from 'node:fs'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 import { ArtifactCache, HASH_PATTERN, MAX_ARTIFACT_BYTES, ARTIFACT_FILES } from './cache.js'
 import { compileTikz, normalizeTikzSource, probeEngines, stripFence } from './latex.js'
-import { DiagramStore, KINDS, MAX_SOURCE_BYTES, resolveHome } from './store.js'
+import { DiagramStore, KINDS, MAX_SOURCE_BYTES, resolveHome, verificationOf } from './store.js'
 
 export const name = 'dsh-diagrams'
 
@@ -63,6 +65,13 @@ const RASTER_DPI = 200
 const TIKZ_RENDERER_VERSION = '1'
 /** Files each kind may export. */
 const EXPORT_FORMATS = { mermaid: ['mmd', 'md', 'svg', 'png'], tikz: ['tex', 'pdf', 'svg', 'png'] }
+/**
+ * How many names one export may try before it gives up. An export always lands
+ * on the Desktop of the machine running the harness - the same place the
+ * screenshot control writes - and never in the conversation folder: a diagram is
+ * something a person keeps, and the Desktop is where that person is looking.
+ */
+const MAX_NAME_ATTEMPTS = 100
 
 /** Response with a JSON body. */
 function json(status, body) {
@@ -107,48 +116,90 @@ async function readJsonBody(request, maxBytes = 1024 * 1024) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The Desktop: where every export lands
+// ---------------------------------------------------------------------------
 /**
- * The workspace root of one session: the live session header while the session
- * is running, otherwise the stored header from session persistence (the same
- * two-step lookup the editor's own routes perform).
+ * The first candidate that names an existing directory, else null.
+ *
+ * Deliberately duplicated from `dsh-themes` (the screenshot control) instead of
+ * imported: this pack ships zero npm dependencies and a bundle may not reach
+ * into another bundle's files, so the two copies are independent by design and
+ * have to stay in step behaviourally rather than by import.
+ *
+ * @param candidates - absolute paths, any of which may be null.
+ * @returns the first that exists and is a directory, or null.
  */
-async function sessionRoot(ctx, sessionId) {
-  if (typeof sessionId !== 'string' || sessionId.length === 0) {
-    throw httpError(400, 'BAD_REQUEST', 'A session id is required.')
-  }
-  const get = typeof ctx.get === 'function' ? (service) => ctx.get(service) : () => undefined
-  try {
-    const sessions = get('sessions')
-    const live = sessions && typeof sessions.get === 'function' ? sessions.get(sessionId) : undefined
-    const header = live && live.header
-    if (header && typeof header.cwd === 'string' && header.cwd.length > 0) return header.cwd
-  } catch (err) {
-    /* fall through to persistence */
-  }
-  try {
-    const persistence = get('sessionPersistence')
-    if (persistence && typeof persistence.stat === 'function') {
-      const snapshot = await persistence.stat(sessionId)
-      const header = snapshot && snapshot.header
-      if (header && typeof header.cwd === 'string' && header.cwd.length > 0) return header.cwd
+async function firstDirectory(candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string' || candidate.length === 0) continue
+    try {
+      const info = await fsp.stat(candidate)
+      if (info.isDirectory()) return candidate
+    } catch (err) {
+      /* not there: try the next one */
     }
-  } catch (err) {
-    /* fall through to the typed failure */
   }
-  throw httpError(409, 'NO_WORKSPACE', 'The workspace folder for this conversation is not available.')
+  return null
 }
 
-/** Resolve a workspace-relative path and prove, by realpath, that it stays inside. */
-async function resolveInside(cwd, rel) {
-  if (typeof rel !== 'string' || rel.length === 0) throw httpError(400, 'BAD_REQUEST', 'A file name is required.')
-  if (rel.includes('\0')) throw httpError(400, 'BAD_REQUEST', 'The file name is not valid.')
-  const root = await fsp.realpath(cwd)
-  const target = path.resolve(root, rel)
-  const relative = path.relative(root, target)
-  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw httpError(400, 'OUTSIDE_WORKSPACE', 'That path is outside the conversation folder.')
+/**
+ * The Desktop a freedesktop host names in `user-dirs.dirs` (`XDG_DESKTOP_DIR`),
+ * which is how a Linux desktop can point somewhere other than `~/Desktop`.
+ *
+ * @returns the configured directory, or null.
+ */
+async function xdgDesktop() {
+  const configHome = process.env.XDG_CONFIG_HOME || (process.env.HOME ? path.join(process.env.HOME, '.config') : null)
+  if (configHome === null) return null
+  let text
+  try {
+    text = await fsp.readFile(path.join(configHome, 'user-dirs.dirs'), 'utf8')
+  } catch (err) {
+    return null
   }
-  return target
+  const match = /^[ \t]*XDG_DESKTOP_DIR[ \t]*=[ \t]*"([^"]*)"/m.exec(text)
+  if (match === null) return null
+  const home = process.env.HOME || os.homedir()
+  const value = match[1].replace(/^\$HOME(?=\/|$)/, home)
+  return path.isAbsolute(value) ? value : null
+}
+
+/**
+ * Where this host keeps its Desktop. Resolved PER REQUEST and never cached: a
+ * Windows profile can be redirected into OneDrive, a Linux desktop can name its
+ * own folder, and either can change while this row is mounted. The home folder
+ * is the last resort, so an export always has somewhere to go.
+ *
+ * @returns an existing directory.
+ */
+async function desktopDirectory() {
+  const profile = process.env.USERPROFILE
+  const home = process.env.HOME
+  let osHome = null
+  try {
+    osHome = os.homedir()
+  } catch (err) {
+    osHome = null
+  }
+  const directory = await firstDirectory([
+    // Windows, plain and OneDrive-redirected.
+    profile ? path.join(profile, 'Desktop') : null,
+    profile ? path.join(profile, 'OneDrive', 'Desktop') : null,
+    // macOS / Linux, plain and configured.
+    home ? path.join(home, 'Desktop') : null,
+    await xdgDesktop(),
+    osHome ? path.join(osHome, 'Desktop') : null,
+    osHome ? path.join(osHome, 'OneDrive', 'Desktop') : null,
+    // Nowhere better: the home folder itself.
+    profile,
+    home,
+    osHome,
+  ])
+  if (directory === null) {
+    throw httpError(500, 'NO_DESKTOP', 'This host has no Desktop or home folder to save the export into.')
+  }
+  return directory
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +207,68 @@ async function resolveInside(cwd, rel) {
 // ---------------------------------------------------------------------------
 /** Absolute path of the child validator. */
 const MERMAID_CHECK = fileURLToPath(new URL('./mermaid-check.mjs', import.meta.url))
+
+/**
+ * Validate one Mermaid source: the queued entry point every caller uses. The
+ * child process, its stub and its verdicts live in {@link runMermaidCheck};
+ * this only decides WHEN that child may run.
+ *
+ * @param source - the diagram source.
+ * @param options - `{ signal }`.
+ * @returns `{ ok, status, diagramType, diagnostics, warnings, ms }` - never rejects.
+ */
+export function checkMermaid(source, options) {
+  return withMermaidSlot(() => runMermaidCheck(source, options))
+}
+
+/** At most this many Mermaid validator children run at once. */
+const MERMAID_MAX_PARALLEL = 2
+/** At most this many validations may WAIT for a slot before one is refused. */
+const MERMAID_MAX_QUEUE = 16
+/** How many validator children are running now, and who is waiting for one. */
+let mermaidRunning = 0
+const mermaidQueue = []
+
+/**
+ * Run one Mermaid validation inside the process-wide slot pool.
+ *
+ * Every validation is a `node` child that loads a 3.5 MB engine, so an
+ * unbounded fan-out - several agents, or several diagrams written in one turn -
+ * is a memory spike that ends as a failed spawn for all of them. Two at a time
+ * with a bounded queue keeps the worst case at a known number of children. Past
+ * the queue cap the verdict is `unavailable`, which is the honest answer: a
+ * validation that never ran must not be reported as a diagram error.
+ *
+ * @param work - a thunk returning the verdict promise.
+ * @returns the verdict promise (never rejects).
+ */
+function withMermaidSlot(work) {
+  return new Promise((resolve) => {
+    const finish = () => {
+      mermaidRunning -= 1
+      const next = mermaidQueue.shift()
+      if (next) next()
+    }
+    const run = () => {
+      mermaidRunning += 1
+      Promise.resolve()
+        .then(work)
+        .then(
+          (value) => {
+            finish()
+            resolve(value)
+          },
+          (err) => {
+            finish()
+            resolve(unavailable('the Mermaid validator failed: ' + message(err)))
+          },
+        )
+    }
+    if (mermaidRunning < MERMAID_MAX_PARALLEL) run()
+    else if (mermaidQueue.length < MERMAID_MAX_QUEUE) mermaidQueue.push(run)
+    else resolve(unavailable('too many Mermaid validations are already queued; try again in a moment'))
+  })
+}
 
 /**
  * Parse one Mermaid source headlessly, in a child process, with the vendored
@@ -167,7 +280,7 @@ const MERMAID_CHECK = fileURLToPath(new URL('./mermaid-check.mjs', import.meta.u
  * @param options - `{ signal }`.
  * @returns `{ ok, status, diagramType, diagnostics, ms }`.
  */
-export function checkMermaid(source, { signal } = {}) {
+function runMermaidCheck(source, { signal } = {}) {
   return new Promise((resolve) => {
     let child
     try {
@@ -387,11 +500,19 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
   })
   const cachedMeta = force ? null : deps.cache.meta(key)
   if (cachedMeta) {
-    const warnings = tikzWarnings({ source: normalized.document, meta: cachedMeta, diagnostics: cachedMeta.diagnostics ?? [] })
+    // The cache is keyed on the document, the engine and the renderer, so a hit
+    // means THIS document already compiled exactly this way - diagnostics
+    // included. The verdict is therefore read back from the cached meta and not
+    // assumed: a compile that failed but still wrote a PDF is cached too (the
+    // partial picture is evidence), and calling that "ok" on the next call would
+    // be the plugin lying to the model about its own diagram.
+    const cachedDiagnostics = Array.isArray(cachedMeta.diagnostics) ? cachedMeta.diagnostics : []
+    const cachedStatus = cachedDiagnostics.length > 0 ? 'error' : 'ok'
+    const warnings = tikzWarnings({ source: normalized.document, meta: cachedMeta, diagnostics: cachedDiagnostics })
     const stored = deps.store.recordVerdict(sessionId, entry.id, {
-      status: 'ok',
+      status: cachedStatus,
       diagramType: 'tikz',
-      diagnostics: [],
+      diagnostics: cachedDiagnostics,
       warnings,
       artifact: {
         hash: key,
@@ -404,10 +525,10 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
       },
     })
     return {
-      ok: true,
-      status: 'ok',
+      ok: cachedStatus === 'ok',
+      status: cachedStatus,
       diagramType: 'tikz',
-      diagnostics: [],
+      diagnostics: cachedDiagnostics,
       warnings,
       artifact: stored.artifact,
       ms: Date.now() - started,
@@ -615,17 +736,20 @@ const VIEW_SCHEMA = {
     lines: { type: 'integer' },
     bytes: { type: 'integer' },
     warnings: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string' }, text: { type: 'string' } }, required: ['text'] } },
-    // What the BROWSER did with this revision, when a browser has reported.
-    // Always present, so a card never has to distinguish "absent" from "not yet".
+    // What the BROWSER reported about this revision, when a browser has
+    // reported. Always present, so a card never has to distinguish "absent"
+    // from "not yet".
     verification: {
       type: 'object',
       properties: {
-        state: { type: 'string' },
-        revision: { type: 'integer' },
+        state: { type: 'string', description: 'drawn | failed | stale | pending - what the browser reported about THIS revision.' },
+        revision: { type: 'integer', description: 'The revision this verdict is about (the current one).' },
+        reported: { type: 'integer', description: 'The revision the newest report names; differs from `revision` only when the state is stale.' },
+        kind: { type: 'string', description: 'What the report was about: mermaid | tikz.' },
         error: { type: 'string' },
         at: { type: 'string' },
       },
-      required: ['state'],
+      required: ['state', 'revision'],
     },
   },
   required: ['id', 'kind', 'title', 'status', 'address', 'verification'],
@@ -654,7 +778,7 @@ function writeDescription(engines) {
     'The result carries three separate things, and they answer different questions:',
     '  - `status` is the host verdict: ok (it parses/compiles), error (it does not - fix the diagnostics), or unavailable (the host has no validator/engine, so the diagram is STORED BUT NOT VERIFIED - say so rather than implying it is fine).',
     '  - `warnings` are advisory and never change the status: a picture with no edges, more nodes than a person reads at once, an unclosed-looking label, a TikZ document with no picture in it, a multi-page result. Fix the ones that are right; say which ones you deliberately ignored.',
-    '  - the "Browser:" line says what a real renderer did with THIS revision: DREW it, FAILED (the picture the user sees is error text - fix it), no report yet (normal with no client open), or stale (the source changed since it was drawn). Use diagram_verify to re-check later without rewriting anything.',
+    '  - the "Browser:" line says what a real renderer reported about THIS revision: drawn (a browser reported DREW), failed (it reported the picture could not be made - what the user sees is that error text), stale (the newest report names an older revision, so this revision has never been drawn), or pending (no report at all, which is normal with no client open). Use diagram_verify to re-check later without rewriting anything.',
   ].join('\n')
 }
 
@@ -693,45 +817,44 @@ export function buildTools(deps) {
   })
 
   /**
-   * What the browser did with this revision, in one word the card can draw.
+   * The one line `diagram_read` / `diagram_verify` carry about the browser.
    *
-   * `state` is deliberately never optimistic: `pending` means no browser has
-   * reported on THIS revision, which is the truth for a diagram written while
-   * no client is open. A report about an older revision is `stale`, because the
-   * source has changed since the picture was drawn.
-   *
-   * @param entry - the stored diagram.
-   * @returns `{ state, revision, error, at }`.
+   * It names the state, the revision it is about and - when there is one - the
+   * report's own time, theme and error, so the sentence can be checked against
+   * the stored report instead of being taken on faith.
    */
-  const verificationOf = (entry) => {
-    const report = entry.render
-    if (!report) return { state: 'pending', revision: entry.revision }
-    const stale = Number(report.revision) !== Number(entry.revision)
-    return {
-      state: stale ? 'stale' : report.ok ? 'drawn' : 'failed',
-      revision: Number.isFinite(report.revision) ? report.revision : entry.revision,
-      error: report.error ?? undefined,
-      at: report.at ?? undefined,
-    }
-  }
-  /** The one line `diagram_read` carries about the browser, when there is one. */
   const renderLine = (entry) => {
     const verification = verificationOf(entry)
+    const theme = entry.render && entry.render.theme ? ' (' + entry.render.theme + ' theme)' : ''
     if (verification.state === 'pending') {
-      return 'Browser: no report for revision ' + entry.revision + ' yet - the picture has not been drawn anywhere the host can see. It renders when this conversation is open in the app.'
+      return (
+        'Browser: pending - no render report for revision ' +
+        verification.revision +
+        '; nothing has drawn it where the host can see. It is drawn when this conversation is open in the app.'
+      )
     }
     if (verification.state === 'stale') {
-      return 'Browser: revision ' + verification.revision + ' was drawn' + (verification.at ? ' at ' + verification.at : '') + ', but the source has changed since, so this revision is unverified.'
+      return (
+        'Browser: stale - the newest report is about revision ' +
+        verification.reported +
+        (entry.render && entry.render.at ? ' (at ' + entry.render.at + ')' : '') +
+        ', but the current revision is ' +
+        verification.revision +
+        '; revision ' +
+        verification.revision +
+        ' has not been drawn.'
+      )
     }
     if (verification.state === 'drawn') {
-      return 'Browser: DREW this revision successfully' + (verification.at ? ' at ' + verification.at : '') + (entry.render && entry.render.theme ? ' (' + entry.render.theme + ' theme)' : '') + '.'
+      return 'Browser: DREW revision ' + verification.revision + (verification.at ? ' at ' + verification.at : '') + theme + '.'
     }
     return (
-      'Browser: FAILED to draw this revision' +
-      (verification.at ? ' (at ' + verification.at + ')' : '') +
+      'Browser: FAILED to draw revision ' +
+      verification.revision +
+      (verification.at ? ' at ' + verification.at : '') +
       ': ' +
-      String(verification.error || 'the renderer did not say why') +
-      ' - the picture the user sees is the error text, not the diagram.'
+      String(verification.error || 'the renderer did not report a reason') +
+      ' - what the user sees is that error, not the picture.'
     )
   }
   /** The advisory findings, as text lines. */
@@ -884,7 +1007,7 @@ export function buildTools(deps) {
     name: 'diagram_read',
     description: [
       'Read the diagrams of this conversation.',
-      'With `id`: that diagram\'s complete source, kind, status, last diagnostics, the advisory warnings, and what the BROWSER did with this revision (drawn / not drawn yet / failed) plus the exact address of its tab.',
+      'With `id`: that diagram\'s complete source, kind, status, last diagnostics, the advisory warnings, and what the BROWSER reported about this revision (drawn / failed / stale / pending) plus the exact address of its tab.',
       'Without `id`: the index of every diagram (id, kind, title, status, size, last update).',
       'Read before patching or replacing a diagram you did not just write - your context may have been compacted since.',
     ].join('\n'),
@@ -1135,6 +1258,9 @@ function publicDiagram(entry) {
     diagnostics: entry.diagnostics ?? [],
     warnings: entry.warnings ?? [],
     render: entry.render ?? null,
+    // The same verdict the tool result carries, computed by the same function:
+    // the tab's pill and the model's "Browser:" line can never disagree.
+    verification: verificationOf(entry),
     checkedAt: entry.checkedAt ?? null,
     artifact: entry.artifact ?? null,
     createdAt: entry.createdAt,
@@ -1179,21 +1305,32 @@ function exportBytes(deps, entry, format, clientData) {
   return null
 }
 
-/** Write one export into the workspace, create-exclusively. */
-async function writeExclusive(target, bytes) {
-  const extension = path.extname(target)
-  const stem = target.slice(0, target.length - extension.length)
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const candidate = attempt === 0 ? target : stem + '-' + (attempt + 1) + extension
+/**
+ * Write one export into a directory, create-exclusively.
+ *
+ * `wx` is what makes "never clobbers a file you already had" a promise rather
+ * than a hope: a collision takes `-2`, `-3`, ... instead of overwriting.
+ *
+ * @param directory - the folder to write into (the host's Desktop).
+ * @param baseName - the first name to try.
+ * @param bytes - the file's contents.
+ * @returns the absolute path written.
+ */
+async function writeUnique(directory, baseName, bytes) {
+  const extension = path.extname(baseName)
+  const stem = baseName.slice(0, baseName.length - extension.length)
+  for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt += 1) {
+    const name = attempt === 0 ? baseName : stem + '-' + (attempt + 1) + extension
+    const target = path.join(directory, name)
     try {
-      await fsp.writeFile(candidate, bytes, { flag: 'wx' })
-      return candidate
+      await fsp.writeFile(target, bytes, { flag: 'wx' })
+      return target
     } catch (err) {
       if (err && err.code === 'EEXIST') continue
       throw err
     }
   }
-  throw httpError(409, 'NAME_TAKEN', 'Could not find a free file name in the conversation folder.')
+  throw httpError(409, 'NAME_TAKEN', 'Could not find a free file name on the Desktop.')
 }
 
 /**
@@ -1328,6 +1465,16 @@ export function registerRoutes(ctx, deps) {
     return new Response(bytes, { status: 200, headers })
   })
 
+  /**
+   * Save one export to the Desktop of the machine running the harness.
+   *
+   * The client never names a path: it asks for a format and the host decides
+   * where a person keeps things, which is the same deal the screenshot control
+   * makes. That leaves no traversal surface and no way to overwrite a file the
+   * user already had - the write is create-exclusive and a collision takes the
+   * next free name. An image the HOST cannot produce (a Mermaid SVG/PNG) arrives
+   * in the body, because the browser is what rendered it.
+   */
   register(EXPORT_ROUTE, ['POST'], async (request) => {
     const body = await readJsonBody(request, MAX_ARTIFACT_BYTES * 2)
     const session = typeof body.session === 'string' ? body.session : ''
@@ -1342,10 +1489,16 @@ export function registerRoutes(ctx, deps) {
     if (bytes === null) {
       throw httpError(404, 'NO_ARTIFACT', 'There is nothing to export as ' + format + ' yet - render or compile the diagram first.')
     }
-    const root = await sessionRoot(ctx, session)
-    const target = await resolveInside(root, exportName(entry, format))
-    const written = await writeExclusive(target, bytes)
-    return json(200, { ok: true, path: path.relative(root, written).split(path.sep).join('/'), bytes: bytes.byteLength })
+    const directory = await desktopDirectory()
+    const written = await writeUnique(directory, exportName(entry, format), bytes)
+    return json(200, {
+      ok: true,
+      path: written,
+      directory,
+      name: path.basename(written),
+      bytes: bytes.byteLength,
+      format,
+    })
   })
 
   register(VENDOR_ROUTE, ['GET', 'HEAD'], (request) => serveVendor(request))

@@ -1070,7 +1070,9 @@ check(
   diagCss.includes('.dsd-root{') &&
     diagCss.includes('.dsd-card{') &&
     diagCss.includes('.dsd-pill[data-status="ok"]') &&
-    diagCss.includes('.dsd-svg svg{'),
+    diagCss.includes('.dsd-svg svg{') &&
+    diagCss.includes('.dsd-zoomBox{') &&
+    diagCss.includes('.dsd-zoomBar{'),
 )
 // The panel's toolbar is the same 38px border-box top bar the Files tab, the
 // document preview, the editor and the History tab use, so every right-column
@@ -1133,7 +1135,7 @@ const indexMarkup = renderToStaticMarkup(h(IndexBody, { sessionId: 'sess-1' }))
 check('index body renders its empty state', indexMarkup.includes('No diagrams in this conversation yet.'))
 check(
   'index body offers both engines',
-  indexMarkup.includes('>New Mermaid<') && indexMarkup.includes('>New TikZ<') && indexMarkup.includes('dsh-diagrams 0.1.0-alpha.3'),
+  indexMarkup.includes('>New Mermaid<') && indexMarkup.includes('>New TikZ<') && indexMarkup.includes('dsh-diagrams 0.1.0-alpha.4'),
 )
 check('index title seat', renderToStaticMarkup(h(diagSeats['sidebar.right.pane.tab.title#dsh-diagrams-index'].component, {})), 'Diagrams')
 
@@ -1290,6 +1292,95 @@ check('exports refuse a diagram that does not render', /async function mermaidSv
 check(
   'a refused Mermaid source is never rendered',
   /entry\.kind === 'mermaid' && entry\.status === 'error'/.test(diagSource) && diagSource.includes('does not parse, so there is nothing to draw'),
+)
+
+// ZOOM. A diagram is read whole first and zoomed in on second, so the picture is
+// laid out at 80% of the pane and the ladder moves the BOX rather than applying a
+// CSS transform: a transform scales into a clipped box with no scrollable area,
+// and the reader could never reach the edge of a zoomed diagram.
+check('the reader gets a zoom ladder', /const ZOOM_STEPS = \[0\.25, 0\.5, 0\.75, 1, 1\.25, 1\.5, 2, 3, 4\]/.test(diagSource))
+check('100% is 80% of the pane', diagSource.includes('const ZOOM_FIT_WIDTH = 80'))
+check('the picture is laid out as a share of the pane', diagSource.includes("style: { width: ZOOM_FIT_WIDTH * zoom + '%' }"))
+check('zooming in lets the picture outgrow its natural width', diagSource.includes("'data-zoomed': zoom > ZOOM_DEFAULT"))
+check('zoom is remembered per diagram', diagSource.includes('zoomMemory.set(zoomKey, next)'))
+check('the canvas can scroll a zoomed diagram to its left edge', diagCss.includes('justify-content:flex-start'))
+check('the zoom box never shrinks to fit', /\.dsd-zoomBox\{flex:none;/.test(diagCss))
+check(
+  'a zoomed mermaid svg overrides the max-width the engine writes',
+  diagCss.includes('.dsd-zoomBox[data-zoomed="true"] .dsd-svg svg{width:100%;max-width:none!important;height:auto}'),
+)
+// The two ways this zoom could silently zoom nothing, both of them real defects
+// found by using it: a column flex container sizes its children to their CONTENT
+// on the cross axis, so the `.dsd-svg` wrapper stayed at the svg's natural width
+// however wide the box became; and without an explicit `width:100%` on that
+// wrapper the svg's own `width:100%` resolved against the wrapper, not the box.
+check(
+  'every child of a zoomed box is stretched to it',
+  diagCss.includes('.dsd-zoomBox[data-zoomed="true"] > *{align-self:stretch}'),
+)
+check(
+  'the picture wrapper fills the box',
+  diagCss.includes('.dsd-svg{width:100%;max-width:100%;display:flex;justify-content:center}'),
+)
+check(
+  'readable blocks do not stretch with the zoom',
+  diagCss.includes('max-width:720px') && diagCss.includes('.dsd-diags{margin:0 auto;'),
+)
+// PAN. The picture is laid out at real size in a scrollable box, so a drag moves
+// the SCROLL POSITION: no transform, nothing repositioned, and the wheel keeps
+// working. A picture that fits must not offer a grab cursor, and a wide diagram
+// at 100% must, because it overflows with no zoom at all.
+check(
+  'a drag pans the scroll position, not a transform',
+  /canvas\.scrollLeft = start\.left - \(event\.clientX - start\.x\)/.test(diagSource) &&
+    diagSource.includes('canvas.scrollTop = start.top - (event.clientY - start.y)'),
+)
+check('the drag captures the pointer', diagSource.includes('canvas.setPointerCapture(event.pointerId)'))
+check(
+  'the canvas is the pan surface',
+  diagCss.includes('.dsd-canvas[data-pannable="true"]{cursor:grab}') && diagCss.includes('.dsd-canvas[data-panning="true"]{cursor:grabbing'),
+)
+check(
+  'a picture that fits never offers a grab cursor',
+  diagSource.includes("'data-pannable': pannable ? 'true' : undefined") &&
+    diagSource.includes('canvas.scrollWidth > canvas.clientWidth + 1'),
+)
+check(
+  'the native drag of a picture cannot steal the pan',
+  diagSource.includes('draggable: false') && diagCss.includes('-webkit-user-drag:none'),
+)
+check(
+  'a zoom keeps the point the reader was looking at',
+  diagSource.includes('element.scrollLeft = anchor.x * element.scrollWidth - element.clientWidth / 2') &&
+    diagSource.includes('window.requestAnimationFrame(restore)'),
+)
+
+// EXPORT. Every format is saved to the Desktop of the machine running the
+// harness by the host route - the same deal the screenshot control makes, with
+// the client naming a format and never a path. The browser download survives
+// only as the fallback for a profile without that route.
+check('the export menu saves to the Desktop', diagSource.includes('Save to the Desktop') && diagSource.includes("'Save .' + format"))
+check(
+  'the export reports the absolute path the host wrote',
+  diagSource.includes("setStatus('saved to ' + (answer && answer.path ? answer.path : 'the Desktop'))"),
+)
+check('the browser download survives as a fallback', diagSource.includes("'Download .' + format + ' in the browser'"))
+
+// VERDICT LABELS. Four objective states, and an absent report is never read as a
+// picture: the pill draws what the host computed and falls back to the same four
+// answers rather than inventing an optimistic one.
+check('the pill draws the host verdict', diagSource.includes('entry.verification ? entry.verification : renderVerdictOf(entry)'))
+check('the client keeps a fallback verdict for an older host', /function renderVerdictOf\(entry\)/.test(diagSource))
+const fallbackVerdict = diagSource.slice(diagSource.indexOf('function renderVerdictOf'), diagSource.indexOf('function verdictTitle'))
+check('a missing report is never read as a picture', fallbackVerdict.includes("if (!report) return { state: 'pending'"))
+check(
+  'the fallback carries the same four answers',
+  fallbackVerdict.includes("state: 'stale'") && fallbackVerdict.includes("state: report.ok ? 'drawn' : 'failed'"),
+)
+check(
+  'a failed render is red, an absent verdict is neutral',
+  diagCss.includes('.dsd-pill[data-status="error"],.dsd-pill[data-status="failed"]') &&
+    diagCss.includes('.dsd-pill[data-status="unchecked"],.dsd-pill[data-status="pending"],.dsd-pill[data-status="stale"]'),
 )
 
 console.log('')

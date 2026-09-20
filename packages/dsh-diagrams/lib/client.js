@@ -5,7 +5,10 @@
  *
  *   1. the **`diagram` tab type** (a resource address,
  *      `dsh-resource://diagram/session/<session>/<id>`) - one tab per diagram,
- *      showing the rendered picture with a source drawer and an export menu;
+ *      showing the rendered picture at 80% of the pane width with a zoom ladder
+ *      (25%-400%), a source drawer, and an export menu whose every format is
+ *      saved to the **Desktop of the machine running the harness** by the host
+ *      (the browser download stays as the fallback for a profile without it);
  *   2. the **`diagrams` tab type** (a page address, `sidebar://diagrams`) -
  *      the conversation's diagram index, and the type whose `guide` entry puts
  *      "Diagrams" on the tab strip's "+" / Start page (order 40, after Files,
@@ -62,7 +65,20 @@ window.__ModuleLoader__.load({
     const REPORT_ROUTE = '/api/dsh-diagrams/render-report'
     const VENDOR_ROUTE = '/api/dsh-diagrams/vendor/mermaid.js'
     /** Version marker shown in the panel footer, so a fresh bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.3'
+    const PLUGIN_VERSION = '0.1.0-alpha.4'
+    /**
+     * The zoom ladder the diagram tab steps through, the share of the pane a
+     * picture occupies at 100%, and the last zoom each tab was left at.
+     *
+     * 80% IS the 100% rung: a diagram is meant to be read whole first - laid out
+     * to fit the tab with a margin - and the reader zooms IN from there. The
+     * memory is keyed by `session/id` and is deliberately view state only: it is
+     * never sent to the host and never survives a reload.
+     */
+    const ZOOM_STEPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4]
+    const ZOOM_DEFAULT = 1
+    const ZOOM_FIT_WIDTH = 80
+    const zoomMemory = new Map()
     /** The tools this package registers conversation cards for. */
     const TOOL_NAMES = ['diagram_write', 'diagram_patch', 'diagram_read', 'diagram_verify', 'diagram_delete']
     /** Client services, all resolved lazily (none of them is required to draw). */
@@ -94,27 +110,62 @@ window.__ModuleLoader__.load({
 .dsd-iconBtn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary,#1f1f1f)}
 .dsd-pill{flex:none;display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 7px;border-radius:9px;font-size:11px}
 .dsd-pill[data-status="ok"]{background:rgba(38,160,90,.14);color:#1f8a4c}
-.dsd-pill[data-status="error"]{background:rgba(214,64,64,.14);color:#c93b3b}
+.dsd-pill[data-status="error"],.dsd-pill[data-status="failed"]{background:rgba(214,64,64,.14);color:#c93b3b}
 .dsd-pill[data-status="unavailable"]{background:rgba(190,140,20,.16);color:#a9770f}
-.dsd-pill[data-status="unchecked"]{background:var(--dsw-alias-fill-l2,rgba(127,127,127,.12));color:var(--dsw-alias-label-secondary,#666)}
+/* Neutral by design: "nothing has reported yet" and "the report is about an
+   older revision" are both ABSENCES of a verdict, and neither is red. */
+.dsd-pill[data-status="unchecked"],.dsd-pill[data-status="pending"],.dsd-pill[data-status="stale"]{background:var(--dsw-alias-fill-l2,rgba(127,127,127,.12));color:var(--dsw-alias-label-secondary,#666)}
 .dsd-pill[data-status="drawn"]{background:rgba(38,120,200,.14);color:#2f6fb5}
 .dsd-body{flex:1;min-height:0;position:relative;display:flex;overflow:hidden}
-.dsd-canvas{flex:1;min-width:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:16px}
+/* The picture is laid out at a SHARE of the pane's width, not at its own
+   natural size: a diagram is read whole first (80% of the tab, centred) and
+   only then zoomed in on. The box owns the width, so zooming past the pane
+   widens the SCROLLABLE area instead of scaling content into a clipped box.
+   flex-start plus margin:0 auto is deliberate: with justify-content:center the
+   left edge of an overflowing flex item is unreachable, and a zoomed diagram
+   could never be scrolled back to.
+   The canvas is also the PAN surface: a drag moves scrollLeft/scrollTop, which
+   is why the picture needs no transform and nothing has to be repositioned. */
+.dsd-canvas{flex:1;min-width:0;overflow:auto;display:flex;align-items:flex-start;justify-content:flex-start;padding:16px 16px 56px}
 .dsd-canvas[data-drawer="true"]{align-items:stretch;justify-content:stretch;padding:0}
-.dsd-picture{max-width:100%;height:auto}
+.dsd-canvas[data-pannable="true"]{cursor:grab}
+.dsd-canvas[data-panning="true"]{cursor:grabbing;user-select:none}
+.dsd-zoomBox{flex:none;margin:0 auto;min-width:0;display:flex;flex-direction:column;align-items:center;gap:10px;box-sizing:border-box}
+/* EVERY child of a zoomed box fills it. This is the difference between zooming
+   the picture and zooming an empty div: a column flex container sizes its
+   children to their CONTENT on the cross axis, so the .dsd-svg wrapper stayed at
+   the SVG's natural width however wide the box became - and width:100% on the
+   svg then resolved against that content width. Stretching the children plus an
+   explicit width:100% on the wrapper is what makes the picture follow the box. */
+.dsd-zoomBox[data-zoomed="true"] > *{align-self:stretch}
+.dsd-picture{max-width:100%;height:auto;-webkit-user-drag:none;user-select:none}
 .dsd-pictureWrap{display:inline-flex;max-width:100%;flex-direction:column;align-items:center;gap:10px}
+/* The wrapper fills the box and centres the svg inside it; mermaid writes its
+   own max-width into the <svg>, so "fit the width, never upscale" is what
+   happens at 100% with no extra rule. */
+.dsd-svg{width:100%;max-width:100%;display:flex;justify-content:center}
 .dsd-svg svg{max-width:100%;height:auto}
-.dsd-notice{max-width:520px;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.55;background:var(--dsw-alias-fill-l2,rgba(127,127,127,.10));color:var(--dsw-alias-label-secondary,#666)}
+/* Past the fit width the picture follows the BOX rather than its own natural
+   size: mermaid's inline max-width is overridden (!important, because an
+   inline style beats a stylesheet), so a small diagram grows when the reader
+   zooms in instead of refusing to. */
+.dsd-zoomBox[data-zoomed="true"] .dsd-svg svg{width:100%;max-width:none!important;height:auto}
+.dsd-zoomBox[data-zoomed="true"] .dsd-picture{width:100%;max-width:none}
+.dsd-zoomBar{position:absolute;right:12px;bottom:12px;z-index:6;display:flex;align-items:center;gap:2px;padding:3px;border-radius:10px;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.22));background:var(--dsw-alias-surface-l1,#fff);box-shadow:0 4px 14px rgba(0,0,0,.14)}
+.dsd-zoomLabel{min-width:44px;text-align:center;font-size:11.5px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary,#666)}
+/* Absolute caps, not percentages: these blocks are read, not zoomed, so a 400%
+   box must not stretch them into one long line. */
+.dsd-notice{max-width:520px;margin:0 auto;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.55;background:var(--dsw-alias-fill-l2,rgba(127,127,127,.10));color:var(--dsw-alias-label-secondary,#666)}
 .dsd-notice[data-tone="error"]{background:rgba(214,64,64,.10);color:#c05a5a}
 /* A diagram that did not render: the parser's own words as text. This is what
    stands where mermaid would otherwise have left its "Syntax error in text"
    error picture in the page. */
-.dsd-renderError{max-width:100%;display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:8px;border:1px solid rgba(214,64,64,.25);background:rgba(214,64,64,.06)}
+.dsd-renderError{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:8px;border:1px solid rgba(214,64,64,.25);background:rgba(214,64,64,.06)}
 .dsd-renderErrorTop{font-size:12px;line-height:1.55;color:#c05a5a}
 .dsd-renderErrorActions{display:flex;align-items:center;gap:6px}
-.dsd-diags{margin:0;padding:8px 10px;border-radius:8px;background:rgba(214,64,64,.08);border:1px solid rgba(214,64,64,.25);color:#c05a5a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;white-space:pre-wrap;max-width:100%;overflow:auto}
+.dsd-diags{margin:0 auto;padding:8px 10px;border-radius:8px;background:rgba(214,64,64,.08);border:1px solid rgba(214,64,64,.25);color:#c05a5a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;white-space:pre-wrap;max-width:720px;overflow:auto}
 /* Advisory findings: never a refusal, so never red. */
-.dsd-warnings{max-width:100%;display:flex;flex-direction:column;gap:3px;padding:8px 10px;border-radius:8px;border:1px solid rgba(190,140,20,.28);background:rgba(190,140,20,.07);color:#8a6412;font-size:11.5px;line-height:1.5}
+.dsd-warnings{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:3px;padding:8px 10px;border-radius:8px;border:1px solid rgba(190,140,20,.28);background:rgba(190,140,20,.07);color:#8a6412;font-size:11.5px;line-height:1.5}
 .dsd-warningsHead{font-weight:500}
 .dsd-drawer{flex:none;width:44%;min-width:240px;max-width:70%;display:flex;flex-direction:column;border-left:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18));box-sizing:border-box}
 .dsd-drawerHead{flex:none;display:flex;align-items:center;gap:6px;height:32px;padding:0 8px 0 12px;font-size:12px;color:var(--dsw-alias-label-secondary,#666)}
@@ -129,6 +180,7 @@ window.__ModuleLoader__.load({
 .dsd-menu{position:absolute;z-index:20;min-width:190px;padding:5px;border-radius:10px;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.22));background:var(--dsw-alias-surface-l1,#fff);box-shadow:0 8px 26px rgba(0,0,0,.18)}
 .dsd-menuItem{display:block;width:100%;text-align:left;appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-primary,#1f1f1f);font:inherit;font-size:12.5px;padding:7px 9px;border-radius:7px;cursor:pointer}
 .dsd-menuItem:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dsd-menuHead{padding:5px 9px 3px;font-size:11px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary,#8a8a8a)}
 .dsd-menuSep{height:1px;margin:4px 6px;background:var(--dsw-alias-border-l3,rgba(127,127,127,.18))}
 .dsd-status{flex:none;font-size:11.5px;color:var(--dsw-alias-label-secondary,#666);max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Conversation card */
@@ -350,8 +402,12 @@ window.__ModuleLoader__.load({
       const existing = store.byId.get(diagram.id)
       if (existing) Object.assign(existing, diagram)
       else {
+        // The new entry IS the payload: the route and the tool result both carry
+        // the full diagram (source, revision, verification), and a placeholder
+        // summary here would leave the tab without a source to render until the
+        // next state refresh.
         store.byId.set(diagram.id, diagram)
-        store.diagrams = store.diagrams.concat([{ id: diagram.id, kind: diagram.kind, title: diagram.title, status: diagram.status }])
+        store.diagrams = store.diagrams.concat([diagram])
       }
       // The map is the source of truth; keep the array pointing at the same objects.
       store.diagrams = store.diagrams.map((entry) => store.byId.get(entry.id) ?? entry)
@@ -646,40 +702,70 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * What the BROWSER did with one diagram, which is a different question from
-     * whether the host could validate its source.
+     * What the BROWSER reported about THIS revision - a different question from
+     * whether the host could validate the source, and the one the agent reads
+     * back through `diagram_read`.
      *
-     * The host reports "ok" for a source that parses; only the real renderer
-     * proves a picture exists, and that is what the agent reads back through
-     * `diagram_read`. Nothing here is guessed: with no report from this revision
-     * the component says so instead of implying success.
+     * The state itself is computed by the HOST (`lib/store.js`, one
+     * implementation for the tool result, the index and this pill) and this only
+     * draws it: `drawn` (a renderer reported success for this very revision),
+     * `failed` (it reported failure, with its own error), `stale` (the newest
+     * report names an older revision, so this one has never been drawn), or
+     * `pending` (no report at all). Nothing is guessed and nothing is
+     * optimistic: with no report the pill says so instead of implying a picture.
      */
     function RenderPill(props) {
       const entry = props.entry
-      const report = entry && entry.render ? entry.render : null
-      const fresh = Boolean(report) && typeof entry.revision === 'number' && report.revision === entry.revision
-      if (!report) {
-        return h('span', { className: 'dsd-pill', 'data-status': 'unchecked', title: 'This revision has not been rendered in a browser yet.' }, 'not drawn yet')
-      }
-      if (!fresh) {
+      const verdict = entry && entry.verification ? entry.verification : renderVerdictOf(entry)
+      const revision = verdict && Number.isFinite(verdict.revision) ? verdict.revision : 0
+      if (!verdict || verdict.state === 'pending') {
         return h(
           'span',
-          { className: 'dsd-pill', 'data-status': 'unchecked', title: 'The last browser render was of an earlier revision of this diagram.' },
-          'stale render',
+          { className: 'dsd-pill', 'data-status': 'pending', title: 'No browser has reported on revision ' + revision + ' yet. Nothing here says a picture exists.' },
+          'not drawn',
         )
       }
-      if (report.ok) {
+      if (verdict.state === 'stale') {
         return h(
           'span',
-          { className: 'dsd-pill', 'data-status': 'drawn', title: 'The browser rendered this revision' + (report.at ? ' at ' + report.at : '') + '.' },
+          { className: 'dsd-pill', 'data-status': 'stale', title: 'The newest render report is about revision ' + verdict.reported + '; the current revision is ' + revision + '.' },
+          'stale',
+        )
+      }
+      if (verdict.state === 'drawn') {
+        return h(
+          'span',
+          { className: 'dsd-pill', 'data-status': 'drawn', title: 'A browser reported it DREW revision ' + revision + (verdict.at ? ' at ' + verdict.at : '') + '.' },
           'drawn',
         )
       }
+      const error = verdict.error || (entry && entry.render && entry.render.error) || 'the renderer did not report a reason'
       return h(
         'span',
-        { className: 'dsd-pill', 'data-status': 'error', title: report.error || 'The browser could not draw this revision.' },
-        'did not draw',
+        { className: 'dsd-pill', 'data-status': 'failed', title: 'A browser reported it could NOT draw revision ' + revision + ': ' + error },
+        'not drawn',
       )
+    }
+
+    /**
+     * The same four answers the host computes, for a payload written by an older
+     * host. The two halves ship together, but a browser can still be holding a
+     * cached bundle from before a restart, and a verdict that is MISSING must
+     * never be read as "drawn".
+     */
+    function renderVerdictOf(entry) {
+      const current = entry && Number.isFinite(entry.revision) ? entry.revision : 0
+      const report = entry && entry.render ? entry.render : null
+      if (!report) return { state: 'pending', revision: current, reported: null }
+      const reported = Number.isFinite(report.revision) ? report.revision : null
+      if (reported === null || reported !== current) return { state: 'stale', revision: current, reported }
+      return {
+        state: report.ok ? 'drawn' : 'failed',
+        revision: current,
+        reported,
+        error: report.ok ? null : report.error,
+        at: report.at,
+      }
     }
 
     /** The tooltip of a status pill: the verdict AND the advisory warnings. */
@@ -946,7 +1032,9 @@ window.__ModuleLoader__.load({
 
       if (state.error) return h('div', { className: 'dsd-notice' }, state.error)
       if (!state.url) return h('div', { className: 'dsd-notice' }, 'Loading the compiled picture...')
-      return h('img', { className: 'dsd-picture', src: state.url, alt: props.alt || 'TikZ diagram' })
+      // `draggable: false` matters: the canvas pans by dragging, and a native
+      // image drag would take the gesture away from it.
+      return h('img', { className: 'dsd-picture', src: state.url, alt: props.alt || 'TikZ diagram', draggable: false })
     }
 
     /** One picture, dispatched by kind. */
@@ -1156,6 +1244,132 @@ window.__ModuleLoader__.load({
       const revision = entry ? entry.revision : 0
       const dark = useDark()
       const source = entry ? entry.source : ''
+      /** The zoom this tab is at, remembered per diagram across tab switches. */
+      const zoomKey = sessionId + '/' + diagramId
+      const [zoom, setZoomState] = useState(() => zoomMemory.get(zoomKey) ?? ZOOM_DEFAULT)
+      /** The scroll viewport is also the pan surface; nothing is transformed. */
+      const canvasRef = useRef(null)
+      /** One in-flight drag: the pointer origin and the scroll origin. */
+      const pan = useRef(null)
+      const [panning, setPanning] = useState(false)
+      const [pannable, setPannable] = useState(false)
+      // A tab body is reused across navigations, so the zoom is re-read for the
+      // diagram now in the tab instead of leaking the previous one's.
+      useEffect(() => {
+        setZoomState(zoomMemory.get(zoomKey) ?? ZOOM_DEFAULT)
+      }, [zoomKey])
+
+      /**
+       * Move to one zoom rung.
+       *
+       * The reader's point is remembered BEFORE the layout changes, and restored
+       * on the next animation frame: by then React has committed the new box and
+       * the browser has laid it out, but the frame has not been painted yet, so
+       * the picture never jumps to a different place. (A `useLayoutEffect` would
+       * do the same job and warns under any server renderer, which the tracked
+       * check is.)
+       */
+      const zoomTo = useCallback(
+        (next) => {
+          const canvas = canvasRef.current
+          let anchor = null
+          if (canvas && canvas.scrollWidth > canvas.clientWidth) {
+            anchor = {
+              x: (canvas.scrollLeft + canvas.clientWidth / 2) / canvas.scrollWidth,
+              y: (canvas.scrollTop + canvas.clientHeight / 2) / canvas.scrollHeight,
+            }
+          }
+          zoomMemory.set(zoomKey, next)
+          setZoomState(next)
+          if (!anchor) return
+          const restore = () => {
+            const element = canvasRef.current
+            if (!element) return
+            element.scrollLeft = anchor.x * element.scrollWidth - element.clientWidth / 2
+            element.scrollTop = anchor.y * element.scrollHeight - element.clientHeight / 2
+          }
+          if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(restore)
+          else restore()
+        },
+        [zoomKey],
+      )
+      /** One rung on the ladder; the ends clamp rather than wrap around. */
+      const stepZoom = useCallback(
+        (direction) => {
+          const found = ZOOM_STEPS.findIndex((step) => step >= zoom - 1e-6)
+          const from = found === -1 ? ZOOM_STEPS.length - 1 : found
+          const next = ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, from + direction))]
+          if (next !== zoom) zoomTo(next)
+        },
+        [zoom, zoomTo],
+      )
+      /** Back to the fit width (80% of the pane), which is what 100% means here. */
+      const resetZoom = useCallback(() => {
+        if (zoom !== ZOOM_DEFAULT) zoomTo(ZOOM_DEFAULT)
+      }, [zoom, zoomTo])
+      /**
+       * Whether there is anything to pan. Measured rather than assumed: a
+       * picture that fits must not offer a grab cursor, and a wide diagram at
+       * 100% must, because it overflows without any zoom at all.
+       */
+      const measurePannable = useCallback(() => {
+        const canvas = canvasRef.current
+        if (!canvas) return
+        setPannable(canvas.scrollWidth > canvas.clientWidth + 1 || canvas.scrollHeight > canvas.clientHeight + 1)
+      }, [])
+      useEffect(() => {
+        measurePannable()
+        const canvas = canvasRef.current
+        if (!canvas || typeof ResizeObserver !== 'function') return undefined
+        const observer = new ResizeObserver(measurePannable)
+        observer.observe(canvas)
+        return () => observer.disconnect()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [measurePannable, zoom, source, drawer, dark])
+
+      /**
+       * Drag to pan. The picture is laid out at its real size in a scrollable
+       * box, so panning is `scrollLeft`/`scrollTop` - no transform, no
+       * repositioning, and the wheel keeps working normally.
+       *
+       * Mouse only: a touch drag is the browser's own scroll, and hijacking it
+       * would take the gesture away from the platform.
+       */
+      const onPointerDown = (event) => {
+        if (event.pointerType !== 'mouse' || event.button !== 0) return
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const target = event.target
+        if (target && typeof target.closest === 'function' && target.closest('button, a, input, textarea, select')) return
+        pan.current = { x: event.clientX, y: event.clientY, left: canvas.scrollLeft, top: canvas.scrollTop }
+        setPanning(true)
+        try {
+          canvas.setPointerCapture(event.pointerId)
+        } catch (err) {
+          /* an old browser: the move events still arrive while the pointer is over it */
+        }
+        // Stops text selection and the browser's own image drag from stealing the gesture.
+        event.preventDefault()
+      }
+      const onPointerMove = (event) => {
+        const start = pan.current
+        const canvas = canvasRef.current
+        if (!start || !canvas) return
+        canvas.scrollLeft = start.left - (event.clientX - start.x)
+        canvas.scrollTop = start.top - (event.clientY - start.y)
+      }
+      const endPan = (event) => {
+        const canvas = canvasRef.current
+        if (canvas && event && typeof canvas.releasePointerCapture === 'function') {
+          try {
+            canvas.releasePointerCapture(event.pointerId)
+          } catch (err) {
+            /* already released */
+          }
+        }
+        pan.current = null
+        setPanning(false)
+      }
 
       // A tab that was in the background shows the diagram as it is NOW: a
       // write in the chat may have rewritten it since this body last rendered.
@@ -1199,7 +1413,15 @@ window.__ModuleLoader__.load({
         }
       }, [sessionId, diagramId, draft, entry])
 
-      /** Save one export into the conversation folder. */
+      /**
+       * Save one export to the Desktop of the machine running the harness.
+       *
+       * The client names a FORMAT and never a path: the host resolves the
+       * Desktop (which can be OneDrive-redirected or XDG-configured), writes
+       * create-exclusively and answers with the absolute path, which is what the
+       * status line reports. A Mermaid SVG/PNG is produced here, because the
+       * browser is what rendered it, and travels in the body as base64.
+       */
       const exportAs = useCallback(
         async (format) => {
           setMenu(false)
@@ -1217,7 +1439,7 @@ window.__ModuleLoader__.load({
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ session: sessionId, id: diagramId, format, data }),
             })
-            setStatus('saved to ' + (answer && answer.path ? answer.path : 'the conversation folder'))
+            setStatus('saved to ' + (answer && answer.path ? answer.path : 'the Desktop'))
           } catch (err) {
             setStatus(err && err.message ? err.message : 'export failed')
           } finally {
@@ -1227,7 +1449,12 @@ window.__ModuleLoader__.load({
         [sessionId, diagramId, entry, dark],
       )
 
-      /** Download one export through the browser instead of the workspace. */
+      /**
+       * Download one export through the BROWSER instead of the Desktop - the
+       * fallback for a profile whose host half is not mounted (then nothing can
+       * resolve a Desktop), kept for the same reason the screenshot control
+       * keeps it.
+       */
       const downloadAs = useCallback(
         async (format) => {
           setMenu(false)
@@ -1311,20 +1538,18 @@ window.__ModuleLoader__.load({
               )
             : null,
           h('div', { style: { position: 'relative' } }, [
-            h(Button, { key: 'export', title: 'Export this diagram', onClick: () => setMenu((value) => !value) }, 'Export ▾'),
+            h(Button, { key: 'export', title: 'Save this diagram to the Desktop of this machine', onClick: () => setMenu((value) => !value) }, 'Export ▾'),
             menu
               ? h(
                   'div',
                   { key: 'menu', className: 'dsd-menu', style: { right: 0, top: 28 } },
-                  formats.slice(0, 2).map((format) =>
-                    h('button', { key: 'save-' + format, type: 'button', className: 'dsd-menuItem', onClick: () => exportAs(format) }, 'Save as .' + format + ' in the folder'),
-                  ),
-                  formats.slice(2).map((format) =>
-                    h('button', { key: 'save-' + format, type: 'button', className: 'dsd-menuItem', onClick: () => exportAs(format) }, 'Save ' + format.toUpperCase() + ' in the folder'),
+                  h('div', { key: 'saveHead', className: 'dsd-menuHead' }, 'Save to the Desktop'),
+                  formats.map((format) =>
+                    h('button', { key: 'save-' + format, type: 'button', className: 'dsd-menuItem', disabled: busy, onClick: () => exportAs(format) }, 'Save .' + format),
                   ),
                   h('div', { key: 'sep', className: 'dsd-menuSep' }),
                   formats.map((format) =>
-                    h('button', { key: 'dl-' + format, type: 'button', className: 'dsd-menuItem', onClick: () => downloadAs(format) }, 'Download .' + format),
+                    h('button', { key: 'dl-' + format, type: 'button', className: 'dsd-menuItem', disabled: busy, onClick: () => downloadAs(format) }, 'Download .' + format + ' in the browser'),
                   ),
                 )
               : null,
@@ -1341,10 +1566,28 @@ window.__ModuleLoader__.load({
           { className: 'dsd-body' },
           h(
             'div',
-            { className: 'dsd-canvas' },
+            {
+              className: 'dsd-canvas',
+              'data-drawer': drawer ? 'true' : undefined,
+              'data-pannable': pannable ? 'true' : undefined,
+              'data-panning': panning ? 'true' : undefined,
+              ref: canvasRef,
+              onPointerDown,
+              onPointerMove,
+              onPointerUp: endPan,
+              onPointerCancel: endPan,
+              onLostPointerCapture: endPan,
+            },
             h(
               'div',
-              { className: 'dsd-pictureWrap' },
+              {
+                className: 'dsd-zoomBox',
+                // Past 100% the picture follows the BOX instead of its own
+                // natural width (see the stylesheet): without it a diagram
+                // narrower than the pane would refuse to grow.
+                'data-zoomed': zoom > ZOOM_DEFAULT ? 'true' : undefined,
+                style: { width: ZOOM_FIT_WIDTH * zoom + '%' },
+              },
               h(StoredPicture, { entry, sessionId, onEdit: () => setDrawer(true) }),
               entry.status === 'unavailable'
                 ? h('div', { className: 'dsd-notice' }, 'This diagram was stored but could not be validated on this host.')
@@ -1359,6 +1602,35 @@ window.__ModuleLoader__.load({
                     (entry.warnings ?? []).map((warning) => warning.text).join('\n'),
                   )
                 : null,
+            ),
+          ),
+          // The zoom ladder floats over the canvas rather than living in the
+          // toolbar: it belongs to the PICTURE, and the toolbar is already
+          // carrying the verdicts, the source and the export.
+          h(
+            'div',
+            { className: 'dsd-zoomBar' },
+            h(Button, {
+              icon: '\u2212',
+              title: 'Zoom out',
+              disabled: busy || zoom <= ZOOM_STEPS[0],
+              onClick: () => stepZoom(-1),
+            }),
+            h('span', { className: 'dsd-zoomLabel' }, Math.round(zoom * 100) + '%'),
+            h(Button, {
+              icon: '+',
+              title: 'Zoom in',
+              disabled: busy || zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1],
+              onClick: () => stepZoom(1),
+            }),
+            h(
+              Button,
+              {
+                title: 'Fit the tab width again (100% is ' + ZOOM_FIT_WIDTH + '% of the pane)',
+                disabled: busy || zoom === ZOOM_DEFAULT,
+                onClick: resetZoom,
+              },
+              'Fit',
             ),
           ),
           drawer

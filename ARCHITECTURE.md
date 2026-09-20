@@ -1175,14 +1175,55 @@ its own. It is placed last here because it is the newest section, not because it
 runs last: it is an ordinary row beside the editor, the History tab and the
 terminal.
 
-**What it is.** One row (`diagrams`), four tools (`diagram_write`,
-`diagram_patch`, `diagram_read`, `diagram_delete`), two bundled skills
-(`mermaid-diagrams`, `tikz-diagrams`), two tab types (`diagram` - one per
+**What it is.** One row (`diagrams`), five tools (`diagram_write`,
+`diagram_patch`, `diagram_read`, `diagram_verify`, `diagram_delete`), two bundled
+skills (`mermaid-diagrams`, `tikz-diagrams`, each with a
+`reference/complex-diagrams.md`), two tab types (`diagram` - one per
 diagram, a resource address; `diagrams` - the conversation index, a page with
 the guide entry at `order: 40`) and one `tool.call.toolview` card per tool. The
 package README is the reference; this section records the decisions that had to
 be made against the harness line, because each of them closed off an obvious
 alternative.
+
+**Verdicts are objective, and there is one of each.** Three questions are easy to
+collapse into one and must not be: *does the source parse* (`status`), *is the
+picture the one you meant* (the advisory `warnings`), and *did a renderer
+actually draw THIS revision* (`verification.state`). The third is the one only a
+browser can answer, so the browser posts what it did to `/render-report`, the
+host stores it against the revision it drew, and **one function**
+(`verificationOf` in `lib/store.js`) turns it into `drawn` / `failed` / `stale` /
+`pending` for the tool result, the state route and the tab pill alike. The
+verdict carries both revision numbers (`revision` = current, `reported` = what
+the newest report names), so `stale` is read rather than guessed, and a missing
+report is `pending` - never a picture. The same discipline applies to TikZ: a
+cache hit re-reads the verdict the compile was cached WITH, because a failing
+compile that still produced a PDF is cached deliberately, and assuming `ok` on
+the second call was the plugin telling the model its own diagram was fine.
+
+**The tab is a reading surface, not just a renderer.** A diagram is laid out at
+80% of the pane - read it whole first - with a zoom ladder (25%-400%) over it,
+and **drag to pan** once it overflows. The ladder widens the layout BOX instead
+of applying a CSS `transform`: a transform scales into a clipped box with no
+scrollable area, and the left edge of a zoomed diagram could never be reached.
+Two details are load-bearing and both were bugs first: a zoomed box must
+`align-self: stretch` its children (a column flex container sizes children to
+their CONTENT on the cross axis, so the picture wrapper stayed at the svg's
+natural width and the box zoomed while the diagram did not), and the pan is the
+container's own `scrollLeft`/`scrollTop` - nothing is transformed or
+repositioned, the wheel keeps working, and the grab cursor is measured from real
+overflow rather than assumed from the zoom level. A zoom also remembers the point
+the reader was looking at and restores it on the next animation frame (after
+React commits and the browser lays out, before the paint), so the picture never
+jumps.
+
+**Exports leave the workspace on purpose.** `Export` saves every format to the
+**Desktop of the machine running the harness**, through the same route pattern
+the screenshot control uses: the client names a format and never a path, the host
+resolves the Desktop per request (OneDrive-redirected Windows, `XDG_DESKTOP_DIR`
+on Linux, the home folder last) and writes create-exclusively. A diagram is
+something a person keeps, the Desktop is where that person is looking, and the
+conversation folder is not a place to drop files the user did not ask for. The
+browser download stays as the fallback for a profile whose host row is absent.
 
 **Why the state is a file, not a session event.** The first design appended
 `diagram/write` to the session, folded it into a projection, and let the client
@@ -1198,7 +1239,12 @@ also removes the second problem: a `sessionProjections` unit requires `zod`
 schemas, and this pack ships **zero npm dependencies** - the profile installs
 bundles as live `link:` deps, so a package dependency is not installed. The
 model reads that state back through `diagram_read`, which is what makes a
-diagram survive compaction, a reload or the browser closing.
+diagram survive compaction, a reload or the browser closing. Its caps are a
+budget, not a formality: 256 KiB per source, **4 MiB of source per
+conversation** (enforced on write AND patch, with a typed `BUDGET` error), and a
+16 MiB file cap that nothing this plugin writes can reach - because the failure
+mode it prevents is silent: a state file past the cap reads as EMPTY, and every
+diagram in the conversation disappears at once.
 
 **Why the vendored engine is one big file.** `Connection`'s fetch registry
 registers **exact** routes; there is no wildcard, and the method vocabulary is
@@ -1233,13 +1279,26 @@ diagram is stored:
   same failure.
 
 The write path itself is normalized before compiling: a bare TikZ body gets the
-standard preamble **and** a `tikzpicture`, a single environment gets the
-preamble, a full document is used verbatim, and leading `\usepackage` /
-`\usetikzlibrary` / `\tikzset` lines are hoisted into the preamble. The library
+standard preamble **and** a `tikzpicture`, leading `\usepackage` /
+`\usetikzlibrary` / `\tikzset` lines are hoisted into the preamble, and a full
+document is used verbatim. A single environment normally gets only the preamble -
+**except** the pgfplots ones, which get the `tikzpicture` too, because measured
+against this host an `axis` at the top level of a `standalone` document does not
+compile at all (`LaTeX Error: Environment axis undefined`, then every `\addplot`
+an `Undefined control sequence`), while the very same axis inside a picture
+compiles cleanly. `tikzcd` and `circuitikz` are the exceptions: they are
+self-contained and are never wrapped. The library
 list is generous (including `positioning`, `arrows.meta`, `matrix`, `fit`,
 `backgrounds`, `automata`, `graphs`, `trees`, `pgfplots`) because a missing
 library fails the whole compile with "I do not know the key", which is a bad
 trade against a few hundred milliseconds.
+
+The DOM stub is not decoration either: it has to expose what the engine actually
+reaches for. `window.CSS.supports` is the one that bit - the sequence-diagram
+`box` parser calls it and falls back to `new Option()` when `window.CSS` is
+absent, so **every** `box` diagram died with "Option is not defined" and came
+back `unavailable`, stored but never checked. A stub that answers the browser's
+own questions keeps the parser in the branch the browser takes.
 
 **Rendering split.** Mermaid is drawn **in the browser** from the source (themed
 off the app's light/dark scheme, cached per `(source, theme)`); TikZ is drawn
@@ -1259,7 +1318,11 @@ each `<package>/skills/<name>/` into `$DSH_HOME/skills`, where the harness' own
 filesystem provider reads them and a person can edit them without touching this
 repository; every folder the installer creates carries a
 `.vn-harness-<package>` marker, so a person's own skill of the same name is never
-overwritten and uninstall removes exactly what it wrote.
+overwritten and uninstall removes exactly what it wrote. The copy is recursive,
+which is what lets each skill carry a `reference/complex-diagrams.md` beside its
+`SKILL.md`, and `check-skill-examples.mjs` parses or compiles every fenced
+example in those files with the same engines the plugin uses - documentation that
+does not run is documentation that misleads.
 
 **TeX is optional.** `GET /api/dsh-diagrams/health` reports `tex.available`; with
 no engine the index, the tab and the tool result all say the diagram was stored
@@ -1275,6 +1338,11 @@ Mermaid needs no engine at all.
 | Every TikZ write says "No TeX engine found on this host" | none of `pdflatex`, `xelatex`, `lualatex` is on the **server's** `PATH`; install a TeX distribution on the host running `dsh web`, then `GET /api/dsh-diagrams/health?refresh=1` |
 | A TikZ write fails with `File 'x.sty' not found` | the package is not installed and auto-install is deliberately off (a compile must not reach the network). Install it on the host, or use one of the libraries the preamble already loads |
 | The tab shows a picture but the status pill says `error` | the compile produced a PDF *and* reported errors - the picture is best-effort; the diagnostics under it are the truth |
+| The pill says `not drawn` / `stale` and nothing else | `not drawn` is `pending`: no browser has reported on this revision (normal headless, and normal before the tab is ever opened). `stale` means the newest report names an OLDER revision, so this revision has never been drawn - a report about revision 4 is not evidence about revision 5 |
+| A TikZ export says "There is nothing to export as svg yet" | the compile produced no artifact (a document with a hard error). The `.tex` export always works; read the diagnostics |
+| An export landed in the conversation folder | that profile's host row is not mounted, so the panel fell back to the browser download; reinstall (`install.bat` / `./install.sh -Force`) so `POST /api/dsh-diagrams/export` exists |
+| A `box` sequence diagram reports `unavailable` | fixed in alpha.4 (the DOM stub now exposes `window.CSS`). If it reappears, the profile is serving an older bundle: restart `dsh web` and hard-refresh |
+| A bare chart reports `Environment axis undefined` | fixed in alpha.4 (an `axis` body is wrapped in a `tikzpicture`, which is the only form that compiles on a `standalone` document). Same remedy: an older bundle is in the browser |
 | "This diagram is not in this conversation (it may have been deleted)" | the tab outlived its diagram: `diagram_delete` removed it, or the tab belongs to another session |
 | Diagrams vanished after restarting `dsh web` | state lives in `$DSH_HOME/dsh-diagrams/sessions`; a different `DSH_HOME` (or a different host) has its own store |
 | The picture is huge/small in the panel | TikZ is sized by the document (`standalone` + `border=4pt`) and the panel scales it to fit; Mermaid is scaled by its own SVG. Change the source, not the panel |

@@ -1,7 +1,7 @@
 ---
 name: mermaid-diagrams
-description: "Author Mermaid diagrams that parse the first time: choose the right diagram type for the question, write syntax the parser accepts, and keep the picture readable in a narrow panel."
-whenToUse: "Whenever a conversation needs a diagram expressed as Mermaid text - flow, sequence, state, ER, class, timeline, gantt, mindmap, quadrant - or when a Mermaid diagram already written fails to parse."
+description: "Author Mermaid diagrams that parse the first time: choose the right diagram type for the question, write syntax the parser accepts, and keep the picture readable in a narrow panel. A bundled reference covers complex, large diagrams."
+whenToUse: "Whenever a conversation needs a diagram expressed as Mermaid text - flow, sequence, state, ER, class, timeline, gantt, mindmap, quadrant - or when a Mermaid diagram already written fails to parse. Read the bundled reference first when the picture is large or layered."
 ---
 
 # Mermaid diagrams
@@ -39,13 +39,33 @@ mixing them up is how a broken picture ships:
 | `status: "ok"` | does the engine parse this? | nothing - but keep reading |
 | `status: "error"` | no, and here is the line | fix `diagnostics`, write again |
 | warnings | it parses, but will it *read* well? | treat as review notes: fix the ones that are right, ignore the ones that are not, and say which you ignored |
-| `Browser: ...` | did a real renderer actually draw it? | see below |
+| `verification.state` | did a real renderer actually draw it? | see below |
 
-`Browser: no report ... yet` is **not** a failure: it means no client has drawn
-this revision, which is normal on a headless run. `Browser: DREW this revision`
-is the strongest verdict available - the picture exists. `Browser: FAILED to
-draw this revision` means the source parses but the renderer refused it: the
-user is looking at error text, so fix it.
+The four verification states are objective and carry the revision they are
+about (`revision` = the current one, `reported` = the revision the newest report
+names):
+
+| `verification.state` | What the browser reported | What to do |
+|---|---|---|
+| `drawn` | it DREW this revision | the strongest evidence there is: the picture exists |
+| `failed` | it could NOT draw this revision, and said why | the source parses but the renderer refused it: the user is looking at that error, so fix it |
+| `stale` | the newest report is about an OLDER revision | this revision has never been drawn; that older report is not evidence about it |
+| `pending` | nothing at all | **not** a failure: no client has drawn this revision, which is normal on a headless run |
+
+The `Browser:` line in the tool result says the same thing in words, and repeats
+the revision number so it can be checked rather than trusted. A `stale` verdict
+is the one that is easiest to misread: a report about revision 3 says nothing
+about revision 4.
+
+## Complex diagrams
+
+This file is the syntax summary and the semantics of the verdicts. When a
+picture is too big for one glance - layered architectures, sequences with many
+participants, composite state machines, theming that survives both app themes,
+and the exact wording of every parse error and lint finding - read
+`reference/complex-diagrams.md`, which sits beside this file in the same skill
+folder. It carries the readability budgets, the layout recipes and full sources
+that the host has actually parsed.
 
 ## Verifying without changing anything
 
