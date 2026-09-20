@@ -4,6 +4,19 @@ tools/
 .scratch/
 *.log
 
+# The diagram DATABASE must never be committed. dsh-diagrams keeps one file per
+# conversation plus one shared library under $DSH_HOME/dsh-diagrams/, and
+# $DSH_HOME defaults to ~/.dsh (outside this repo). These rules are the belt for
+# the case where DSH_HOME is pointed inside the tree, or a copy is dropped here.
+dsh-diagrams/
+library.json
+
+# Exported diagram sources are LOCAL material, not repo content: they are
+# verbatim copies of what the library stores, so committing them would put the
+# diagram database on GitHub in another form. docs/diagrams/ stays on the
+# machine that exported it, with its own drift check beside it.
+docs/diagrams/
+
 # Editors / OS
 .DS_Store
 Thumbs.db

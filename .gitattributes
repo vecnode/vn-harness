@@ -12,10 +12,3 @@
 # autocrlf the Windows checkout would rewrite them to CRLF and report phantom
 # drift, so they are pinned to LF too.
 packages/*/lib/client.js text eol=lf
-
-# The exported diagram sources are VERBATIM copies of what the diagram library
-# stores, and scripts/checks/check-diagram-exports.mjs compares them to that
-# stored source. A CRLF checkout would break the comparison and make the file
-# differ from what the tool re-reads, so they are pinned to LF as well.
-docs/diagrams/*.mmd text eol=lf
-docs/diagrams/*.tex text eol=lf
