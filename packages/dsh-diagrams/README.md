@@ -1,4 +1,4 @@
-# dsh-diagrams
+# dsh-diagrams (alpha.2)
 
 **Mermaid and TikZ diagrams as a first-class surface of the harness**: the model
 writes them as tools, the host validates every write with a real parser or a
