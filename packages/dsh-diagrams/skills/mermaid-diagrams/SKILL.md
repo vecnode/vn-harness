@@ -28,6 +28,38 @@ Rules that matter:
 - The returned `address` (`dsh-resource://diagram/session/<session>/<id>`) is the
   tab that shows the picture; the id is a readable slug derived from the title.
 
+## The four verdicts, and what each one actually means
+
+A write comes back with a status, a list of advisory `warnings`, and a line
+about what the **browser** did. They answer three different questions, and
+mixing them up is how a broken picture ships:
+
+| Signal | Question it answers | What to do with it |
+|---|---|---|
+| `status: "ok"` | does the engine parse this? | nothing - but keep reading |
+| `status: "error"` | no, and here is the line | fix `diagnostics`, write again |
+| warnings | it parses, but will it *read* well? | treat as review notes: fix the ones that are right, ignore the ones that are not, and say which you ignored |
+| `Browser: ...` | did a real renderer actually draw it? | see below |
+
+`Browser: no report ... yet` is **not** a failure: it means no client has drawn
+this revision, which is normal on a headless run. `Browser: DREW this revision`
+is the strongest verdict available - the picture exists. `Browser: FAILED to
+draw this revision` means the source parses but the renderer refused it: the
+user is looking at error text, so fix it.
+
+## Verifying without changing anything
+
+**`diagram_verify { id }`** re-parses the stored source and reports the status,
+the diagnostics, the warnings and the browser line - and writes nothing, so it
+never bumps the revision. Reach for it when:
+
+- a person edited the diagram in its panel since your last write;
+- your context was compacted and you want the current truth before building on it;
+- the last verdict is old and you are about to describe the diagram to the user.
+
+Do **not** use `diagram_write` to re-check a diagram: it rewrites it under a new
+revision, throws away the browser's render report, and costs a full re-render.
+
 ## Choosing the type
 
 | The question is about | Use | First line |
@@ -252,3 +284,24 @@ list names what it would have accepted there. In practice:
 
 Fix the smallest thing that explains the caret, write again, and keep iterating
 until the status is `ok`.
+
+## What the host warns about
+
+Alongside the parse verdict the host lints the source for things a parser
+cannot refuse but a reader pays for. These arrive as `warnings` on a write that
+**succeeded** - ignore them at your peril, but never treat them as a refusal:
+
+| Warning | Usually means |
+|---|---|
+| *"does not start with a diagram keyword"* | a typo in the first line, or you pasted prose above it |
+| *"parsed as X but the source reads like a Y"* | two diagram types mixed in one source |
+| *"a square bracket ... is never closed"* | an unclosed `[` (the host says which line) |
+| *"participant belongs to a sequenceDiagram"* | flowchart body with sequence syntax, or the reverse |
+| *"A sequenceDiagram draws messages with ->> ..."* | flowchart arrows inside a `sequenceDiagram` |
+| *"N nodes and no edges"* | nodes were declared but never connected - a list dressed as a diagram |
+| *"past the point a reader takes in at once"* | split the topic; see the budgets above |
+| *"A node label runs to N characters"* | move the detail into the message that accompanies the diagram |
+
+The host also refuses two things outright, in plain words rather than the
+engine's cryptic ones: an **empty source**, and a source that is **only
+comments**. Both are `status: "error"` and neither costs a parse.

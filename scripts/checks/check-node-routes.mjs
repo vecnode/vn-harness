@@ -526,13 +526,14 @@ try {
     '/api/dsh-diagrams/diagram',
     '/api/dsh-diagrams/export',
     '/api/dsh-diagrams/health',
+    '/api/dsh-diagrams/render-report',
     '/api/dsh-diagrams/state',
     '/api/dsh-diagrams/vendor/mermaid.js',
   ].join(','))
   check(
     'diagrams: tools registered',
     diagTools.map((tool) => tool.name).sort().join(','),
-    'diagram_delete,diagram_patch,diagram_read,diagram_write',
+    'diagram_delete,diagram_patch,diagram_read,diagram_verify,diagram_write',
   )
   check(
     'diagrams: every tool declares a JSON-schema surface',
@@ -608,6 +609,31 @@ try {
   const list = await tool('diagram_read').execute({}, exec)
   check('diagrams: read lists both diagrams', list.text.includes('auth-flow') && list.text.includes('broken'), true)
 
+  // --- advisory linting: the parser's verdict is unchanged by a warning
+  const warned = await tool('diagram_write').execute(
+    {
+      kind: 'mermaid',
+      title: 'Node soup',
+      source: 'flowchart LR\n  A[One]\n  B[Two]\n  C[Three]\n  D[Four]\n  E[Five]\n  F[Six]\n  G[Seven]\n  H[Eight]\n  I[Nine]',
+    },
+    exec,
+  )
+  check('diagrams: a warning never changes the verdict', warned.view.status, 'ok')
+  check('diagrams: an unconnected picture is warned about', (warned.view.warnings ?? []).some((entry) => entry.kind === 'shape'), true)
+  check('diagrams: warnings reach the model', /Advisory/.test(warned.text) && /no edges/.test(warned.text), true)
+  check('diagrams: warnings travel in the view too', (warned.view.warnings ?? []).length > 0, true)
+  const quiet = await tool('diagram_write').execute({ kind: 'mermaid', id: 'warned-one', title: 'Quiet', source: 'flowchart TD\n  A[Client] --> B[API]' }, exec)
+  check('diagrams: a clean diagram carries no warnings', (quiet.view.warnings ?? []).length, 0)
+
+  // --- an empty source is refused in words the model can act on, not by the engine
+  const blank = await tool('diagram_write').execute({ kind: 'mermaid', id: 'blank-one', title: 'Blank', source: '   \n\n' }, exec)
+  check('diagrams: an empty source is an error', blank.view.status, 'error')
+  check('diagrams: the empty source is explained', /source is empty/i.test(blank.diagnostics[0].text), true)
+  const blankTikz = await tool('diagram_write').execute({ kind: 'tikz', id: 'blank-tikz', title: 'Blank TikZ', source: '\\documentclass{article}\\begin{document}hello\\end{document}' }, exec)
+  check('diagrams: a TikZ document with no picture is refused', blankTikz.view.status, 'error')
+  check('diagrams: the empty TikZ is explained', /no picture in this source/i.test(blankTikz.diagnostics[0].text), true)
+
+  // --- diagram_verify: re-validates, writes nothing, and does not bump the revision
   const patched = await tool('diagram_patch').execute({ id: 'auth-flow', oldString: 'B{OK?}', newString: 'B{Credentials?}' }, exec)
   check('diagrams: patch reports the occurrence count', patched.occurrences, 1)
   check('diagrams: patch kept the diagram valid', patched.view.status, 'ok')
@@ -617,11 +643,96 @@ try {
     .catch((err) => err.code)
   check('diagrams: an ambiguous patch is refused', ambiguous, 'AMBIGUOUS')
 
+  const beforeVerify = await tool('diagram_read').execute({ id: 'auth-flow', includeSource: false }, exec)
+  check('diagrams: a fresh diagram has no browser report yet', beforeVerify.verification.state, 'pending')
+  const revisionBefore = (await (await getJson('/api/dsh-diagrams/state', 'session=session-diagrams')).json()).diagrams.find(
+    (entry) => entry.id === 'auth-flow',
+  ).revision
+  const verified = await tool('diagram_verify').execute({ id: 'auth-flow' }, exec)
+  check('diagrams: verify re-checks the diagram', verified.status, 'ok')
+  const stateAfterVerify = await (await getJson('/api/dsh-diagrams/state', 'session=session-diagrams')).json()
+  check(
+    'diagrams: verify left the revision alone',
+    stateAfterVerify.diagrams.find((entry) => entry.id === 'auth-flow').revision,
+    revisionBefore,
+  )
+  const missingVerify = await tool('diagram_verify').execute({ id: 'nope' }, exec)
+  check('diagrams: verify says so when the diagram is gone', missingVerify.status, 'missing')
+
+  // --- the browser render report: the one question the host cannot answer alone
+  const report = await (
+    await post('/api/dsh-diagrams/render-report', {
+      session: 'session-diagrams',
+      id: 'auth-flow',
+      revision: revisionBefore,
+      kind: 'mermaid',
+      ok: true,
+      theme: 'default',
+      ms: 42,
+    })
+  ).json()
+  check('diagrams: a render report is stored', report.stored, true)
+  const afterReport = await tool('diagram_read').execute({ id: 'auth-flow', includeSource: false }, exec)
+  check('diagrams: the browser verdict reaches diagram_read', afterReport.verification.state, 'drawn')
+  check('diagrams: the model is told the browser drew it', /Browser: DREW/.test(afterReport.text), true)
+  const failedReport = await (
+    await post('/api/dsh-diagrams/render-report', {
+      session: 'session-diagrams',
+      id: 'auth-flow',
+      revision: revisionBefore,
+      kind: 'mermaid',
+      ok: false,
+      phase: 'render',
+      error: 'the engine produced an empty picture',
+    })
+  ).json()
+  check('diagrams: a failed render is stored too', failedReport.stored, true)
+  const afterFailure = await tool('diagram_read').execute({ id: 'auth-flow', includeSource: false }, exec)
+  check('diagrams: a failed render reads as failed', afterFailure.verification.state, 'failed')
+  // A write invalidates the report: the picture was of the PREVIOUS source.
+  await tool('diagram_patch').execute({ id: 'auth-flow', oldString: 'C[Home]', newString: 'C[Dashboard]', note: 'rename' }, exec)
+  const afterRewrite = await tool('diagram_read').execute({ id: 'auth-flow', includeSource: false }, exec)
+  check('diagrams: a rewrite invalidates the browser report', afterRewrite.verification.state, 'pending')
+  // ...but a report about the OLD revision is still the truth about that revision.
+  await post('/api/dsh-diagrams/render-report', { session: 'session-diagrams', id: 'auth-flow', revision: revisionBefore, ok: true })
+  check(
+    'diagrams: a report about an older revision reads as stale',
+    (await tool('diagram_read').execute({ id: 'auth-flow', includeSource: false }, exec)).verification.state,
+    'stale',
+  )
+  check(
+    'diagrams: a report about a deleted diagram is accepted, not an error',
+    (await post('/api/dsh-diagrams/render-report', { session: 'session-diagrams', id: 'gone', ok: true })).status,
+    200,
+  )
+  check(
+    'diagrams: a report without an id is refused',
+    (await post('/api/dsh-diagrams/render-report', { session: 'session-diagrams', ok: true })).status,
+    400,
+  )
+
   // --- the state file is the source of truth for the panels
   const state = await (await getJson('/api/dsh-diagrams/state', 'session=session-diagrams')).json()
-  check('diagrams: state lists the conversation', state.diagrams.map((entry) => entry.id).join(','), 'auth-flow,broken')
+  check(
+    'diagrams: state lists the conversation',
+    state.diagrams.slice(0, 2).map((entry) => entry.id).join(','),
+    'auth-flow,broken',
+  )
   const stored = JSON.parse(await fsp.readFile(path.join(diagramsHome, 'dsh-diagrams', 'sessions', (await fsp.readdir(path.join(diagramsHome, 'dsh-diagrams', 'sessions')))[0]), 'utf8'))
   check('diagrams: state is one file per conversation', stored.sessionId, 'session-diagrams')
+  // The browser half has no other copy of the source: the state route has to
+  // carry it, or every diagram tab and card renders from `undefined`. It needs
+  // the revision too, or it cannot tell a current picture from a stale one.
+  check(
+    'diagrams: state carries the source the browser renders',
+    state.diagrams.find((entry) => entry.id === 'auth-flow').source.includes('flowchart'),
+    true,
+  )
+  check(
+    'diagrams: state carries the revision the browser draws',
+    Number.isInteger(state.diagrams.find((entry) => entry.id === 'auth-flow').revision),
+    true,
+  )
 
   const one = await (await getJson('/api/dsh-diagrams/diagram', 'session=session-diagrams&id=auth-flow')).json()
   check('diagrams: one diagram carries its source', one.diagram.source.includes('Credentials?'), true)

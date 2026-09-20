@@ -59,11 +59,12 @@ window.__ModuleLoader__.load({
     const DIAGRAM_ROUTE = '/api/dsh-diagrams/diagram'
     const ARTIFACT_ROUTE = '/api/dsh-diagrams/artifact'
     const EXPORT_ROUTE = '/api/dsh-diagrams/export'
+    const REPORT_ROUTE = '/api/dsh-diagrams/render-report'
     const VENDOR_ROUTE = '/api/dsh-diagrams/vendor/mermaid.js'
     /** Version marker shown in the panel footer, so a fresh bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.2'
+    const PLUGIN_VERSION = '0.1.0-alpha.3'
     /** The tools this package registers conversation cards for. */
-    const TOOL_NAMES = ['diagram_write', 'diagram_patch', 'diagram_read', 'diagram_delete']
+    const TOOL_NAMES = ['diagram_write', 'diagram_patch', 'diagram_read', 'diagram_verify', 'diagram_delete']
     /** Client services, all resolved lazily (none of them is required to draw). */
     const SIDEBAR_SERVICE = 'sidebarRight'
     const THEME_SERVICE = 'theme'
@@ -96,6 +97,7 @@ window.__ModuleLoader__.load({
 .dsd-pill[data-status="error"]{background:rgba(214,64,64,.14);color:#c93b3b}
 .dsd-pill[data-status="unavailable"]{background:rgba(190,140,20,.16);color:#a9770f}
 .dsd-pill[data-status="unchecked"]{background:var(--dsw-alias-fill-l2,rgba(127,127,127,.12));color:var(--dsw-alias-label-secondary,#666)}
+.dsd-pill[data-status="drawn"]{background:rgba(38,120,200,.14);color:#2f6fb5}
 .dsd-body{flex:1;min-height:0;position:relative;display:flex;overflow:hidden}
 .dsd-canvas{flex:1;min-width:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:16px}
 .dsd-canvas[data-drawer="true"]{align-items:stretch;justify-content:stretch;padding:0}
@@ -104,7 +106,16 @@ window.__ModuleLoader__.load({
 .dsd-svg svg{max-width:100%;height:auto}
 .dsd-notice{max-width:520px;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.55;background:var(--dsw-alias-fill-l2,rgba(127,127,127,.10));color:var(--dsw-alias-label-secondary,#666)}
 .dsd-notice[data-tone="error"]{background:rgba(214,64,64,.10);color:#c05a5a}
+/* A diagram that did not render: the parser's own words as text. This is what
+   stands where mermaid would otherwise have left its "Syntax error in text"
+   error picture in the page. */
+.dsd-renderError{max-width:100%;display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:8px;border:1px solid rgba(214,64,64,.25);background:rgba(214,64,64,.06)}
+.dsd-renderErrorTop{font-size:12px;line-height:1.55;color:#c05a5a}
+.dsd-renderErrorActions{display:flex;align-items:center;gap:6px}
 .dsd-diags{margin:0;padding:8px 10px;border-radius:8px;background:rgba(214,64,64,.08);border:1px solid rgba(214,64,64,.25);color:#c05a5a;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;white-space:pre-wrap;max-width:100%;overflow:auto}
+/* Advisory findings: never a refusal, so never red. */
+.dsd-warnings{max-width:100%;display:flex;flex-direction:column;gap:3px;padding:8px 10px;border-radius:8px;border:1px solid rgba(190,140,20,.28);background:rgba(190,140,20,.07);color:#8a6412;font-size:11.5px;line-height:1.5}
+.dsd-warningsHead{font-weight:500}
 .dsd-drawer{flex:none;width:44%;min-width:240px;max-width:70%;display:flex;flex-direction:column;border-left:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18));box-sizing:border-box}
 .dsd-drawerHead{flex:none;display:flex;align-items:center;gap:6px;height:32px;padding:0 8px 0 12px;font-size:12px;color:var(--dsw-alias-label-secondary,#666)}
 .dsd-source{flex:1;min-height:0;width:100%;box-sizing:border-box;resize:none;border:0;outline:none;padding:10px 12px;background:transparent;color:var(--dsw-alias-label-primary,#1f1f1f);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.6;tab-size:2}
@@ -385,6 +396,63 @@ window.__ModuleLoader__.load({
     let enginePromise = null
     /** The theme the engine is currently initialized for. */
     let engineTheme = null
+    /**
+     * The ONE element every Mermaid render happens inside.
+     *
+     * This is not a detail. `mermaid.render(id, source)` with no container
+     * element builds `#d<id>` on `document.body`, renders the picture there and
+     * removes it again - but ONLY on the success path. Any failure that throws
+     * (a parse error; a render error with `suppressErrorRendering` on) leaves
+     * that div behind, and when the engine's own error diagram was drawn into it
+     * first, what stays in the page is a full 2412x512 picture reading
+     * "Syntax error in text / mermaid version 11.17.2" - one per failed render,
+     * sitting in the interface until the tab is reloaded. Passing a container we
+     * own keeps every one of those divs out of the document, so there is nothing
+     * left to leak.
+     */
+    let renderHost = null
+    /** Ids handed to the engine, so the sweep below can recognise its divs. */
+    const RENDER_ID_PREFIX = 'dshd-'
+    /** A monotonic counter: the engine wants an id it has not seen, and a
+     *  deterministic one keeps a bug report reproducible. */
+    let renderSeq = 0
+
+    /**
+     * The offscreen element Mermaid renders into: attached (the engine measures
+     * what it draws, so a detached node has no geometry), laid out at zero size
+     * and out of the way, so nothing it does can paint over the interface.
+     */
+    function mermaidHost() {
+      if (renderHost && document.body && document.body.contains(renderHost)) return renderHost
+      renderHost = document.createElement('div')
+      renderHost.setAttribute('data-dsh-diagrams', 'render-host')
+      renderHost.style.cssText = 'position:absolute;left:-100000px;top:0;width:1px;height:1px;overflow:hidden;pointer-events:none;opacity:0'
+      document.body.appendChild(renderHost)
+      return renderHost
+    }
+
+    /**
+     * Remove anything the engine left in the document that is not ours.
+     *
+     * Belt and braces behind {@link mermaidHost}: a future engine change that
+     * ignores the container argument must not be able to put a picture in the
+     * page. Only the plugin's own `d<id>`/`i<id>` fixtures are touched - never
+     * another plugin's element - and the caller's container is never removed.
+     */
+    function sweepMermaidFixtures() {
+      if (typeof document === 'undefined' || !document.body) return
+      for (const child of Array.from(document.body.children)) {
+        if (child === renderHost) continue
+        const id = String(child.id || '')
+        if (id.startsWith('d' + RENDER_ID_PREFIX) || id.startsWith('i' + RENDER_ID_PREFIX)) {
+          try {
+            child.remove()
+          } catch (err) {
+            /* a node that is already gone is the outcome we wanted */
+          }
+        }
+      }
+    }
 
     /**
      * Load the vendored Mermaid engine from this plugin's own route and hand
@@ -445,16 +513,51 @@ window.__ModuleLoader__.load({
     const svgCache = new Map()
     const SVG_CACHE_MAX = 24
 
+    /** One Mermaid failure with the parser's own words, and whether it parsed. */
+    class MermaidError extends Error {
+      constructor(error, phase) {
+        super(error && error.message ? String(error.message) : String(error))
+        this.name = 'MermaidError'
+        /** `parse` (the source is not valid Mermaid) or `render` (it parsed but would not draw). */
+        this.phase = phase === 'parse' ? 'parse' : 'render'
+      }
+    }
+
+    /** One normalized Mermaid failure, as the engine reports it. */
+    function mermaidFailure(err, phase) {
+      if (err instanceof MermaidError) return err
+      return new MermaidError(err, phase)
+    }
+
     /**
      * Render one Mermaid source to SVG, in the app's current theme.
+     *
+     * The order here is the whole point:
+     *
+     *   1. **`parse()` first.** It is the engine's own syntax check and it
+     *      throws with the offending line. `render()` is only ever reached by a
+     *      source the parser accepted, which is what keeps a broken diagram from
+     *      producing a picture at all - clean or broken.
+     *   2. **`suppressErrorRendering: true`.** If `render()` fails anyway (a
+     *      renderer bug on a source the parser accepted), the engine throws
+     *      instead of drawing its 2412x512 "Syntax error in text" diagram.
+     *   3. **A container we own**, so nothing the engine builds lands in the
+     *      page, plus a sweep in `finally` for anything that ignored it.
+     *
+     * A source that fails either step comes back as a {@link MermaidError}
+     * whose `phase` says which one, and the caller draws that as TEXT. There is
+     * no path here that puts an engine error picture in the interface.
      *
      * @param source - the diagram source.
      * @param dark - whether the app is dark right now.
      * @returns the SVG markup.
+     * @throws {MermaidError} when the source does not parse or does not draw.
      */
     async function renderMermaid(source, dark) {
       const theme = dark ? 'dark' : 'default'
-      const cacheKey = theme + '\u0000' + source
+      const text = String(source ?? '')
+      if (text.trim().length === 0) throw new MermaidError('the diagram has no source yet', 'parse')
+      const cacheKey = theme + '\u0000' + text
       if (svgCache.has(cacheKey)) {
         const hit = svgCache.get(cacheKey)
         svgCache.delete(cacheKey)
@@ -463,22 +566,60 @@ window.__ModuleLoader__.load({
       }
       const mermaid = await loadEngine()
       if (engineTheme !== theme) {
-        mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme })
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme,
+          // Never let the engine draw its own error diagram: it is an enormous
+          // SVG whose only content is "Syntax error in text / mermaid version
+          // <v>", and it is exactly the picture this plugin must never show.
+          suppressErrorRendering: true,
+        })
         engineTheme = theme
       }
-      const id = 'dshd-' + Math.random().toString(36).slice(2, 10)
-      const rendered = await mermaid.render(id, source)
-      const svg = rendered && rendered.svg ? rendered.svg : ''
-      if (typeof rendered.bindFunctions === 'function') {
-        // No interactive handlers are needed for a static picture.
+      // Step 1: the parser decides. A refusal here never reaches the renderer.
+      try {
+        await mermaid.parse(text)
+      } catch (err) {
+        throw mermaidFailure(err, 'parse')
       }
-      svgCache.set(cacheKey, svg)
-      while (svgCache.size > SVG_CACHE_MAX) {
-        const oldest = svgCache.keys().next()
-        if (oldest.done) break
-        svgCache.delete(oldest.value)
+      renderSeq += 1
+      const id = RENDER_ID_PREFIX + renderSeq.toString(36).padStart(6, '0')
+      try {
+        const rendered = await mermaid.render(id, text, mermaidHost())
+        const svg = rendered && rendered.svg ? String(rendered.svg) : ''
+        if (svg.trim().length === 0) throw new Error('the engine produced an empty picture')
+        svgCache.set(cacheKey, svg)
+        while (svgCache.size > SVG_CACHE_MAX) {
+          const oldest = svgCache.keys().next()
+          if (oldest.done) break
+          svgCache.delete(oldest.value)
+        }
+        return svg
+      } catch (err) {
+        throw mermaidFailure(err, 'render')
+      } finally {
+        // Nothing the engine built may survive the call, success or failure.
+        sweepMermaidFixtures()
       }
-      return svg
+    }
+
+    /**
+     * Render a Mermaid source and hand back the verdict instead of throwing.
+     * The one entry point the pictures use, so no surface has to know the order
+     * of parse/render or remember to sweep.
+     *
+     * @returns `{ ok, svg, error, phase, ms }`.
+     */
+    async function renderMermaidSafe(source, dark) {
+      const started = Date.now()
+      try {
+        const svg = await renderMermaid(source, dark)
+        return { ok: true, svg, error: null, phase: null, ms: Date.now() - started }
+      } catch (err) {
+        const failure = err instanceof MermaidError ? err : new MermaidError(err, 'render')
+        return { ok: false, svg: '', error: failure.message, phase: failure.phase, ms: Date.now() - started }
+      }
     }
 
     // ---------------------------------------------------------------------
@@ -504,6 +645,53 @@ window.__ModuleLoader__.load({
       return h('span', { className: 'dsd-pill', 'data-status': status, title: props.title || undefined }, label)
     }
 
+    /**
+     * What the BROWSER did with one diagram, which is a different question from
+     * whether the host could validate its source.
+     *
+     * The host reports "ok" for a source that parses; only the real renderer
+     * proves a picture exists, and that is what the agent reads back through
+     * `diagram_read`. Nothing here is guessed: with no report from this revision
+     * the component says so instead of implying success.
+     */
+    function RenderPill(props) {
+      const entry = props.entry
+      const report = entry && entry.render ? entry.render : null
+      const fresh = Boolean(report) && typeof entry.revision === 'number' && report.revision === entry.revision
+      if (!report) {
+        return h('span', { className: 'dsd-pill', 'data-status': 'unchecked', title: 'This revision has not been rendered in a browser yet.' }, 'not drawn yet')
+      }
+      if (!fresh) {
+        return h(
+          'span',
+          { className: 'dsd-pill', 'data-status': 'unchecked', title: 'The last browser render was of an earlier revision of this diagram.' },
+          'stale render',
+        )
+      }
+      if (report.ok) {
+        return h(
+          'span',
+          { className: 'dsd-pill', 'data-status': 'drawn', title: 'The browser rendered this revision' + (report.at ? ' at ' + report.at : '') + '.' },
+          'drawn',
+        )
+      }
+      return h(
+        'span',
+        { className: 'dsd-pill', 'data-status': 'error', title: report.error || 'The browser could not draw this revision.' },
+        'did not draw',
+      )
+    }
+
+    /** The tooltip of a status pill: the verdict AND the advisory warnings. */
+    function verdictTitle(entry) {
+      if (!entry) return undefined
+      const parts = []
+      for (const diagnostic of entry.diagnostics ?? []) parts.push(diagnostic.text)
+      for (const warning of entry.warnings ?? []) parts.push('warning: ' + warning.text)
+      if (entry.render && entry.render.ok === false) parts.push('the browser could not draw it: ' + (entry.render.error || 'unknown render failure'))
+      return parts.length > 0 ? parts.join('\n') : undefined
+    }
+
     /** A dashed/outlined button. */
     function Button(props) {
       return h(
@@ -527,30 +715,154 @@ window.__ModuleLoader__.load({
       return h('pre', { className: 'dsd-diags' }, list.map((entry) => (entry && entry.text ? entry.text : String(entry))).join('\n'))
     }
 
+    /**
+     * The host's ADVISORY findings, drawn apart from the errors.
+     *
+     * Warnings never block a write: they are the things a parser cannot refuse
+     * but a reader will feel - an unbalanced-looking label, a picture with more
+     * nodes than a person will read, a likely wrong diagram type. Kept visually
+     * distinct so nobody mistakes advice for a refusal.
+     */
+    function Warnings(props) {
+      const list = props.warnings ?? []
+      if (list.length === 0) return null
+      return h(
+        'div',
+        { className: 'dsd-warnings' },
+        h('div', { className: 'dsd-warningsHead' }, 'Worth checking'),
+        list.map((warning, index) => h('div', { key: index, className: 'dsd-warningRow' }, warning.text)),
+      )
+    }
+
     // ---------------------------------------------------------------------
     // Pictures
     // ---------------------------------------------------------------------
-    /** A Mermaid picture: render in the browser, with the parser's error shown as text. */
+    /**
+     * Tell the host what the browser did with one diagram.
+     *
+     * This is the verification the model cannot get on its own: parsing proves
+     * the source is valid Mermaid, and only a real renderer proves the picture
+     * exists. The report is best-effort and never surfaces to the user - a
+     * failed POST costs nothing but the missing line in `diagram_read`.
+     */
+    function postRenderReport(sessionId, diagramId, revision, report) {
+      if (!sessionId || !diagramId) return
+      try {
+        fetch(REPORT_ROUTE, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ session: sessionId, id: diagramId, revision, ...report }),
+        }).catch(() => {})
+      } catch (err) {
+        /* a report is a courtesy; it must never break a picture */
+      }
+    }
+
+    /**
+     * The failing source drawn as TEXT, with the parser's own words.
+     *
+     * This is the replacement for the engine's error picture: the diagnostics
+     * (which carry the line, the caret and the "Expecting" list) in a scrollable
+     * block, plus the three things a person actually wants next.
+     */
+    function RenderError(props) {
+      const lines = props.diagnostics ?? []
+      const headline =
+        props.phase === 'parse'
+          ? 'Mermaid refused this diagram, so nothing was drawn:'
+          : 'The Mermaid parser accepted this diagram but the renderer could not draw it:'
+      return h(
+        'div',
+        { className: 'dsd-renderError' },
+        h('div', { className: 'dsd-renderErrorTop' }, headline),
+        lines.length > 0 ? h(Diagnostics, { diagnostics: lines }) : h('div', { className: 'dsd-renderErrorTop' }, props.error || 'no diagnostics were reported'),
+        h(
+          'div',
+          { className: 'dsd-renderErrorActions' },
+          props.onRetry ? h(Button, { title: 'Render this source again', onClick: props.onRetry }, 'Retry') : null,
+          props.onOpenSource ? h(Button, { title: 'Open the source drawer', onClick: props.onOpenSource }, 'Edit source') : null,
+          props.diagramId && props.sessionId
+            ? h(Button, { title: 'Open this diagram in its own tab', onClick: props.onOpenTab }, 'Open tab')
+            : null,
+        ),
+      )
+    }
+
+    /**
+     * A Mermaid picture.
+     *
+     * The engine never draws its own errors here: `renderMermaidSafe` parses
+     * first and asks the engine to throw rather than illustrate a failure, so a
+     * bad diagram produces a text panel and NOT the "Syntax error in text"
+     * picture mermaid would otherwise leave in the page.
+     */
     function MermaidPicture(props) {
       const dark = useDark()
-      const [state, setState] = useState({ svg: '', error: null, busy: true })
+      const [state, setState] = useState({ svg: '', error: null, phase: null, diagnostics: [], busy: true, ms: 0, nonce: 0 })
       const source = props.source ?? ''
+      const revision = props.revision ?? 0
+      /** The last (revision, theme, attempt) actually reported, so a re-render of
+       *  the same thing does not report twice. */
+      const reported = useRef(null)
+
       useEffect(() => {
         let cancelled = false
         setState((previous) => ({ ...previous, busy: true }))
-        renderMermaid(source, dark)
-          .then((svg) => {
-            if (!cancelled) setState({ svg, error: null, busy: false })
+        renderMermaidSafe(source, dark)
+          .then((result) => {
+            if (cancelled) return
+            setState({
+              svg: result.svg,
+              error: result.error,
+              phase: result.phase,
+              diagnostics: result.ok ? [] : splitDiagnostics(result.error),
+              busy: false,
+              ms: result.ms,
+              nonce: 0,
+            })
           })
           .catch((err) => {
-            if (!cancelled) setState({ svg: '', error: err && err.message ? err.message : String(err), busy: false })
+            if (cancelled) return
+            const text = err && err.message ? err.message : String(err)
+            setState({ svg: '', error: text, phase: 'render', diagnostics: splitDiagnostics(text), busy: false, ms: 0, nonce: 0 })
           })
         return () => {
           cancelled = true
         }
-      }, [source, dark])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [source, dark, state.nonce])
+
+      // Report what happened, once per revision per outcome.
+      useEffect(() => {
+        if (state.busy) return
+        const theme = dark ? 'dark' : 'default'
+        const key = [revision, theme, state.error ? state.phase : 'ok', state.nonce].join('|')
+        if (reported.current === key) return
+        reported.current = key
+        postRenderReport(props.sessionId, props.diagramId, revision, {
+          kind: 'mermaid',
+          ok: !state.error,
+          phase: state.phase,
+          error: state.error,
+          diagnostics: state.diagnostics,
+          theme,
+          ms: state.ms,
+        })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [state.busy, state.error, state.phase, revision, dark, state.nonce])
+
       if (state.error) {
-        return h('div', { className: 'dsd-notice', 'data-tone': 'error' }, 'Mermaid could not draw this diagram: ' + state.error)
+        return h(RenderError, {
+          error: state.error,
+          phase: state.phase,
+          diagnostics: state.diagnostics,
+          sessionId: props.sessionId,
+          diagramId: props.diagramId,
+          onRetry: () => setState((previous) => ({ ...previous, nonce: previous.nonce + 1 })),
+          onOpenSource: props.onEdit,
+          onOpenTab: props.onOpen,
+        })
       }
       if (!state.svg) {
         return h('div', { className: 'dsd-notice' }, state.busy ? 'Rendering the Mermaid diagram...' : 'Nothing to render yet.')
@@ -558,18 +870,32 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dsd-svg', dangerouslySetInnerHTML: { __html: state.svg } })
     }
 
+    /**
+     * A Mermaid failure split into the diagnostics the shared block renders: one
+     * entry per non-empty line, so the parser's caret and "Expecting" list keep
+     * their own lines instead of collapsing into one paragraph.
+     */
+    function splitDiagnostics(text) {
+      return String(text ?? '')
+        .split('\n')
+        .map((line) => ({ kind: 'render', text: line.replace(/\s+$/, '') }))
+        .filter((entry) => entry.text.length > 0)
+        .slice(0, 8)
+    }
+
     /** A TikZ picture: the host compiled it, so fetch the artifact and show it. */
     function TikzPicture(props) {
       const sessionId = props.sessionId
       const diagramId = props.diagramId
       const revision = props.revision ?? 0
-      const [state, setState] = useState({ url: null, error: null })
+      const [state, setState] = useState({ url: null, error: null, bytes: 0 })
+      const reported = useRef(null)
       useEffect(() => {
         let cancelled = false
         let objectUrl = null
-        setState({ url: null, error: null })
+        setState({ url: null, error: null, bytes: 0 })
         if (!sessionId || !diagramId) {
-          setState({ url: null, error: 'This tab does not know which conversation the diagram belongs to.' })
+          setState({ url: null, error: 'This tab does not know which conversation the diagram belongs to.', bytes: 0 })
           return () => {}
         }
         const url = ARTIFACT_ROUTE + '?session=' + encodeURIComponent(sessionId) + '&id=' + encodeURIComponent(diagramId) + '&format=' + (props.format || 'svg') + '&v=' + revision
@@ -590,16 +916,34 @@ window.__ModuleLoader__.load({
           .then((blob) => {
             if (cancelled) return
             objectUrl = URL.createObjectURL(blob)
-            setState({ url: objectUrl, error: null })
+            setState({ url: objectUrl, error: null, bytes: blob.size })
           })
           .catch((err) => {
-            if (!cancelled) setState({ url: null, error: err && err.message ? err.message : String(err) })
+            if (!cancelled) setState({ url: null, error: err && err.message ? err.message : String(err), bytes: 0 })
           })
         return () => {
           cancelled = true
           if (objectUrl) URL.revokeObjectURL(objectUrl)
         }
       }, [sessionId, diagramId, revision, props.format])
+
+      // The host compiled it; the browser confirms the artifact actually loads.
+      useEffect(() => {
+        if (!sessionId || !diagramId) return
+        if (state.url === null && state.error === null) return
+        const key = [revision, state.error ? 'error' : 'ok'].join('|')
+        if (reported.current === key) return
+        reported.current = key
+        postRenderReport(sessionId, diagramId, revision, {
+          kind: 'tikz',
+          ok: !state.error,
+          phase: state.error ? 'artifact' : null,
+          error: state.error,
+          bytes: state.bytes,
+        })
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [state.url, state.error, revision, sessionId, diagramId])
+
       if (state.error) return h('div', { className: 'dsd-notice' }, state.error)
       if (!state.url) return h('div', { className: 'dsd-notice' }, 'Loading the compiled picture...')
       return h('img', { className: 'dsd-picture', src: state.url, alt: props.alt || 'TikZ diagram' })
@@ -608,9 +952,22 @@ window.__ModuleLoader__.load({
     /** One picture, dispatched by kind. */
     function Picture(props) {
       if (props.kind === 'tikz') {
-        return h(TikzPicture, { sessionId: props.sessionId, diagramId: props.diagramId, revision: props.revision, format: 'svg', alt: props.title })
+        return h(TikzPicture, {
+          sessionId: props.sessionId,
+          diagramId: props.diagramId,
+          revision: props.revision,
+          format: 'svg',
+          alt: props.title,
+        })
       }
-      return h(MermaidPicture, { source: props.source })
+      return h(MermaidPicture, {
+        source: props.source,
+        sessionId: props.sessionId,
+        diagramId: props.diagramId,
+        revision: props.revision,
+        onEdit: props.onEdit,
+        onOpen: props.onOpen,
+      })
     }
 
     // ---------------------------------------------------------------------
@@ -694,9 +1051,21 @@ window.__ModuleLoader__.load({
       setTimeout(() => URL.revokeObjectURL(url), 4000)
     }
 
-    /** The SVG markup of a rendered Mermaid picture, for export. */
+    /**
+     * The SVG markup of a rendered Mermaid picture, for export.
+     *
+     * Goes through the same parse-first path as the pictures: an export of a
+     * diagram that does not parse fails with the parser's own message instead of
+     * writing an engine error picture into the conversation folder.
+     */
     async function mermaidSvgNow(source, dark) {
-      return renderMermaid(source, dark)
+      const result = await renderMermaidSafe(source, dark)
+      if (!result.ok) {
+        const err = new Error(result.error || 'the diagram could not be rendered')
+        err.phase = result.phase
+        throw err
+      }
+      return result.svg
     }
 
     /** Rasterize SVG markup to PNG bytes at `scale`, through a canvas. */
@@ -884,7 +1253,8 @@ window.__ModuleLoader__.load({
           { className: 'dsd-tools' },
           h('span', { className: 'dsd-badge' }, entry.kind === 'tikz' ? 'TikZ' : 'Mermaid'),
           h('span', { className: 'dsd-cardId' }, entry.id),
-          h(StatusPill, { status: entry.status, title: (entry.diagnostics ?? []).map((d) => d.text).join('\n') }),
+          h(StatusPill, { status: entry.status, title: verdictTitle(entry) }),
+          h(RenderPill, { entry }),
           h('span', { className: 'dsd-toolsSpacer' }),
           h('span', { className: 'dsd-status' }, status),
           h(Button, { title: 'Copy the source', onClick: () => copyText(entry.source).then((ok) => setStatus(ok ? 'source copied' : 'copy failed')) }, 'Copy'),
@@ -939,11 +1309,28 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'dsd-pictureWrap' },
-              h(Picture, { kind: entry.kind, source: entry.source, sessionId, diagramId, revision, title: entry.title }),
+              h(Picture, {
+                kind: entry.kind,
+                source: entry.source,
+                sessionId,
+                diagramId,
+                revision,
+                title: entry.title,
+                onEdit: () => setDrawer(true),
+              }),
               entry.status === 'unavailable'
                 ? h('div', { className: 'dsd-notice' }, 'This diagram was stored but could not be validated on this host.')
                 : null,
               (entry.diagnostics ?? []).length > 0 ? h(Diagnostics, { diagnostics: entry.diagnostics }) : null,
+              (entry.warnings ?? []).length > 0
+                ? h(
+                    'div',
+                    { className: 'dsd-notice' },
+                    h('b', null, 'Warnings from the host'),
+                    h('br', null),
+                    (entry.warnings ?? []).map((warning) => warning.text).join('\n'),
+                  )
+                : null,
             ),
           ),
           drawer
@@ -1095,7 +1482,8 @@ window.__ModuleLoader__.load({
                     h('div', { className: 'dsd-rowTitle' }, entry.title || entry.id),
                     h('div', { className: 'dsd-rowMeta' }, metaLine(entry)),
                   ),
-                  h(StatusPill, { status: entry.status }),
+                  h(StatusPill, { status: entry.status, title: verdictTitle(entry) }),
+                  h(RenderPill, { entry }),
                 ),
               ),
             ),
@@ -1209,22 +1597,45 @@ window.__ModuleLoader__.load({
         }
       }, [address, sessionId, id])
 
-      if (toolName === 'diagram_read') {
-        const text = known ? known.source : ''
+      if (toolName === 'diagram_read' || toolName === 'diagram_verify') {
+        const read = toolName === 'diagram_read'
+        // A read hands the SOURCE back (that is what the model asked for and
+        // what it may patch); a verify is about the picture, so it draws it.
+        let body = null
+        if (read && known) {
+          const text = known.source
+          body = h(
+            'div',
+            { className: 'dsd-cardBody' },
+            h('pre', { className: 'dsd-cardPre' }, text.length > 2000 ? text.slice(0, 2000) + '\n...' : text),
+          )
+        } else if (!read && id && known) {
+          body = h(
+            'div',
+            { className: 'dsd-cardBody' },
+            h(Picture, { kind: known.kind, source: known.source, sessionId, diagramId: id, revision: known.revision, title: known.title }),
+            (known.diagnostics ?? []).length > 0 ? h(Diagnostics, { diagnostics: known.diagnostics }) : null,
+            (known.warnings ?? []).length > 0 ? h(Warnings, { warnings: known.warnings }) : null,
+          )
+        }
         return h(
           'div',
           { className: 'dsd-card' },
           h(
             'div',
             { className: 'dsd-cardTop' },
-            h('span', { className: 'dsd-badge' }, 'read'),
-            h('span', { className: 'dsd-cardTitle' }, id ? 'Diagram "' + id + '"' : 'Diagram index'),
+            h('span', { className: 'dsd-badge' }, read ? 'read' : 'verify'),
+            h(
+              'span',
+              { className: 'dsd-cardTitle' },
+              id ? (read ? 'Diagram "' + id + '"' : 'Checked "' + id + '"') : read ? 'Diagram index' : 'Diagram check',
+            ),
+            known ? h(StatusPill, { status: known.status, title: verdictTitle(known) }) : null,
+            known && !read ? h(RenderPill, { entry: known }) : null,
             h('span', { className: 'dsd-toolsSpacer' }),
             id && address ? h('button', { type: 'button', className: 'dsd-inlineLink', onClick: openTab }, 'Open tab') : null,
           ),
-          text
-            ? h('div', { className: 'dsd-cardBody' }, h('pre', { className: 'dsd-cardPre' }, text.length > 2000 ? text.slice(0, 2000) + '\n...' : text))
-            : null,
+          body,
         )
       }
 

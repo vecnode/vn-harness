@@ -1109,6 +1109,7 @@ check(
     'tool.call.toolview#diagram_delete',
     'tool.call.toolview#diagram_patch',
     'tool.call.toolview#diagram_read',
+    'tool.call.toolview#diagram_verify',
     'tool.call.toolview#diagram_write',
   ].join(','),
 )
@@ -1132,7 +1133,7 @@ const indexMarkup = renderToStaticMarkup(h(IndexBody, { sessionId: 'sess-1' }))
 check('index body renders its empty state', indexMarkup.includes('No diagrams in this conversation yet.'))
 check(
   'index body offers both engines',
-  indexMarkup.includes('>New Mermaid<') && indexMarkup.includes('>New TikZ<') && indexMarkup.includes('dsh-diagrams 0.1.0-alpha.2'),
+  indexMarkup.includes('>New Mermaid<') && indexMarkup.includes('>New TikZ<') && indexMarkup.includes('dsh-diagrams 0.1.0-alpha.3'),
 )
 check('index title seat', renderToStaticMarkup(h(diagSeats['sidebar.right.pane.tab.title#dsh-diagrams-index'].component, {})), 'Diagrams')
 
@@ -1254,11 +1255,35 @@ check(
 const diagSource = readFileSync(path.join(repo, 'packages/dsh-diagrams/lib/client.js'), 'utf8')
 check(
   'client routes match the host half',
-  ['/api/dsh-diagrams/state', '/api/dsh-diagrams/diagram', '/api/dsh-diagrams/artifact', '/api/dsh-diagrams/export', '/api/dsh-diagrams/vendor/mermaid.js'].every(
-    (route) => diagSource.includes(route),
-  ),
+  [
+    '/api/dsh-diagrams/state',
+    '/api/dsh-diagrams/diagram',
+    '/api/dsh-diagrams/artifact',
+    '/api/dsh-diagrams/export',
+    '/api/dsh-diagrams/render-report',
+    '/api/dsh-diagrams/vendor/mermaid.js',
+  ].every((route) => diagSource.includes(route)),
 )
 check('client loads the engine as a classic script', diagSource.includes('new Blob([source]') && diagSource.includes('window.mermaid'))
+
+// THE RENDER TRAP. `mermaid.render(id, source)` with no container builds a
+// `#d<id>` div on document.body and only removes it on the success path; when
+// the engine drew its own error diagram into it first, what stays in the page
+// is a full-size "Syntax error in text / mermaid version <v>" picture - one per
+// failed render. Three things keep that out of the interface, and all three are
+// load-bearing, so each is asserted here rather than left to review.
+check('the engine is told never to draw its own errors', diagSource.includes('suppressErrorRendering: true'))
+check('a source is parsed before it is rendered', diagSource.indexOf('await mermaid.parse(text)') < diagSource.indexOf('await mermaid.render('))
+check(
+  'every render goes into a container the plugin owns',
+  /mermaid\.render\(id,\s*text,\s*mermaidHost\(\)\)/.test(diagSource),
+)
+check('the render host is offscreen and out of the flow', /renderHost\.style\.cssText[^\n]*left:-100000px/.test(diagSource))
+check('engine fixtures are swept even when the render throws', /finally \{[\s\S]{0,120}sweepMermaidFixtures\(\)/.test(diagSource))
+// The one entry point the pictures use hands back a verdict instead of
+// throwing, so no surface has to remember the parse/render order.
+check('the pictures go through the safe renderer', diagSource.includes('renderMermaidSafe(source, dark)'))
+check('exports refuse a diagram that does not render', /async function mermaidSvgNow[\s\S]{0,400}if \(!result\.ok\)/.test(diagSource))
 
 console.log('')
 console.log(failures === 0 ? 'all client-bundle checks passed' : failures + ' check(s) FAILED')

@@ -88,8 +88,21 @@ function summarize(entry) {
     id: entry.id,
     kind: entry.kind,
     title: entry.title,
+    // The SOURCE travels with the summary, and it has to: the browser half holds
+    // no other copy of it. Mermaid is rendered from its source in the browser,
+    // TikZ is exported from it, and the source drawer edits it - a list without
+    // it leaves every diagram tab and every conversation card blank.
+    source: entry.source,
     status: entry.status,
     diagramType: entry.diagramType ?? null,
+    warnings: Array.isArray(entry.warnings) ? entry.warnings : [],
+    render: entry.render ?? null,
+    // The revision travels with the summary because the browser needs it to
+    // answer "is this picture of the CURRENT source?": it keys the artifact
+    // request on it and reports the revision it drew. Without it every render
+    // report would look fresh, including one about text that has since changed.
+    revision: Number.isFinite(entry.revision) ? entry.revision : 0,
+    checkedAt: entry.checkedAt ?? null,
     updatedAt: entry.updatedAt,
     createdAt: entry.createdAt,
     by: entry.by,
@@ -208,7 +221,12 @@ export class DiagramStore {
   get(sessionId, id) {
     const state = this.state(sessionId)
     const entry = state.diagrams[id]
-    return entry ? { ...entry, summary: summarize(entry) } : undefined
+    if (!entry) return undefined
+    // A file written by an older version of this plugin has neither field; the
+    // read path normalizes them so no caller has to guard for it.
+    if (!Array.isArray(entry.warnings)) entry.warnings = []
+    if (entry.render === undefined) entry.render = null
+    return { ...entry, summary: summarize(entry) }
   }
 
   /** Every id in the conversation (in creation order). */
@@ -273,6 +291,11 @@ export class DiagramStore {
       status: 'unchecked',
       diagramType: null,
       diagnostics: [],
+      warnings: [],
+      // The new source has not been drawn yet, and the old report was about a
+      // different revision: keeping it would let a stale "drawn" read as a
+      // verdict on text no browser has seen.
+      render: null,
       artifact: null,
       history: (existing ? existing.history : []).concat([
         { at: now, by: input.by === 'user' ? 'user' : 'model', note: String(input.note ?? (existing ? 'rewritten' : 'created')).slice(0, 200) },
@@ -316,6 +339,8 @@ export class DiagramStore {
     existing.revision += 1
     existing.status = 'unchecked'
     existing.diagnostics = []
+    existing.warnings = []
+    existing.render = null
     existing.artifact = null
     existing.history = existing.history
       .concat([
@@ -342,8 +367,48 @@ export class DiagramStore {
     entry.status = verdict.status
     entry.diagramType = verdict.diagramType ?? null
     entry.diagnostics = Array.isArray(verdict.diagnostics) ? verdict.diagnostics.slice(0, 12) : []
+    entry.warnings = Array.isArray(verdict.warnings) ? verdict.warnings.slice(0, 8) : []
     if (verdict.artifact !== undefined) entry.artifact = verdict.artifact
     entry.checkedAt = new Date().toISOString()
+    this.save(sessionId)
+    return entry
+  }
+
+  /**
+   * Record what the BROWSER did with one revision of a diagram.
+   *
+   * Kept apart from {@link recordVerdict} because it answers a different
+   * question - the host says "this source parses", only the renderer says "this
+   * picture exists" - and apart from the revision itself, because a render is
+   * not an edit. A report about a revision that is no longer current is still
+   * stored (it is the truth about that revision) and simply reads as stale.
+   *
+   * @param sessionId - the conversation id.
+   * @param id - the diagram id.
+   * @param report - `{ revision, kind, ok, phase, error, diagnostics, theme, ms, bytes }`.
+   * @returns the stored entry, or undefined when the diagram is gone.
+   */
+  recordRender(sessionId, id, report) {
+    const state = this.state(sessionId)
+    const entry = state.diagrams[id]
+    if (!entry) return undefined
+    entry.render = {
+      revision: Number.isFinite(report.revision) ? report.revision : entry.revision,
+      kind: report.kind === 'tikz' ? 'tikz' : 'mermaid',
+      ok: report.ok === true,
+      phase: typeof report.phase === 'string' ? report.phase.slice(0, 24) : null,
+      error: typeof report.error === 'string' && report.error.length > 0 ? report.error.slice(0, 2000) : null,
+      diagnostics: Array.isArray(report.diagnostics)
+        ? report.diagnostics
+            .map((entry) => ({ kind: String(entry?.kind ?? 'render').slice(0, 24), text: String(entry?.text ?? '').slice(0, 400) }))
+            .filter((entry) => entry.text.length > 0)
+            .slice(0, 8)
+        : [],
+      theme: report.theme === 'dark' ? 'dark' : report.theme === 'default' ? 'default' : null,
+      ms: Number.isFinite(report.ms) ? report.ms : null,
+      bytes: Number.isFinite(report.bytes) ? report.bytes : null,
+      at: new Date().toISOString(),
+    }
     this.save(sessionId)
     return entry
   }

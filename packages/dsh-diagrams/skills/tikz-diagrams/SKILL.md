@@ -31,6 +31,42 @@ Rules that matter:
 - Compiles are cached by content: an unchanged diagram costs nothing, and a
   change costs ~1-2 s. `{ recompile: true }` on the panel side forces a rebuild.
 
+## The verdicts, and the two the compiler cannot give you
+
+| Signal | Question it answers | What to do |
+|---|---|---|
+| `status: "ok"` | did the engine compile this? | nothing - but keep reading |
+| `status: "error"` | no, and here is the line | fix `diagnostics`, write again |
+| `status: "unavailable"` | there is no TeX engine here | say so; the source still exports |
+| warnings | it compiled, but is it the picture you meant? | review each one |
+| `Browser: ...` | did the artifact actually load somewhere? | see below |
+
+Two failures the compiler will never report, and the host now catches:
+
+- **A source with no picture in it.** A document with no `tikzpicture`/`axis`
+  and no `\node`/`\draw`/`\path` compiles to a blank page and reports success.
+  The host refuses it as `status: "error"` with *"There is no picture in this
+  source"*, because an empty panel is a failure a person sees and pdflatex
+  does not.
+- **A picture on more than one page.** A stray page break or an overflowing
+  figure yields a 2-page PDF; the panel shows the first page, so the second is
+  invisible to the user. The host warns with the page count.
+
+Other warnings to expect: a canvas over 2000pt (the panel scales it down until
+labels are unreadable - shrink with `scale=`, `node distance=` or a smaller
+font), an engine font substitution, and a document past 250 non-empty lines.
+
+## Verifying without changing anything
+
+**`diagram_verify { id }`** recompiles the stored document (through the
+artifact cache, so an unchanged document costs nothing and reports
+`served from the artifact cache`), returns the diagnostics, the warnings and
+the browser line, and writes nothing - the revision does not move. Use it when
+a person edited the diagram in its panel, when your context was compacted, or
+before you describe a diagram's contents to the user. Do **not** re-write a
+diagram just to re-check it: a write bumps the revision and discards the
+browser's render report.
+
 ## What the host already does for you
 
 Your source may be any of these three shapes:

@@ -23,8 +23,8 @@
  * Usage:  node mermaid-check.mjs            (source on stdin)
  *         node mermaid-check.mjs <file>     (source from a file)
  * Output: ONE line of JSON on stdout:
- *   { ok: true,  diagramType: 'flowchart-v2', ms: 87 }
- *   { ok: false, reason: 'parse' | 'internal', error: '...', ms: 84 }
+ *   { ok: true,  diagramType: 'flowchart-v2', warnings: [...], ms: 87 }
+ *   { ok: false, reason: 'parse' | 'internal', error: '...', warnings: [...], ms: 84 }
  * Exit code is always 0 when a verdict was produced; a non-zero exit means the
  * caller should treat the check as unavailable.
  */
@@ -149,6 +149,236 @@ function readSource() {
   return readFileSync(0, 'utf8')
 }
 
+// ---------------------------------------------------------------------------
+// Structural linting
+// ---------------------------------------------------------------------------
+/**
+ * What the PARSER cannot refuse but a READER pays for.
+ *
+ * These are advisories, never a refusal: mermaid accepts a great many things
+ * that draw badly, and a check that cries wolf is worse than no check. Each
+ * rule below is deliberately conservative - it fires only on a shape that is
+ * far more often a mistake than an intention - and the caller reports every one
+ * as a warning on a write that SUCCEEDED.
+ *
+ * @param source - the diagram source.
+ * @param diagramType - what the engine called it (null when it did not parse).
+ * @returns an array of `{ kind, text }`.
+ */
+export function lintMermaid(source, diagramType) {
+  const warnings = []
+  const add = (kind, text) => warnings.push({ kind, text })
+  const text = stripFence(source)
+  if (text.trim().length === 0) return warnings
+  const stripped = sourceLines(text)
+
+  const heading = firstMeaningfulLine(stripped)
+  if (!heading) return warnings
+  const kind = diagramKind(heading)
+  if (kind === null) {
+    add(
+      'type',
+      'The first line (' +
+        JSON.stringify(heading.trim()) +
+        ') does not start with a diagram keyword - mermaid needs one of flowchart, graph, sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, pie, mindmap, timeline, quadrantChart, journey, gitGraph, sankey-beta, xychart-beta, block-beta, packet-beta, architecture-beta, kanban, radar, treemap, requirementDiagram, C4Context or zenuml.',
+    )
+    return warnings
+  }
+
+  const expected = {
+    sequence: 'sequence',
+    class: 'class',
+    state: 'state',
+    er: 'er',
+    gantt: 'gantt',
+    pie: 'pie',
+    mindmap: 'mindmap',
+    timeline: 'timeline',
+    quadrant: 'quadrant',
+    journey: 'journey',
+    flow: 'flow',
+  }[kind]
+  const actual = typeFamily(diagramType)
+  if (expected && actual && expected !== actual) {
+    add(
+      'type',
+      'The engine parsed this as "' +
+        diagramType +
+        '" but the source reads like a ' +
+        expected +
+        ' diagram. Check the first line - mixing two diagram types is the usual cause.',
+    )
+  }
+
+  if (kind === 'sequence') {
+    if (/(^|\s)(-->|==>|-\.->|~~~)(\s|$)/.test(stripped.join('\n'))) {
+      add('syntax', 'A sequenceDiagram draws messages with ->> / -->> / -x / -), not with flowchart arrows (-->, ==>, -.->).')
+    }
+    if (/\b(subgraph|flowchart|graph TD|graph LR)\b/.test(stripped.join('\n'))) {
+      add('syntax', 'flowchart-only syntax (subgraph, graph TD/LR) appears inside a sequenceDiagram.')
+    }
+  }
+  if (kind === 'flow' && /^\s*participant\s+/m.test(text)) {
+    add('syntax', '"participant" belongs to a sequenceDiagram; a flowchart declares its nodes inline (A[Label]) or with subgraph.')
+  }
+
+  const bracket = unbalancedBrackets(stripped.join('\n'), kind)
+  if (bracket) add('structure', bracket)
+
+  if (kind === 'flow') {
+    const nodes = new Set()
+    let edges = 0
+    const nodePattern = /(^|[\s(\[{|>])([A-Za-z_][A-Za-z0-9_-]*)\s*(\[\[|\[\(|\[|\(\(|\(|\[\[|\{\{|\{|>|\[\\|\[\/)/g
+    let match
+    while ((match = nodePattern.exec(text)) !== null) nodes.add(match[2])
+    for (const line of stripped) edges += (line.match(/-->|---|-\.->|==>|--o|--x|<-->|o--o|x--x/g) ?? []).length
+    if (nodes.size > 40) {
+      add('size', 'About ' + nodes.size + ' nodes in one picture. A flowchart stays readable to roughly 20; split it or group it with subgraph.')
+    } else if (nodes.size > 20) {
+      add('size', 'About ' + nodes.size + ' nodes is past the point a reader takes in at once. Consider one diagram per question.')
+    }
+    if (nodes.size >= 8 && edges === 0) {
+      add('shape', nodes.size + ' nodes and no edges: nodes only become a diagram once they are connected. A list may say this better.')
+    }
+    if (edges > 60) add('size', edges + ' edges is a lot of lines to follow; a table or two smaller diagrams usually reads better.')
+    const subgraphs = (text.match(/^\s*subgraph\s/gm) ?? []).length
+    if (subgraphs > 6) add('size', subgraphs + ' subgraphs nest past what a narrow panel can show.')
+  }
+
+  const longLabel = text.match(/\[["']?([^\]"'\n]{80,})/)
+  if (longLabel) {
+    add('label', 'A node label runs to ' + longLabel[1].length + ' characters. Labels read best at 1-4 words with the detail in the message that accompanies the diagram.')
+  }
+  if (/[`]/.test(text) && /^```/m.test(text)) {
+    add('source', 'The source contains a markdown code fence. Pass the diagram text alone - a fence is stripped automatically, but text after it is not part of the diagram.')
+  }
+  return warnings
+}
+
+/** The first line that carries content once comments and blank lines are gone. */
+function firstMeaningfulLine(lines) {
+  for (const line of lines) {
+    const trimmed = line.trim().replace(/^---$/, '').trim()
+    if (trimmed.startsWith('%%')) continue
+    if (trimmed.length > 0) return trimmed
+  }
+  return ''
+}
+
+/** The diagram family the source's own first line declares, or null. */
+function diagramKind(heading) {
+  const line = String(heading).trim()
+  if (/^(flowchart|graph)\b/i.test(line)) return 'flow'
+  if (/^sequenceDiagram\b/i.test(line)) return 'sequence'
+  if (/^classDiagram\b/i.test(line)) return 'class'
+  if (/^stateDiagram(-v2)?\b/i.test(line)) return 'state'
+  if (/^erDiagram\b/i.test(line)) return 'er'
+  if (/^gantt\b/i.test(line)) return 'gantt'
+  if (/^pie\b/i.test(line)) return 'pie'
+  if (/^mindmap\b/i.test(line)) return 'mindmap'
+  if (/^timeline\b/i.test(line)) return 'timeline'
+  if (/^quadrantChart\b/i.test(line)) return 'quadrant'
+  if (/^journey\b/i.test(line)) return 'journey'
+  return null
+}
+
+/** The same families, read from the engine's own diagram type name. */
+function typeFamily(diagramType) {
+  const name = String(diagramType ?? '').toLowerCase()
+  if (name.startsWith('flowchart') || name === 'graph' || name === 'flowchart-elk') return 'flow'
+  if (name.startsWith('sequence')) return 'sequence'
+  if (name.startsWith('class')) return 'class'
+  if (name.startsWith('state')) return 'state'
+  if (name.startsWith('er')) return 'er'
+  if (name.startsWith('gantt')) return 'gantt'
+  if (name.startsWith('pie')) return 'pie'
+  if (name.startsWith('mindmap')) return 'mindmap'
+  if (name.startsWith('timeline')) return 'timeline'
+  if (name.startsWith('quadrant')) return 'quadrant'
+  if (name.startsWith('journey')) return 'journey'
+  return null
+}
+
+/**
+ * Brackets opened and never closed.
+ *
+ * Only the shapes a LABEL uses are counted, and only the kinds the diagram type
+ * actually uses for labels: an `erDiagram` legitimately writes its attribute
+ * blocks as `ENTITY { ... }` with the block opening on the entity line, so its
+ * curlies are not counted at all. Deliberately not a real tokenizer - a missing
+ * closing bracket is the single most common broken diagram, and anything subtler
+ * is left to the parser, which is authoritative anyway.
+ *
+ * @param text - the comment-stripped source.
+ * @param kind - the diagram family, from {@link diagramKind}.
+ * @returns a message, or null when nothing looks unbalanced.
+ */
+function unbalancedBrackets(text, kind) {
+  const shapes = kind === 'er' ? [['[', ']', 'square']] : kind === 'mindmap' ? [['[', ']', 'square']] : [['[', ']', 'square'], ['{', '}', 'curly']]
+  for (const [open, close, what] of shapes) {
+    let depth = 0
+    let firstOpenLine = 0
+    const lines = text.split('\n')
+    for (let index = 0; index < lines.length; index += 1) {
+      for (const character of lines[index]) {
+        if (character === open) {
+          if (depth === 0) firstOpenLine = index + 1
+          depth += 1
+        } else if (character === close) {
+          depth = Math.max(0, depth - 1)
+        }
+      }
+    }
+    if (depth > 0) {
+      return 'A ' + what + ' bracket opened on line ' + firstOpenLine + ' is never closed - ' + depth + ' still open at the end of the source.'
+    }
+  }
+  return null
+}
+
+/**
+ * The source with one surrounding markdown fence removed.
+ *
+ * `diagram_write` strips a fence before it stores anything, so the checker has
+ * to look at the same text the engine will: a model that pasted a fenced block
+ * must get a verdict about its DIAGRAM, not about its backticks.
+ *
+ * @param text - the raw source.
+ * @returns the unfenced source.
+ */
+export function stripFence(text) {
+  const trimmed = String(text ?? '').trim()
+  const fence = /^```[^\n]*\n([\s\S]*?)\n?```$/.exec(trimmed)
+  return fence ? fence[1] : String(text ?? '')
+}
+
+/**
+ * A source that carries no diagram at all - the one "error" the parser reports
+ * so unhelpfully ("No diagram type detected ...") that it deserves its own
+ * verdict and its own words.
+ *
+ * @param source - the diagram source.
+ * @returns a message, or null when there is something to work with.
+ */
+export function emptySourceReason(source) {
+  const text = stripFence(source)
+  if (text.trim().length === 0) return 'The source is empty, so there is nothing to draw. Pass the diagram text in `source`.'
+  if (firstMeaningfulLine(sourceLines(text)) === '') {
+    return 'The source holds nothing but comments (`%%`), so there is nothing to draw.'
+  }
+  return null
+}
+
+/** The comment-stripped lines of one source. */
+function sourceLines(text) {
+  return String(text ?? '')
+    .split('\n')
+    .map((line) => {
+      const cut = line.indexOf('%%')
+      return cut === -1 ? line : line.slice(0, cut)
+    })
+}
+
 /** Install the stub, load the vendored engine, parse one source. */
 async function main() {
   let source
@@ -159,6 +389,20 @@ async function main() {
     return
   }
   const started = Date.now()
+
+  // A source with no diagram in it is refused in our own words: the engine only
+  // ever says "No diagram type detected", which tells the model nothing about
+  // the fact that it sent an empty string.
+  const emptyReason = emptySourceReason(source)
+  if (emptyReason) {
+    process.stdout.write(
+      JSON.stringify({ ok: false, reason: 'parse', error: emptyReason, lint: true, warnings: [], ms: Date.now() - started }) + '\n',
+    )
+    return
+  }
+  // The engine validates the same text the plugin will store: a pasted code
+  // fence is removed rather than reported as a bad first line.
+  source = stripFence(source)
 
   try {
     const script = readFileSync(new URL('./vendor/mermaid.min.js', import.meta.url), 'utf8')
@@ -181,8 +425,9 @@ async function main() {
   try {
     mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' })
     const parsed = await mermaid.parse(source)
+    const diagramType = parsed && parsed.diagramType ? parsed.diagramType : null
     process.stdout.write(
-      JSON.stringify({ ok: true, diagramType: parsed && parsed.diagramType ? parsed.diagramType : null, ms: Date.now() - started }) + '\n',
+      JSON.stringify({ ok: true, diagramType, warnings: lintMermaid(source, diagramType), ms: Date.now() - started }) + '\n',
     )
   } catch (err) {
     const text = message(err)
@@ -191,7 +436,13 @@ async function main() {
     // reported to the model as "your diagram is wrong".
     const internal = /DOMPurify|addHook|is not a function|document is not defined|window is not defined|not defined$/i.test(text)
     process.stdout.write(
-      JSON.stringify({ ok: false, reason: internal ? 'internal' : 'parse', error: text, ms: Date.now() - started }) + '\n',
+      JSON.stringify({
+        ok: false,
+        reason: internal ? 'internal' : 'parse',
+        error: text,
+        warnings: internal ? [] : lintMermaid(source, null),
+        ms: Date.now() - started,
+      }) + '\n',
     )
   }
 }

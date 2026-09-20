@@ -1,4 +1,4 @@
-# dsh-diagrams (alpha.2)
+# dsh-diagrams (alpha.3)
 
 **Mermaid and TikZ diagrams as a first-class surface of the harness**: the model
 writes them as tools, the host validates every write with a real parser or a
@@ -8,14 +8,45 @@ its own right-bar tab with a source drawer and an export menu.
 - Row `diagrams`, bundle `dsh-diagrams`, tab kinds `diagram` (one tab per
   diagram) and `diagrams` (the conversation index, reachable from the tab
   strip's `+` / **Start** page).
-- Tools: `diagram_write`, `diagram_patch`, `diagram_read`, `diagram_delete`.
+- Tools: `diagram_write`, `diagram_patch`, `diagram_read`, `diagram_verify`,
+  `diagram_delete`.
 - Skills: `mermaid-diagrams`, `tikz-diagrams` (authored in `skills/`, copied
   into `$DSH_HOME/skills` by the installer).
 - No core patch, no forked bundle, no npm dependency, **no network**.
 
-Alpha. `0.1.0-alpha.2`.
+Alpha. `0.1.0-alpha.3`.
 
 ---
+
+## 0. What alpha.3 fixed
+
+Three findings from a real session, none of which a passing check would have
+caught:
+
+1. **The engine's error pictures were being left in the page.**
+   `mermaid.render(id, source)` called with no container element builds `#d<id>`
+   on `document.body`, draws into it, and removes it again - **but only on the
+   success path**. Every failed render left its div behind, and when the engine
+   had drawn its own error diagram into it first, what stayed in the interface
+   was a full 2412x512 picture reading *"Syntax error in text / mermaid version
+   11.17.2"*: one per failure, until the tab was reloaded. Reproduced against
+   the vendored engine itself (§7). Fixed by **parsing before rendering**,
+   telling the engine never to draw its own errors
+   (`suppressErrorRendering: true`), rendering into a **container the plugin
+   owns**, and sweeping the engine's fixtures in `finally`.
+
+2. **The state route never carried the source.** `GET /state` answered with
+   summaries that omitted `source`, and the browser half holds no other copy of
+   it: Mermaid is rendered *from its source in the browser*, the source drawer
+   edits it, and TikZ exports from it. Every diagram tab and every conversation
+   card was drawing from `undefined`. Summaries now carry `source` **and
+   `revision`** - the latter because a render report is only meaningful against
+   the revision it drew.
+
+3. **"It parses" and "it draws" were the same signal.** A picture the parser
+   accepted and the renderer then refused looked exactly like a healthy one.
+   The browser now reports what it did with each revision, and the model reads
+   that back through `diagram_read`.
 
 ## 1. What the user sees
 
@@ -95,26 +126,46 @@ Two rules make this more than a text box:
    verified" (no TeX engine on this host, or the validator itself failed) and
    says so in the result text, because telling the model its diagram is wrong
    when the checker is what broke would be a lie.
+3. **Warnings are advisory, never a refusal.** After a successful validation the
+   host lints what a parser cannot refuse but a reader pays for: a picture with
+   nodes and no edges, more nodes than a person takes in at once, an
+   unclosed-looking label, a Mermaid source whose first line names a different
+   diagram type than the engine parsed, a TikZ document that compiled to several
+   pages or to a canvas too wide to read. They ride the same result, marked as
+   advisory, and never change `status`.
+4. **Two degenerate sources are refused in plain words.** An empty (or
+   comments-only) source, and a TikZ document with no picture in it at all -
+   both of which the engines handle with a success and a blank page.
+5. **"It parses" and "it draws" are separate verdicts.** See §4.
 
 The returned `address` is the diagram's tab, so the model can point the user at
 it in prose as well.
+
+**`diagram_verify`** re-runs the whole validation against the stored source
+without writing: it never bumps the revision, never claims an id, and never
+discards the browser's render report. It is the right call when a person edited
+the diagram in its panel, when the model's context was compacted, or before
+describing a diagram's contents - and it is why re-checking does not have to
+cost a rewrite.
 
 **Skills** carry the craft the tools cannot: which Mermaid diagram type fits
 which question, the syntax traps that actually break diagrams, layout and
 readability budgets; the TikZ preamble the host supplies, node/edge/plot
 recipes, sizing, the host's hard limits (no shell escape, no file access, no
-package installation) and how to read each compile error. They are registered at
-runtime from `skills/` **and** copied into `$DSH_HOME/skills` by the installer,
-so the catalog finds them however the bundle was installed.
+package installation) and how to read each compile error. They also document the
+verdicts above - what `status`, `warnings` and the `Browser:` line each mean, and
+which one to act on. They are registered at runtime from `skills/` **and** copied
+into `$DSH_HOME/skills` by the installer, so the catalog finds them however the
+bundle was installed.
 
 ## 3. How it is put together
 
 ```
-lib/index.js          host row: 4 tools, 2 skills, the /api/dsh-diagrams/* routes
+lib/index.js          host row: 5 tools, 2 skills, the /api/dsh-diagrams/* routes
 lib/store.js          per-conversation state (one JSON file, atomic writes)
 lib/cache.js          content-addressed artifact cache (svg/png/pdf/tex + meta)
 lib/latex.js          engine probe, source normalization, compile, convert
-lib/mermaid-check.mjs CHILD process: DOM stub + vm-loaded engine + parse
+lib/mermaid-check.mjs CHILD process: DOM stub + vm-loaded engine + parse + lint
 lib/client.js         browser half: 2 tab types, their bodies/titles, tool cards
 lib/vendor/mermaid.min.js   GENERATED single-file mermaid build (~3.4 MB)
 skills/<name>/SKILL.md      the two skills (copied to $DSH_HOME/skills on install)
@@ -132,21 +183,29 @@ delete - is a **POST**.
 | Route | Behavior |
 |---|---|
 | `GET /health` | the vendored Mermaid version, the TeX capability (`engine`, `svg`, `png`), cache entry count. `?refresh=1` re-probes the engines |
-| `GET /state?session=` | the conversation's diagram index + the capability block |
+| `GET /state?session=` | the conversation's diagram index (source + revision + warnings + last render report) + the capability block |
 | `GET /diagram?session=&id=` | one diagram, source included |
 | `POST /diagram` | create/replace (`{session, id?, kind?, title?, source, create?, recompile?}`), or delete (`{session, id, delete: true}`). Used by the panel; the model goes through the tools |
 | `GET /artifact?session=&id=&format=` | `svg`/`png`/`pdf`/`tex` from the cache (Mermaid: `mmd`/`source` only - its picture exists in the browser) |
 | `POST /export` | write one format into the conversation folder, create-exclusively |
+| `POST /render-report` | what the BROWSER did with one revision (`{session, id, revision, ok, phase?, error?, theme?, ms?}`). Deliberately forgiving: a report about a deleted diagram or an older revision answers 200, because a verification channel must not fail loudly |
 | `GET /vendor/mermaid.js` | the vendored engine (ETag, immutable) |
 
 ### State: one file per conversation
 
 `$DSH_HOME/dsh-diagrams/sessions/<session>.json` - `{order, diagrams{id →
-{kind, title, source, status, diagnostics, artifact, revision, history}}}`, one
-atomic write per change, capped (64 diagrams, 256 KiB per source, 1 MiB per
-file). The browser reads it through the routes; the model reads it through
-`diagram_read`, which is what makes a diagram survive compaction, a reload or
-the browser closing.
+{kind, title, source, status, diagnostics, warnings, render, artifact, revision,
+history}}}`, one atomic write per change, capped (64 diagrams, 256 KiB per
+source, 1 MiB per file). The browser reads it through the routes; the model
+reads it through `diagram_read`, which is what makes a diagram survive
+compaction, a reload or the browser closing.
+
+`render` is the browser's own report about the revision it drew
+(`{revision, ok, phase, error, theme, at}`), stored by `recordRender` and read
+back as one of four states: `pending` (nothing has reported on THIS revision),
+`stale` (a report exists, but of an older revision - the source changed since),
+`drawn`, or `failed`. A write sets it back to `null`, because the old picture
+was of different text.
 
 **Why not a session event.** This was the first design and it is a dead end on
 this harness line: `@deepseek-ai/dsh-session-persistence` refuses to load a log
@@ -167,13 +226,38 @@ route and evaluated as a classic script (its last line is
 are cached per `(source, theme)` (LRU, 24 entries) and re-drawn when the app's
 light/dark scheme flips.
 
+Every render goes through **`renderMermaidSafe`**, and the order inside it is
+load-bearing:
+
+1. **`mermaid.parse(source)` first.** It is the engine's own syntax check and
+   it throws with the offending line, so `render()` is only ever reached by a
+   source the parser accepted. A broken source therefore cannot produce a
+   picture *at all* - clean or broken.
+2. **`suppressErrorRendering: true`.** If `render()` fails anyway (a renderer
+   bug on a source the parser accepted), the engine throws instead of drawing
+   its 2412x512 "Syntax error in text" diagram.
+3. **A container the plugin owns.** `render(id, source)` with no container
+   builds `#d<id>` on `document.body` and removes it **only on success**; every
+   failure left one behind, and one of those divs holds the error picture.
+   Passing `mermaidHost()` - attached, laid out at zero size, offscreen -
+   keeps every fixture out of the interface. A `finally` sweeps `d<id>`/`i<id>`
+   anyway, so an engine that ever ignores the container still cannot paint.
+4. **A verdict, not a throw**, at the call site: `MermaidError.phase` says
+   whether the parser or the renderer refused, and the pictures draw that as
+   text with the diagnostics, a **Retry** button and a route to the source.
+
+The exports (`svg`/`png`) go through the same path, so a diagram that does not
+render fails with the parser's words instead of writing an engine error picture
+into the conversation folder.
+
 **TikZ, on the host.** `pdflatex` (else `xelatex`, else `lualatex`) compiles a
 normalized document in a private temp folder, then `pdftocairo`/`pdftoppm`
 produce the SVG/PNG. The tab and the card show the **engine's own vector
 output** (`pdftocairo -svg` emits glyph outlines, so it is font-independent),
 fetched as a blob and shown through an `<img>`. A failing compile that still
 produced a PDF is cached too and shown **flagged as errored** - a hint, never
-proof.
+proof. A document that compiles to no picture at all is refused before the
+engine sees it, with words rather than a blank panel.
 
 Content-addressed cache: `$DSH_HOME/dsh-diagrams/artifacts/<sha256[0:24]>/{doc.tex,doc.pdf,doc.svg,doc.png,meta.json}`,
 keyed by engine + renderer version + normalized source. Editing back to a
@@ -226,15 +310,28 @@ TikZ diagrams still store and export as `.tex`. Mermaid needs no engine at all.
 ## 7. Checks
 
 ```sh
-node scripts/checks/check-client-bundles.mjs   # tab types, seats, cards, styles
+node scripts/checks/check-client-bundles.mjs   # tab types, seats, cards, the render trap
 node scripts/checks/check-node-routes.mjs      # routes, tools, store, compile, export, vendor drift
 ```
 
 The client check renders the real seats through a real React runtime (the panel
-bodies, both chips, all four tool cards) and the node check drives the routes and
-the tool bodies against a temp `DSH_HOME` - including a real Mermaid parse, a
-real TikZ compile when the host has an engine, an ambiguous-patch refusal, the
-create-exclusive export and the vendored-engine hash.
+bodies, both chips, all five tool cards) and asserts the four load-bearing
+properties of the render path - parse-before-render, `suppressErrorRendering`,
+the plugin's own container, and the `finally` sweep - each of which is the
+difference between a text error and a stray error picture in the page. The node
+check drives the routes and the tool bodies against a temp `DSH_HOME` -
+including a real Mermaid parse, a real TikZ compile when the host has an
+engine, the lint warnings, the empty-source refusals, `diagram_verify` leaving
+the revision alone, the render-report round trip (drawn / failed / stale), an
+ambiguous-patch refusal, the create-exclusive export and the vendored-engine
+hash.
+
+The reproduction that found the error pictures is not part of the tracked
+checks, because it needs a real DOM and this pack ships no npm dependency - it
+was run once against the vendored engine with a throwaway `jsdom` install. The
+finding is recorded in §0, and the four properties above are what keep a
+regression from reaching the page.
+
 
 ## 8. Limits and roadmap
 
@@ -246,3 +343,14 @@ create-exclusive export and the vendored-engine hash.
   self-contained source.
 - A source may not read files or run commands: the engine is sandboxed to its
   temp folder with shell escape off.
+- **Host-side Mermaid rasterization was considered and rejected.** Verifying a
+  Mermaid *picture* on the host would need real SVG geometry (`getBBox`), which
+  the child validator's DOM stub deliberately does not provide - and adding
+  `jsdom`/`svgdom` would break the pack's zero-dependency rule. The browser
+  render report is the substitute: it uses the real renderer, in the real theme,
+  on the user's own screen, which is a stronger signal than a headless proxy.
+  Its only cost is that it needs a client to have drawn the revision.
+- Follow-ups worth doing: report the render verdict per diagram in the
+  conversation card (today the card is honest but does not say "drawn"), and
+  fold the render report into the tool result the model sees when a client
+  happens to be open at call time.

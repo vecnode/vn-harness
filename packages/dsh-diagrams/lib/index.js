@@ -48,6 +48,7 @@ const STATE_ROUTE = API_ROOT + '/state'
 const DIAGRAM_ROUTE = API_ROOT + '/diagram'
 const ARTIFACT_ROUTE = API_ROOT + '/artifact'
 const EXPORT_ROUTE = API_ROOT + '/export'
+const REPORT_ROUTE = API_ROOT + '/render-report'
 const VENDOR_ROUTE = API_ROOT + '/vendor/mermaid.js'
 
 /** How long the Mermaid child validator may run. */
@@ -222,7 +223,14 @@ export function checkMermaid(source, { signal } = {}) {
         return
       }
       if (verdict.ok) {
-        finish({ ok: true, status: 'ok', diagramType: verdict.diagramType ?? null, diagnostics: [], ms: verdict.ms })
+        finish({
+          ok: true,
+          status: 'ok',
+          diagramType: verdict.diagramType ?? null,
+          diagnostics: [],
+          warnings: normalizeWarnings(verdict.warnings),
+          ms: verdict.ms,
+        })
         return
       }
       if (verdict.reason === 'internal') {
@@ -238,6 +246,7 @@ export function checkMermaid(source, { signal } = {}) {
           .map((text) => ({ kind: 'parse', text: text.trim() }))
           .filter((entry) => entry.text.length > 0)
           .slice(0, 4),
+        warnings: normalizeWarnings(verdict.warnings),
         ms: verdict.ms,
       })
     })
@@ -253,7 +262,58 @@ export function checkMermaid(source, { signal } = {}) {
 
 /** One "not validated" verdict. */
 function unavailable(text) {
-  return { ok: false, status: 'unavailable', diagramType: null, diagnostics: [{ kind: 'validator', text }] }
+  return { ok: false, status: 'unavailable', diagramType: null, diagnostics: [{ kind: 'validator', text }], warnings: [] }
+}
+
+/**
+ * The lint findings one validator run produced, bounded and typed.
+ *
+ * Warnings are ADVISORY: they ride a successful write and never change its
+ * status. A check that turned advice into a refusal would be a check the model
+ * learns to route around.
+ *
+ * @param list - the validator's `warnings`.
+ * @returns up to {@link MAX_WARNINGS} `{ kind, text }` entries.
+ */
+function normalizeWarnings(list) {
+  if (!Array.isArray(list)) return []
+  return list
+    .map((entry) => ({ kind: String(entry?.kind ?? 'lint').slice(0, 24), text: String(entry?.text ?? '').trim() }))
+    .filter((entry) => entry.text.length > 0)
+    .slice(0, MAX_WARNINGS)
+}
+
+/** At most this many advisory findings travel back to the model. */
+const MAX_WARNINGS = 8
+
+/**
+ * Why a TikZ document cannot produce a picture, or null when it can.
+ *
+ * Only the degenerate cases a reader would call empty: nothing at all, or a
+ * document with no drawing command in it. The paragraph/section checks matter
+ * because `\node` inside a float is centred by `standalone` at a point no
+ * picture can be drawn at, which pdflatex accepts and the panel shows as blank.
+ *
+ * @param source - the raw TikZ source.
+ * @returns a message, or null.
+ */
+export function tikzDegenerateReason(source) {
+  const raw = stripFence(String(source ?? ''))
+  if (raw.trim().length === 0) {
+    return 'The source is empty, so there is nothing to draw. Pass a bare body of TikZ commands, one picture environment, or a complete document.'
+  }
+  const body = raw
+    .split('\n')
+    .map((line) => line.replace(/(^|[^\\])%.*$/, '$1'))
+    .join('\n')
+  if (/\\begin\{tikzpicture\}|\\begin\{axis\}/.test(body)) return null
+  // No picture environment: the host wraps a bare body itself, so the body has
+  // to carry at least one drawing command or the engine compiles a blank page.
+  if (/\\(node|draw|path|fill|filldraw|shade|shadedraw|matrix|graph|foreach|addplot|clip|coordinate)\b/.test(body)) return null
+  return (
+    'There is no picture in this source: a bare body must hold at least one TikZ command (\\node, \\draw, \\path, \\matrix, \\graph, ...), ' +
+    'and a complete document needs a tikzpicture or axis environment. As written it compiles to a blank page.'
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -278,8 +338,23 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
       status: verdict.status,
       diagramType: verdict.diagramType ?? null,
       diagnostics: verdict.diagnostics,
+      warnings: verdict.warnings ?? [],
     })
     return { ...verdict, ms: verdict.ms ?? Date.now() - started, artifact: stored ? stored.artifact : null }
+  }
+
+  // A document with no picture in it compiles cleanly and draws nothing. That is
+  // a failure a person sees and a compiler never reports, so it is refused here
+  // in words instead of being handed on as an empty panel.
+  const degenerate = tikzDegenerateReason(entry.source)
+  if (degenerate) {
+    const stored = deps.store.recordVerdict(sessionId, entry.id, {
+      status: 'error',
+      diagramType: null,
+      diagnostics: [{ kind: 'source', text: degenerate }],
+      warnings: [],
+    })
+    return { ok: false, status: 'error', diagramType: null, diagnostics: stored.diagnostics, warnings: [], artifact: null, ms: Date.now() - started }
   }
 
   const engines = deps.enginesNow()
@@ -288,12 +363,14 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
       status: 'unavailable',
       diagramType: null,
       diagnostics: [{ kind: 'engine', text: 'No TeX engine found on this host (looked for pdflatex, xelatex, lualatex).' }],
+      warnings: [],
     })
     return {
       ok: false,
       status: 'unavailable',
       diagramType: null,
       diagnostics: stored.diagnostics,
+      warnings: [],
       artifact: stored.artifact,
       ms: Date.now() - started,
       unavailable: true,
@@ -310,10 +387,12 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
   })
   const cachedMeta = force ? null : deps.cache.meta(key)
   if (cachedMeta) {
+    const warnings = tikzWarnings({ source: normalized.document, meta: cachedMeta, diagnostics: cachedMeta.diagnostics ?? [] })
     const stored = deps.store.recordVerdict(sessionId, entry.id, {
       status: 'ok',
       diagramType: 'tikz',
       diagnostics: [],
+      warnings,
       artifact: {
         hash: key,
         formats: cachedMeta.formats ?? [],
@@ -324,12 +403,26 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
         at: cachedMeta.at ?? new Date().toISOString(),
       },
     })
-    return { ok: true, status: 'ok', diagramType: 'tikz', diagnostics: [], artifact: stored.artifact, ms: Date.now() - started, cached: true }
+    return {
+      ok: true,
+      status: 'ok',
+      diagramType: 'tikz',
+      diagnostics: [],
+      warnings,
+      artifact: stored.artifact,
+      ms: Date.now() - started,
+      cached: true,
+    }
   }
 
   const result = await withCompileSlot(() => compileTikz({ document: normalized.document, engines, signal, dpi: RASTER_DPI }))
   const diagnostics = result.diagnostics ?? []
   const status = result.unavailable ? 'unavailable' : diagnostics.length > 0 ? 'error' : 'ok'
+  const warnings = tikzWarnings({
+    source: normalized.document,
+    meta: { pages: result.pages, width: result.width, height: result.height },
+    diagnostics,
+  })
   let artifact = null
   if (result.pdf || result.svg || result.png) {
     const meta = deps.cache.write(key, {
@@ -358,8 +451,55 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
       at: meta.at,
     }
   }
-  const stored = deps.store.recordVerdict(sessionId, entry.id, { status, diagramType: 'tikz', diagnostics, artifact })
-  return { ok: status === 'ok', status, diagramType: 'tikz', diagnostics, artifact: stored.artifact, ms: Date.now() - started }
+  const stored = deps.store.recordVerdict(sessionId, entry.id, { status, diagramType: 'tikz', diagnostics, warnings, artifact })
+  return { ok: status === 'ok', status, diagramType: 'tikz', diagnostics, warnings, artifact: stored.artifact, ms: Date.now() - started }
+}
+
+/**
+ * The advisory findings of one TikZ document.
+ *
+ * A compile that succeeded can still be a picture nobody wanted: several pages
+ * where one was meant, a canvas far larger than a panel, or the engine's own
+ * warnings about a font or a package it had to substitute. None of these change
+ * the verdict - `status` stays `ok` - they only tell the model what to look at.
+ *
+ * @param input - `{ source, meta, diagnostics }`.
+ * @returns up to {@link MAX_WARNINGS} `{ kind, text }` entries.
+ */
+export function tikzWarnings({ source, meta, diagnostics } = {}) {
+  const warnings = []
+  const pages = meta && typeof meta.pages === 'number' ? meta.pages : null
+  const width = meta && typeof meta.width === 'number' ? meta.width : null
+  const height = meta && typeof meta.height === 'number' ? meta.height : null
+  if (pages !== null && pages > 1) {
+    warnings.push({
+      kind: 'size',
+      text:
+        'This document compiled to ' +
+        pages +
+        ' pages. A diagram is one page: check for a stray page break, or a figure that overflowed. The panel shows the first page only.',
+    })
+  }
+  if (width !== null && height !== null && width > 2000) {
+    warnings.push({
+      kind: 'size',
+      text: 'The picture is ' + Math.round(width) + 'pt wide, which the panel will scale down until labels are hard to read. Shrink it with scale=, node distance= or a smaller font.',
+    })
+  }
+  for (const diagnostic of diagnostics ?? []) {
+    const text = String(diagnostic && diagnostic.text ? diagnostic.text : '')
+    if (/Overfull|Underfull/i.test(text)) continue
+    if (/Font shape|Font Warning|LaTeX Font Warning/i.test(text)) {
+      warnings.push({ kind: 'font', text: 'The engine substituted a font: ' + text.slice(0, 200) })
+    }
+    if (warnings.length >= MAX_WARNINGS) break
+  }
+  const normalized = String(source ?? '')
+  const length = normalized.split('\n').filter((line) => line.trim().length > 0).length
+  if (length > 250) {
+    warnings.push({ kind: 'size', text: length + ' non-empty lines is a large document for one picture; consider splitting it into two diagrams.' })
+  }
+  return warnings.slice(0, MAX_WARNINGS)
 }
 
 /** One compile at a time: parallel pdflatex runs are the fastest route to a wedged host. */
@@ -474,8 +614,21 @@ const VIEW_SCHEMA = {
     address: { type: 'string' },
     lines: { type: 'integer' },
     bytes: { type: 'integer' },
+    warnings: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string' }, text: { type: 'string' } }, required: ['text'] } },
+    // What the BROWSER did with this revision, when a browser has reported.
+    // Always present, so a card never has to distinguish "absent" from "not yet".
+    verification: {
+      type: 'object',
+      properties: {
+        state: { type: 'string' },
+        revision: { type: 'integer' },
+        error: { type: 'string' },
+        at: { type: 'string' },
+      },
+      required: ['state'],
+    },
   },
-  required: ['id', 'kind', 'title', 'status', 'address'],
+  required: ['id', 'kind', 'title', 'status', 'address', 'verification'],
 }
 /** Diagnostics array shared by the write/patch output schemas. */
 const DIAGNOSTICS_SCHEMA = {
@@ -497,6 +650,11 @@ function writeDescription(engines) {
     '',
     'Pass `id` to replace an existing diagram (check it with diagram_read first); omit it to create a new one, whose id is derived from the title.',
     'Always read the returned `status` and `diagnostics`, and fix the diagram until the status is "ok". A diagram the user cannot see is a failed call.',
+    '',
+    'The result carries three separate things, and they answer different questions:',
+    '  - `status` is the host verdict: ok (it parses/compiles), error (it does not - fix the diagnostics), or unavailable (the host has no validator/engine, so the diagram is STORED BUT NOT VERIFIED - say so rather than implying it is fine).',
+    '  - `warnings` are advisory and never change the status: a picture with no edges, more nodes than a person reads at once, an unclosed-looking label, a TikZ document with no picture in it, a multi-page result. Fix the ones that are right; say which ones you deliberately ignored.',
+    '  - the "Browser:" line says what a real renderer did with THIS revision: DREW it, FAILED (the picture the user sees is error text - fix it), no report yet (normal with no client open), or stale (the source changed since it was drawn). Use diagram_verify to re-check later without rewriting anything.',
   ].join('\n')
 }
 
@@ -530,7 +688,54 @@ export function buildTools(deps) {
     address: addressOf(sessionId, entry.id),
     lines: entry.source.length === 0 ? 0 : entry.source.split('\n').length,
     bytes: Buffer.byteLength(entry.source, 'utf8'),
+    warnings: entry.warnings ?? [],
+    verification: verificationOf(entry),
   })
+
+  /**
+   * What the browser did with this revision, in one word the card can draw.
+   *
+   * `state` is deliberately never optimistic: `pending` means no browser has
+   * reported on THIS revision, which is the truth for a diagram written while
+   * no client is open. A report about an older revision is `stale`, because the
+   * source has changed since the picture was drawn.
+   *
+   * @param entry - the stored diagram.
+   * @returns `{ state, revision, error, at }`.
+   */
+  const verificationOf = (entry) => {
+    const report = entry.render
+    if (!report) return { state: 'pending', revision: entry.revision }
+    const stale = Number(report.revision) !== Number(entry.revision)
+    return {
+      state: stale ? 'stale' : report.ok ? 'drawn' : 'failed',
+      revision: Number.isFinite(report.revision) ? report.revision : entry.revision,
+      error: report.error ?? undefined,
+      at: report.at ?? undefined,
+    }
+  }
+  /** The one line `diagram_read` carries about the browser, when there is one. */
+  const renderLine = (entry) => {
+    const verification = verificationOf(entry)
+    if (verification.state === 'pending') {
+      return 'Browser: no report for revision ' + entry.revision + ' yet - the picture has not been drawn anywhere the host can see. It renders when this conversation is open in the app.'
+    }
+    if (verification.state === 'stale') {
+      return 'Browser: revision ' + verification.revision + ' was drawn' + (verification.at ? ' at ' + verification.at : '') + ', but the source has changed since, so this revision is unverified.'
+    }
+    if (verification.state === 'drawn') {
+      return 'Browser: DREW this revision successfully' + (verification.at ? ' at ' + verification.at : '') + (entry.render && entry.render.theme ? ' (' + entry.render.theme + ' theme)' : '') + '.'
+    }
+    return (
+      'Browser: FAILED to draw this revision' +
+      (verification.at ? ' (at ' + verification.at + ')' : '') +
+      ': ' +
+      String(verification.error || 'the renderer did not say why') +
+      ' - the picture the user sees is the error text, not the diagram.'
+    )
+  }
+  /** The advisory findings, as text lines. */
+  const warningLines = (entry) => (entry.warnings ?? []).map((warning) => '  ! ' + warning.text)
   /** Model-facing text for one finished write/patch. */
   const resultText = (verb, sessionId, entry, verdict) => {
     const lines = [verb + ' diagram "' + entry.id + '" (' + entry.kind + ') - status: ' + verdict.status + '.']
@@ -552,6 +757,12 @@ export function buildTools(deps) {
       lines.push('It did NOT validate. Fix these and write again:')
     }
     for (const diagnostic of verdict.diagnostics ?? []) lines.push('  - ' + diagnostic.text)
+    if (verdict.status !== 'unavailable') lines.push(renderLine(entry))
+    const warnings = warningLines(entry)
+    if (warnings.length > 0) {
+      lines.push('Advisory (the diagram is still valid - these are judgement calls, fix them only if they are wrong):')
+      for (const warning of warnings) lines.push(warning)
+    }
     lines.push('Tab address: ' + addressOf(sessionId, entry.id))
     if (entry.kind === 'tikz' && verdict.status !== 'ok' && verdict.artifact) {
       lines.push('(A best-effort render of the failing document is cached and shown, flagged as errored.)')
@@ -613,7 +824,6 @@ export function buildTools(deps) {
       return { text: resultText('Wrote', sessionId, fresh, verdict), view: viewOf(sessionId, fresh), diagnostics: verdict.diagnostics ?? [] }
     },
   }
-
   const patch = {
     name: 'diagram_patch',
     description: [
@@ -674,7 +884,7 @@ export function buildTools(deps) {
     name: 'diagram_read',
     description: [
       'Read the diagrams of this conversation.',
-      'With `id`: that diagram\'s complete source, kind, status, last diagnostics and the exact address of its tab.',
+      'With `id`: that diagram\'s complete source, kind, status, last diagnostics, the advisory warnings, and what the BROWSER did with this revision (drawn / not drawn yet / failed) plus the exact address of its tab.',
       'Without `id`: the index of every diagram (id, kind, title, status, size, last update).',
       'Read before patching or replacing a diagram you did not just write - your context may have been compacted since.',
     ].join('\n'),
@@ -695,6 +905,7 @@ export function buildTools(deps) {
           kind: { type: 'string' },
           status: { type: 'string' },
           address: { type: 'string' },
+          verification: { type: 'object', properties: { state: { type: 'string' } }, required: ['state'] },
         },
         required: ['text'],
       },
@@ -715,15 +926,28 @@ export function buildTools(deps) {
               (known.length > 0 ? ' Known ids: ' + known.join(', ') + '.' : ' No diagrams yet.'),
           }
         }
-        const header = [
-          'Diagram "' + entry.id + '" (' + entry.kind + '), status: ' + entry.status + (entry.title ? ', title: ' + entry.title : '') + '.',
-          'Tab address: ' + addressOf(sessionId, entry.id),
-        ]
+        const header = ['Diagram "' + entry.id + '" (' + entry.kind + '), status: ' + entry.status + (entry.title ? ', title: ' + entry.title : '') + '.']
         if (entry.diagnostics && entry.diagnostics.length > 0) {
           header.push('Last diagnostics:')
           for (const diagnostic of entry.diagnostics) header.push('  - ' + diagnostic.text)
         }
-        if (args.includeSource === false) return { text: header.join('\n'), id: entry.id, kind: entry.kind, status: entry.status }
+        header.push(renderLine(entry))
+        const warnings = warningLines(entry)
+        if (warnings.length > 0) {
+          header.push('Advisory (valid, but worth a look):')
+          for (const warning of warnings) header.push(warning)
+        }
+        header.push('Tab address: ' + addressOf(sessionId, entry.id))
+        if (args.includeSource === false) {
+          return {
+            text: header.join('\n'),
+            id: entry.id,
+            kind: entry.kind,
+            status: entry.status,
+            address: addressOf(sessionId, entry.id),
+            verification: verificationOf(entry),
+          }
+        }
         const body = '---8<--- source ---8<---\n' + entry.source + '\n---8<--- end source ---8<---'
         return {
           text: header.join('\n') + '\n\n' + body,
@@ -731,6 +955,7 @@ export function buildTools(deps) {
           kind: entry.kind,
           status: entry.status,
           address: addressOf(sessionId, entry.id),
+          verification: verificationOf(entry),
         }
       }
       const listed = store.list(sessionId)
@@ -762,6 +987,77 @@ export function buildTools(deps) {
     },
   }
 
+  const verify = {
+    name: 'diagram_verify',
+    description: [
+      'Validate ONE diagram again, from the source the host has NOW, without writing anything.',
+      'Use it when you need to confirm a diagram is still sound but do not want to change it: after a person edited it in the panel, ' +
+        'after a long gap in the conversation, or when you are about to build on a diagram whose last verdict you no longer trust.',
+      'It re-parses a Mermaid diagram with the vendored engine and recompiles TikZ (through the artifact cache, so an unchanged document costs nothing), ' +
+        'then reports the status, the diagnostics, the advisory warnings, and what the BROWSER last did with this revision.',
+      'Unlike diagram_write it never bumps the revision and never invents an id, so it is always safe to call.',
+    ].join('\n'),
+    parameters: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: ID_SCHEMA } },
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          text: { type: 'string' },
+          id: { type: 'string' },
+          status: { type: 'string' },
+          diagnostics: DIAGNOSTICS_SCHEMA,
+          verification: { type: 'object', properties: { state: { type: 'string' } }, required: ['state'] },
+        },
+        required: ['text', 'id', 'status'],
+      },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+      presentationMeta: (_args, value) => ({ id: value.id, status: value.status }),
+    },
+    presentCall: (args) => callView(args, 'Verify'),
+    presentResult: resultView,
+    async execute(args, exec) {
+      const sessionId = sessionOf(exec)
+      const entry = store.get(sessionId, args.id)
+      if (!entry) {
+        const known = store.ids(sessionId)
+        return {
+          text:
+            'No diagram "' +
+            String(args.id) +
+            '" in this conversation.' +
+            (known.length > 0 ? ' Known ids: ' + known.join(', ') + '.' : ' No diagrams yet.'),
+          id: String(args.id),
+          status: 'missing',
+        }
+      }
+      const verdict = await checkAndRecord(deps, sessionId, entry, { signal: exec.signal })
+      const fresh = store.get(sessionId, entry.id)
+      const lines = ['Checked diagram "' + entry.id + '" (' + entry.kind + '), revision ' + entry.revision + ' - status: ' + verdict.status + '.']
+      if (verdict.status === 'ok') {
+        lines.push(
+          entry.kind === 'mermaid'
+            ? 'It parses as a ' + (verdict.diagramType ?? 'diagram') + '.'
+            : 'It compiles' + (verdict.cached ? ' (served from the artifact cache, so the document is unchanged)' : '') + '.',
+        )
+      }
+      for (const diagnostic of verdict.diagnostics ?? []) lines.push('  - ' + diagnostic.text)
+      lines.push(renderLine(fresh))
+      const warnings = warningLines(fresh)
+      if (warnings.length > 0) {
+        lines.push('Advisory (valid, but worth a look):')
+        for (const warning of warnings) lines.push(warning)
+      }
+      lines.push('Tab address: ' + addressOf(sessionId, entry.id))
+      return {
+        text: lines.join('\n'),
+        id: entry.id,
+        status: verdict.status,
+        diagnostics: verdict.diagnostics ?? [],
+        verification: verificationOf(fresh),
+      }
+    },
+  }
+
   const remove = {
     name: 'diagram_delete',
     description: 'Delete one diagram from this conversation. Its tab shows the diagram is gone; its cached artifacts are dropped.',
@@ -784,7 +1080,7 @@ export function buildTools(deps) {
     },
   }
 
-  return [write, patch, read, remove]
+  return [write, patch, read, verify, remove]
 }
 
 // ---------------------------------------------------------------------------
@@ -837,6 +1133,9 @@ function publicDiagram(entry) {
     status: entry.status,
     diagramType: entry.diagramType ?? null,
     diagnostics: entry.diagnostics ?? [],
+    warnings: entry.warnings ?? [],
+    render: entry.render ?? null,
+    checkedAt: entry.checkedAt ?? null,
     artifact: entry.artifact ?? null,
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
@@ -1050,6 +1349,43 @@ export function registerRoutes(ctx, deps) {
   })
 
   register(VENDOR_ROUTE, ['GET', 'HEAD'], (request) => serveVendor(request))
+
+  /**
+   * What the BROWSER did with one revision of one diagram.
+   *
+   * The client posts this after every render attempt, which is what lets the
+   * model answer the one question the host cannot: did a picture actually
+   * appear? The route is deliberately forgiving - a report about a diagram that
+   * was deleted, or about a revision that is no longer current, answers 200 with
+   * `stored: false`. A verification channel that can fail loudly would make the
+   * browser's render loop look broken for reasons that are not its business.
+   */
+  register(REPORT_ROUTE, ['POST'], async (request) => {
+    const body = await readJsonBody(request, 128 * 1024)
+    const session = typeof body.session === 'string' ? body.session : ''
+    const id = typeof body.id === 'string' ? body.id : ''
+    if (!session || !id) throw httpError(400, 'BAD_REQUEST', 'A session id and a diagram id are required.')
+    const entry = deps.store.get(session, id)
+    if (!entry) return json(200, { ok: true, stored: false, reason: 'no such diagram in this conversation' })
+    const stored = deps.store.recordRender(session, id, {
+      revision: Number.isFinite(body.revision) ? body.revision : entry.revision,
+      kind: body.kind,
+      ok: body.ok === true,
+      phase: body.phase,
+      error: body.error,
+      diagnostics: body.diagnostics,
+      theme: body.theme,
+      ms: body.ms,
+      bytes: body.bytes,
+    })
+    return json(200, {
+      ok: true,
+      stored: Boolean(stored),
+      id,
+      revision: stored ? stored.render.revision : null,
+      current: stored ? stored.revision : null,
+    })
+  })
 
   return () => {
     for (const off of offs) {
