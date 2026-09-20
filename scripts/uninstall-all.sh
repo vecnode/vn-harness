@@ -286,5 +286,41 @@ done <<EOF
 $bundles
 EOF
 
+# Remove the skill folders this installer copied into <DshHome>/skills. Only
+# folders carrying this installer's marker for that package are touched, so a
+# skill a person wrote - or took over by deleting the marker - is never deleted.
+#   usage: remove_skills <skills-root> <package-name> <package-folder>
+remove_skills() {
+  skills_root=$1
+  name=$2
+  folder=$3
+  [ -d "$skills_root" ] || return 0
+  [ -d "$folder/skills" ] || return 0
+  for skill in "$folder"/skills/*/; do
+    [ -d "$skill" ] || continue
+    skill_name=$(basename "$skill")
+    dest="$skills_root/$skill_name"
+    marker="$dest/.vn-harness-$name"
+    [ -f "$marker" ] || continue
+    rm -rf "$dest"
+    if [ -n "$skills_removed" ]; then
+      skills_removed="$skills_removed, $skill_name"
+    else
+      skills_removed="$skill_name"
+    fi
+  done
+}
+
+skills_removed=''
+while IFS="$tab" read -r name version folder; do
+  [ -n "$name" ] || continue
+  remove_skills "$dsh_home/skills" "$name" "$folder"
+done <<EOF
+$bundles
+EOF
+if [ -n "$skills_removed" ]; then
+  step "skills: removed $skills_removed from $dsh_home/skills"
+fi
+
 printf '\n'
 step 'Uninstall finished. Restart the CLI app afterwards.'

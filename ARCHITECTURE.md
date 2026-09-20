@@ -540,7 +540,7 @@ immediately left of Open In. Nothing shipped is patched or reordered.
 | `id` | `dsh-themes` (the occupant's slot id) |
 | slot | `conversation.session.header.utilities` (list, session scope) |
 | `order` | `-20` — first in the group, left of Open In (-10) |
-| body | one icon button (28×28, 28px radius, 6px padding, 15px glyph, and the group's `.5px` hairline ring since alpha.9) opening a `Menu` of Light / Dark / System |
+| body | one icon button (28×28, 28px radius, 6px padding, 15px glyph, and the group's `.5px` hairline ring since alpha.9) opening a `Menu` of Light / Dark / System plus **every theme registered into the shipped registry** (alpha.12). The button wears one static appearance mark (a half-filled disc), not the active preference's sun/moon |
 | state | the shipped `theme` client service's snapshot, read through `ctx.get('theme')` |
 | write | `theme.setTheme(id)` — the same call the Settings → General → Appearance row makes |
 
@@ -562,14 +562,27 @@ Design points worth keeping:
   is unavailable", and a write throws instead of silently doing nothing.
 - **Live state.** The control subscribes to ui-theme's `theme/change` event, so
   a switch made in Settings (or an OS flip while the preference is `system`)
-  repaints the glyph; the store also reads a written value back after `setTheme`
+  repaints the label; the store also reads a written value back after `setTheme`
   so the control cannot lag a synchronous publish, and a microtask after boot
   picks the snapshot up when ui-theme provides the service a tick late. It
   observes no DOM: the resolved palette is ui-layout's business, not this
   control's.
-- **The glyph follows the persisted preference**, not the resolved palette:
-  `System` stays visible as the choice it is, which is what the Settings cubes
-  highlight as well.
+- **The button wears one static mark** (alpha.12, a half-filled disc drawn in the
+  bundle): the menu and the tooltip carry the choice, and a registered palette has
+  no shipped glyph to wear. The tooltip still names the active theme, so the
+  control is never ambiguous about what is on.
+- **Themes are ADDED by registering them** (alpha.12). `ctx.theme.register({ id,
+  colorScheme, tokens })` is ui-theme's documented third-party surface: the
+  presenter writes the definition's alias tokens as inline `body` variables over
+  the base palette `colorScheme` selects, and `getTheme().themes` publishes the
+  registry. The control iterates that list and appends `system` last, so
+  `THEME_EXTENSIONS` (this package's **Nord**) is the only place a palette is
+  declared — and a theme another plugin registers shows up too, named by its id
+  with the generic mark. Registration is idempotent and retried on the post-boot
+  microtask and on every `theme/change`, because ui-theme may provide its service
+  a tick after this row. An extension theme is IN-PROCESS by the shipped design:
+  the durable preference schema accepts `light` / `dark` / `system` only, so a
+  reload returns to the stored built-in.
 - **Only seeded modules at runtime.** The bundle requires `react` and
   `@deepseek-ai/dsh-client-ui-primitives` (`Menu`, `Tooltip` and the three
   appearance glyphs), so it adds one entry to the boot graph and no new module
@@ -1153,3 +1166,117 @@ is **maintainer tooling**, not an installer, and is the one script here that wan
 
 See also: `docs/INSTALL.md` (human steps) and `docs/COMPATIBILITY.md`
 (version matrix).
+
+## 15. The diagrams plugin (dsh-diagrams)
+
+The pack's first **tool-owned** surface: the model writes a diagram with a tool,
+the host validates it, and the result is both a conversation card and a tab of
+its own. It is placed last here because it is the newest section, not because it
+runs last: it is an ordinary row beside the editor, the History tab and the
+terminal.
+
+**What it is.** One row (`diagrams`), four tools (`diagram_write`,
+`diagram_patch`, `diagram_read`, `diagram_delete`), two bundled skills
+(`mermaid-diagrams`, `tikz-diagrams`), two tab types (`diagram` - one per
+diagram, a resource address; `diagrams` - the conversation index, a page with
+the guide entry at `order: 40`) and one `tool.call.toolview` card per tool. The
+package README is the reference; this section records the decisions that had to
+be made against the harness line, because each of them closed off an obvious
+alternative.
+
+**Why the state is a file, not a session event.** The first design appended
+`diagram/write` to the session, folded it into a projection, and let the client
+read it with `useProjection`. It cannot work on this line:
+`@deepseek-ai/dsh-session-persistence` **throws** when it reads a log containing
+an event type outside `KNOWN_SESSION_EVENT_TYPES` unless the envelope carries
+`ignorable: true`, and `Session.append(type, data, ...opts)` has no way to set
+that marker (its third argument is surface metadata only). A plugin-owned event
+type would therefore make the conversation unloadable the moment it was
+persisted. State is one JSON file per conversation instead
+(`$DSH_HOME/dsh-diagrams/sessions/<session>.json`, atomic temp + rename), which
+also removes the second problem: a `sessionProjections` unit requires `zod`
+schemas, and this pack ships **zero npm dependencies** - the profile installs
+bundles as live `link:` deps, so a package dependency is not installed. The
+model reads that state back through `diagram_read`, which is what makes a
+diagram survive compaction, a reload or the browser closing.
+
+**Why the vendored engine is one big file.** `Connection`'s fetch registry
+registers **exact** routes; there is no wildcard, and the method vocabulary is
+`GET | HEAD | POST`. Mermaid's chunked ESM build (`dist/chunks/mermaid.esm.min/**`,
+104 files) would have needed 104 routes, and its Node flavor keeps ~30 MB of
+dependencies as bare imports. Mermaid's own **single-file browser build**
+(`dist/mermaid.min.js`, ~3.4 MB) solves both: one self-contained file, one
+route, no relative chunk requests - and because it is a classic script whose last
+line is `globalThis["mermaid"] = ...`, the browser loads it with a script tag
+while the host loads **the same bytes** through `node:vm` behind a DOM stub. That
+is also why every write route is a POST and there is no PUT anywhere in this
+package.
+
+**Validation is the feature.** Both engines run the real thing before the
+diagram is stored:
+
+- **Mermaid** is parsed by a **child process** (`lib/mermaid-check.mjs`) that
+  installs a ~60-line DOM stub (enough for the bundled DOMPurify's support probe
+  and the parsers) and evaluates the vendored engine, then calls `mermaid.parse`.
+  A child is not decoration: putting `document`/`window` on the harness process'
+  globals could change other plugins' behaviour, and a crash in a 3.4 MB engine
+  must never take the host down. A validator failure is reported as
+  `unavailable`, never as a diagram error - telling the model its diagram is
+  wrong when the checker is what broke would be a lie.
+- **TikZ** is compiled by the machine's own engine (`lib/latex.js`: `pdflatex`
+  else `xelatex` else `lualatex`; `tectonic` is deliberately refused because it
+  downloads packages), argv-only, with `-no-shell-escape`,
+  `MIKTEX_AUTOINSTALL=0`, `openin_any=p` / `openout_any=p`, a private temp cwd, a
+  20 s kill and a capped transcript. `-file-line-error` is what makes the
+  feedback line-accurate (`diagram.tex:12: Package pgf Error: ...`), and the
+  located form is preferred over the coarser `! ...` form when both describe the
+  same failure.
+
+The write path itself is normalized before compiling: a bare TikZ body gets the
+standard preamble **and** a `tikzpicture`, a single environment gets the
+preamble, a full document is used verbatim, and leading `\usepackage` /
+`\usetikzlibrary` / `\tikzset` lines are hoisted into the preamble. The library
+list is generous (including `positioning`, `arrows.meta`, `matrix`, `fit`,
+`backgrounds`, `automata`, `graphs`, `trees`, `pgfplots`) because a missing
+library fails the whole compile with "I do not know the key", which is a bad
+trade against a few hundred milliseconds.
+
+**Rendering split.** Mermaid is drawn **in the browser** from the source (themed
+off the app's light/dark scheme, cached per `(source, theme)`); TikZ is drawn
+from the **host's compiled artifact** - `pdftocairo -svg` emits glyph outlines,
+so the picture is vector and font-independent - fetched as a blob and shown
+through an `<img>`. A compile that failed but still produced a PDF is cached and
+shown **flagged as errored**: a hint about what LaTeX understood, never proof
+the diagram is right. Artifacts are content-addressed
+(`artifacts/<sha256[0:24]>/{doc.tex,doc.pdf,doc.svg,doc.png,meta.json}`, LRU at
+200 MiB), so returning to a previous revision is an instant hit and deleting the
+cache costs only a recompile.
+
+**Skills travel two ways.** The two `SKILL.md` files live in the package (they
+are the source of truth) and the row registers them at runtime from that folder,
+so a manually-added bundle still gets them. Both installers additionally copy
+each `<package>/skills/<name>/` into `$DSH_HOME/skills`, where the harness' own
+filesystem provider reads them and a person can edit them without touching this
+repository; every folder the installer creates carries a
+`.vn-harness-<package>` marker, so a person's own skill of the same name is never
+overwritten and uninstall removes exactly what it wrote.
+
+**TeX is optional.** `GET /api/dsh-diagrams/health` reports `tex.available`; with
+no engine the index, the tab and the tool result all say the diagram was stored
+but not validated, and it still exports as `.tex`. Nothing else degrades:
+Mermaid needs no engine at all.
+
+**Troubleshooting.**
+
+| Symptom | Cause |
+|---|---|
+| No "Diagrams" entry on the "+" / Start page | `dsh-diagrams` is not mounted (a new package needs one install run: `install.bat` / `./install.sh`, or `-Force`), or the bundle did not activate - check the console for `[dsh-diagrams]` |
+| The tool reports `unavailable` for a Mermaid diagram | the child validator could not produce a verdict (engine file missing, spawn blocked, timeout). The diagram IS stored; `node packages/dsh-diagrams/vendor/build.mjs` rebuilds the engine |
+| Every TikZ write says "No TeX engine found on this host" | none of `pdflatex`, `xelatex`, `lualatex` is on the **server's** `PATH`; install a TeX distribution on the host running `dsh web`, then `GET /api/dsh-diagrams/health?refresh=1` |
+| A TikZ write fails with `File 'x.sty' not found` | the package is not installed and auto-install is deliberately off (a compile must not reach the network). Install it on the host, or use one of the libraries the preamble already loads |
+| The tab shows a picture but the status pill says `error` | the compile produced a PDF *and* reported errors - the picture is best-effort; the diagnostics under it are the truth |
+| "This diagram is not in this conversation (it may have been deleted)" | the tab outlived its diagram: `diagram_delete` removed it, or the tab belongs to another session |
+| Diagrams vanished after restarting `dsh web` | state lives in `$DSH_HOME/dsh-diagrams/sessions`; a different `DSH_HOME` (or a different host) has its own store |
+| The picture is huge/small in the panel | TikZ is sized by the document (`standalone` + `border=4pt`) and the panel scales it to fit; Mermaid is scaled by its own SVG. Change the source, not the panel |
+| `vendor/build.mjs --check` fails | the vendored engine was edited or half-written; re-run the build (never hand-edit `lib/vendor/mermaid.min.js`) |
+| The skill catalog still lists an old skill body | the catalog is read at boot: restart the app. The runtime registration comes from the package folder, the copy from `$DSH_HOME/skills` - edit the one in effect (the copy wins for preset agents) |

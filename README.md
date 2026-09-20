@@ -10,6 +10,8 @@ Everything ships as standard **dsh bundles**. The plugins are
 plain JavaScript, and the launchers run on **Windows, macOS and Linux** — the
 Windows half is PowerShell, the macOS/Linux half is plain POSIX shell.
 
+![print](assets/vn-harness-20260920-164101.png)
+
 ## Plugins (all **alpha**)
 
 Each package's own README is the reference for what it does, why it is built that
@@ -22,6 +24,7 @@ way and what it touches; the table below is the map.
 | [`dsh-rightbar-files`](packages/dsh-rightbar-files/README.md) | [`README.md`](packages/dsh-rightbar-files/README.md) | alpha `0.1.0-alpha.1` |
 | [`dsh-editor`](packages/dsh-editor/README.md) | [`README.md`](packages/dsh-editor/README.md) | alpha `0.1.0-alpha.9` |
 | [`dsh-gittree`](packages/dsh-gittree/README.md) | [`README.md`](packages/dsh-gittree/README.md) | alpha `0.1.0-alpha.4` |
+| [`dsh-diagrams`](packages/dsh-diagrams/README.md) | [`README.md`](packages/dsh-diagrams/README.md) | alpha `0.1.0-alpha.1` |
 | [`dsh-terminal`](packages/dsh-terminal/README.md) | [`README.md`](packages/dsh-terminal/README.md) | alpha `0.1.0-alpha.3` |
 | [`dsh-themes`](packages/dsh-themes/README.md) | [`README.md`](packages/dsh-themes/README.md) | alpha `0.1.0-alpha.10` |
 | [`dsh-modal`](packages/dsh-modal/README.md) | [`README.md`](packages/dsh-modal/README.md) | alpha `0.1.0-alpha.1` |
@@ -84,7 +87,12 @@ Both halves do the same work (idempotent — safe to re-run):
    double-mount,
 5. run `dsh plugin --profile web add <bundle>` for every package under
    `packages/` (skips bundles already at the repo version unless `-Force`),
-6. print next steps. Neither half touches API keys — add yours in
+6. **copy the skills a bundle ships** (`packages/<bundle>/skills/<name>/SKILL.md`)
+   into `$DSH_HOME/skills`, where the harness' own filesystem skill provider
+   reads them. Every folder the installer creates carries a marker file, so a
+   person's own skill of the same name is never overwritten and uninstall only
+   removes what it wrote,
+7. print next steps. Neither half touches API keys — add yours in
    **Settings → Models**.
 
 Remove with **`uninstall.bat`** (Windows) or **`./uninstall.sh`** (macOS/Linux);
@@ -103,9 +111,11 @@ bundle also removes its patch layer.
   repo that wants PowerShell 7 (`pwsh`) on macOS/Linux — the installers never do.
 - **Language**: the UI halves are intentionally **plain JavaScript**, no build
   step — core client packages ship hand-written module-table bundles and the
-  edit→restart loop stays instant. Three files are **generated, never
+  edit→restart loop stays instant. Four files are **generated, never
   hand-edited**: `dsh-editor`'s vendored **CodeMirror 6** artifact
-  (`lib/vendor/cm6.min.js`) and the three forked bundles
+  (`lib/vendor/cm6.min.js`), `dsh-diagrams`' vendored **Mermaid** engine
+  (`lib/vendor/mermaid.min.js`, built by `packages/dsh-diagrams/vendor/build.mjs`)
+  and the three forked bundles
   (`dsh-rightbar/lib/client.js`, `dsh-rightbar-files/lib/client.js`,
   `dsh-open-in-app/lib/client.js`).
 - **Iterating on a change**: a plain `install.bat` / `./install.sh` **re-syncs

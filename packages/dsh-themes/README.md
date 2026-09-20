@@ -1,4 +1,4 @@
-# dsh-themes (alpha.10)
+# dsh-themes (alpha.12)
 
 **The pack's conversation-header package.** It owns three controls on that header
 and the appearance overrides that dress it.
@@ -6,8 +6,11 @@ and the appearance overrides that dress it.
 **1. Themes** — one small control in the web GUI's conversation header: a button,
 the size and dress of the header's other icon buttons, sitting immediately **left
 of the shipped "Open In…" control**. Pressing it opens a menu with the three
-appearances the product already offers — **Light**, **Dark** and **System** — and
-its glyph shows which one is active.
+appearances the product already offers — **Light**, **Dark** and **System** — plus
+every theme **registered into the shipped theme registry** (alpha.12), which is
+where this package's own **Nord** comes from. The button wears one static
+appearance mark rather than the active preference's sun/moon. See
+[Registered themes](#registered-themes-alpha12-nord).
 
 **2. The Session-log download seat** (alpha.9) — the shipped
 `@deepseek-ai/dsh-session-log-export` browser half put a **three-dot "more
@@ -23,7 +26,9 @@ Session-log download seat](#the-session-log-download-seat-alpha9).
 the Themes control. It captures the **whole window** (the app is a fixed-viewport
 shell, so the page's 100% width and 100% height are exactly the tab's box) and
 saves the PNG to the **Desktop of the machine running the app**, through this
-package's own host route. See [The screenshot control](#the-screenshot-control-alpha10).
+package's own host route. Since alpha.11 the picture is **the interface as it
+stands**, the header's own buttons included; only an open tooltip bubble is kept
+out of the frame. See [The screenshot control](#the-screenshot-control-alpha10).
 
 It also carries the pack's **appearance overrides** — rules that hold one surface
 on a fixed palette or a fixed shape whatever the app theme is. The first is the
@@ -53,6 +58,68 @@ It is a thin control, not a second theme system:
   exactly like the Settings → General → **Appearance** row. Switching here
   updates Settings, and switching in Settings updates this control: there is one
   preference, one persistence path, and one palette.
+
+It can also **register** themes through that same service (`ctx.theme.register`,
+ui-theme's documented third-party surface) — see
+[Registered themes](#registered-themes-alpha12-nord).
+
+## Registered themes (alpha.12): Nord
+
+The **registry is the extension point**, and this package uses it.
+`@deepseek-ai/dsh-client-ui-theme` exposes `register({ id, colorScheme, tokens })`;
+ui-layout's presenter writes a registered theme's alias tokens as **inline CSS
+variables on `body`**, over whichever base palette `colorScheme` selects, and
+`getTheme()` publishes every registered theme in `snapshot.themes`. This bundle:
+
+- **registers** each theme in `THEME_EXTENSIONS` inside a `ctx.effect`, so the
+  theme leaves the registry with the row. A profile without ui-theme simply has
+  nothing to register into, and the control reports that the way it always did;
+- builds the control's **menu from the registry** (`snapshot.themes`, with the
+  `system` preference appended last), so a theme becomes selectable by being
+  registered — there is no second list to keep in step;
+- draws the header button with **one static appearance mark** (a half-filled
+  disc) instead of the active preference's sun/moon. A registered palette has no
+  shipped glyph to wear, and the menu — plus the tooltip, which names the active
+  theme — is where the choice is.
+
+### Nord
+
+**Nord** ([nordtheme.com](https://www.nordtheme.com/)) is registered on the
+**dark** base palette and recolors the alias layer with the palette's own colours:
+
+| Nord | Values | What they paint here |
+|---|---|---|
+| Polar Night | `#2e3440` `#3b4252` `#434c5e` `#4c566a` | the page, the surface ladder, menus, code blocks, scrollbars |
+| Snow Storm | `#d8dee9` `#e5e9f0` `#eceff4` | primary and secondary text, inverted foreground |
+| Frost | `#8fbcbb` `#88c0d0` `#81a1c1` `#5e81ac` | brand, links, primary button, switches, focus rings, muted text |
+| Aurora | `#bf616a` `#d08770` `#ebcb8b` `#a3be8c` `#b48ead` | the error / warn / success states and the syntax tokens |
+
+`nord0` is the page for the conversation **and** the sidebar (the way
+vscode-nord draws editor and sidebar alike — the columns are separated by the
+frame's own hairline, not by a lighter rail), a code fence sits one step above it,
+and the syntax colours follow the rules nord-vim follows: keywords and comments in
+Frost `#81a1c1`, functions and links in `#88c0d0`, strings in Aurora green,
+numbers in `#b48ead`.
+
+**Why the alias layer and not the `--dsw-static-*` ramp.** A static is shared by
+roles that are not the same role — in the dark palette `neutral-bluish-50` is both
+the primary label *and* the brand fill — so recoloring the ramp drags unrelated
+surfaces along with it. The alias layer is the semantic one, and the layer
+ui-theme documents as the third-party surface. Aliases the theme does not name
+keep their shipped dark value: the scrims (`bg-mask-*`), the elevation strokes and
+the shadow scale are scheme-neutral black/white alphas and read correctly on Polar
+Night unchanged.
+
+**The choice is in-process, by the shipped design.** ui-theme's durable preference
+schema accepts `light` / `dark` / `system` only, so `setTheme('nord')` applies at
+once and a **reload** (or a settings re-adopt, e.g. after a reconnect) returns to
+the durable built-in. That is the shipped boundary, not something this
+registration can lift — which is also why nothing here remembers the choice behind
+the service's back.
+
+**Adding another theme** is one entry in `THEME_EXTENSIONS` (id, label key,
+`colorScheme`, token map, menu glyph) plus its `theme.<id>` copy in both
+dictionaries. The menu picks it up from the registry; nothing else changes.
 
 ## The Markdown paper (alpha.2)
 
@@ -340,10 +407,21 @@ and a headless browser pointed at the same URL would photograph a **fresh load**
 the open tab, the editor buffer and the dock are *this client's* state, not the
 server's.
 
-The stream is stopped the instant the frame is grabbed, and this package's three
-controls (and whatever tooltip hangs off them) are hidden for that one frame via
-`html[data-dsh-screenshot]`, so the shot is the app rather than the buttons that
-took it.
+The stream is stopped the instant the frame is grabbed. The picture is **the
+interface as it stands — this package's three header controls included**: they are
+part of the header being photographed, and alpha.10's rule that took them out of
+the frame (so the shot would be "the app rather than the buttons that took it")
+left a hole in the record, which alpha.11 closes.
+
+The one thing kept out of the frame is the **open tooltip bubble**, through
+`html[data-dsh-screenshot] [role=tooltip]`: a hover card is not part of the
+interface, and the pointer is usually still on the button that started the
+capture. That button also passes `disabled` to its own `Tooltip` while the capture
+runs — the shipped primitive's own close-and-stay-closed switch — so its bubble is
+gone rather than merely invisible, and the rule is the safety net that covers every
+other `Tooltip` in the app. The rule is keyed on the tooltip's **semantic**
+`role="tooltip"` marker, never on a hashed class, so it cannot drift with a harness
+line.
 
 **Where the file goes: the host's Desktop, not the download folder.** The PNG is
 POSTed to this package's own authenticated route, which is the one thing here that
@@ -430,10 +508,12 @@ lib/index.js       Node half: one authenticated route, POST /api/dsh-themes/scre
                    which writes the client's PNG to this machine's Desktop (the
                    browser bundle needs no host otherwise)
 lib/client.js      Browser half: the Screenshot button (capture + save), the Themes
-                   button + menu, the Session-log download seat (same slot, shipped id
-                   at a lower priority) with its export dialog, the theme snapshot
-                   reader, and the appearance overrides (the Markdown paper, the
-                   Markdown chrome, the left column's top bar, the header ring)
+                   button + menu, the registered themes (THEME_EXTENSIONS: Nord and
+                   its token map, registered through ctx.theme), the Session-log
+                   download seat (same slot, shipped id at a lower priority) with its
+                   export dialog, the theme snapshot reader, and the appearance
+                   overrides (the Markdown paper, the Markdown chrome, the left
+                   column's top bar, the header ring)
 ```
 
 ## Behaviour worth keeping
@@ -445,11 +525,21 @@ lib/client.js      Browser half: the Screenshot button (capture + save), the The
   plugin's activation.
 - **Live, not sticky.** The control subscribes to ui-theme's `theme/change`
   event, so a switch made in Settings — or an OS flip while the preference is
-  `system` — repaints the glyph. It needs no DOM observation of its own: the
+  `system` — repaints the label. It needs no DOM observation of its own: the
   resolved palette is not this control's business, only the preference is.
-- **The glyph follows the persisted preference**, not the resolved palette —
-  `System` stays visible as the choice it is, the same thing the Settings cubes
-  highlight.
+- **The button wears one static mark** (alpha.12), not the active preference's
+  sun/moon: the menu and the tooltip carry the choice, and a registered theme has
+  no shipped glyph to wear. The tooltip still names the active theme, so the
+  control is never ambiguous about what is on.
+- **A theme is added by registering it.** The menu iterates `snapshot.themes` (the
+  registry's own list) and appends `system` last, so `THEME_EXTENSIONS` is the only
+  place a palette is declared. A theme another plugin registers shows up too — by
+  its id, with the generic appearance mark, since this package has no words or
+  glyph for it.
+- **Extension themes do not touch the durable preference.** `setTheme` only writes
+  `light` / `dark` / `system` through the settings scope, so selecting Nord leaves
+  the stored preference alone — which is exactly why it is session-scoped, and why
+  this package does not fake a persistence layer of its own.
 - **Same switch, both surfaces.** Because the write goes through
   `theme.setTheme(id)`, no second copy of the preference (and no second
   persistence path) exists to drift.

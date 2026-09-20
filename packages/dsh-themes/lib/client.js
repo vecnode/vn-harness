@@ -8,10 +8,13 @@
  *    header's other icon buttons, sitting immediately LEFT of the shipped
  *    "Open In..." control (both live in the Session header's
  *    `conversation.session.header.utilities` list; Open In registers at order -10,
- *    this one at -20). Pressing it opens a menu with the three appearances the
- *    product already offers - Light, Dark, System - exactly the choice Settings >
- *    General > Appearance presents, and the button's glyph shows which one is
- *    active.
+ *    this one at -20). Pressing it opens a menu holding the appearances the
+ *    product already offers - Light, Dark, System, exactly the choice Settings >
+ *    General > Appearance presents - plus every theme REGISTERED into the shipped
+ *    registry (this pack's own **Nord**, alpha.12). The button wears ONE static
+ *    "appearance" mark (alpha.12) rather than the active preference's sun/moon: a
+ *    registered palette has no shipped glyph to wear, and the menu - and the
+ *    tooltip, which names the active theme - is where the choice is.
  *
  *    The preference itself is NOT owned here. `@deepseek-ai/dsh-client-ui-theme`
  *    owns it (`theme` client service): it persists the choice in the `ui-theme`
@@ -20,6 +23,12 @@
  *    the `--dsw-*` tokens). This bundle only reads the published snapshot and
  *    calls `setTheme(id)`, so the header control and the Settings row are the same
  *    switch, and a change made in either place lands in the other.
+ *
+ *    It also REGISTERS themes through that same service (`ctx.theme.register`) -
+ *    the shipped extension point for a third-party palette - and builds the menu
+ *    from the registry's own list, so a theme added to this package becomes
+ *    selectable by being registered, not by being listed in two places. See the
+ *    theme-extensions section below.
  *
  *    The service is resolved lazily (`ctx.get('theme')`), never declared in the
  *    editor-style hard dependency list: a profile that never mounts ui-theme keeps
@@ -183,14 +192,17 @@ window.__ModuleLoader__.load({
     // the token the terminal control already uses - and `box-sizing:border-box`
     // keeps the box exactly 28px with the outline inside it.
     //
-    // alpha.10 adds the CAPTURE rule. The screenshot control marks the document
-    // (`html[data-dsh-screenshot]`, set for the one frame it grabs) and this rule
-    // takes this package's three controls - and the tooltip the clicked one is
-    // showing - out of the picture, so the shot is the app rather than the buttons
-    // that took it. Both selectors are needed: the Themes and Screenshot controls
-    // sit in a `.dst-slot` wrapper (which is what carries their tooltip bubble,
-    // rendered as a SIBLING by the shipped Tooltip), while the Session-log
-    // download seat registers without that wrapper.
+    // alpha.10 added the CAPTURE rule; alpha.11 narrows it to the tooltip alone.
+    // The screenshot control marks the document (`html[data-dsh-screenshot]`, set
+    // for the one frame it grabs) and this rule takes the open TOOLTIP BUBBLE out
+    // of that frame: a hover card is not part of the interface, and the pointer is
+    // still parked on the button that started the capture. The controls
+    // themselves stay in the picture - this header IS the interface being
+    // photographed, and a shot that silently dropped the three buttons this
+    // package owns was a hole in the record. The selector is the shipped Tooltip's
+    // own semantic marker (`role="tooltip"` on its bubble span), never a hashed
+    // class, so it holds for every Tooltip in the app and cannot drift with the
+    // harness line.
     // ---------------------------------------------------------------------
     const css = `
 .dst-slot{display:inline-flex;align-items:center}
@@ -199,7 +211,7 @@ window.__ModuleLoader__.load({
 .dst-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 .dst-button:disabled{cursor:default;opacity:.5}
 .dst-button:focus-visible{outline:.5px solid var(--dsw-alias-state-accent,#4f8cff);outline-offset:1px}
-html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibility:hidden}
+html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
 `
     const CSS_TAG = 'dsh-themes/themes.css'
     if (typeof document !== 'undefined' && !document.querySelector('style[data-plugin-css=' + JSON.stringify(CSS_TAG) + ']')) {
@@ -220,6 +232,7 @@ html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibi
       'theme.light': '浅色',
       'theme.dark': '深色',
       'theme.system': '跟随系统',
+      'theme.nord': 'Nord',
       'theme.current': '主题：{name}',
       'theme.menu': '选择应用主题',
       'theme.unavailable': '主题服务不可用',
@@ -247,6 +260,7 @@ html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibi
       'theme.light': 'Light',
       'theme.dark': 'Dark',
       'theme.system': 'System',
+      'theme.nord': 'Nord',
       'theme.current': 'Theme: {name}',
       'theme.menu': 'Choose the app theme',
       'theme.unavailable': 'The theme service is unavailable',
@@ -286,6 +300,313 @@ html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibi
       active: Object.freeze({ id: 'system', colorScheme: 'light' }),
       revision: -1,
     })
+
+    // ---------------------------------------------------------------------
+    // THEME EXTENSIONS (alpha.12).
+    //
+    // The themes this pack ADDS to the shipped registry, and the single glyph
+    // the header button wears.
+    //
+    // THE EXTENSION POINT IS THE SHIPPED ONE. `ctx.theme`
+    // (`@deepseek-ai/dsh-client-ui-theme`) is a real registry:
+    // `register({ id, colorScheme, tokens })` adds a theme whose alias-token
+    // overrides ui-layout's presenter writes as INLINE CSS variables on `body`,
+    // over whichever base palette `colorScheme` selects; `getTheme()` publishes
+    // every registered theme in `snapshot.themes`; `setTheme(id)` selects one.
+    // Nothing about the theme system is reimplemented here - this package
+    // registers palettes, and the control's menu is built FROM THE REGISTRY, so
+    // adding a theme is registering it and nothing else.
+    //
+    // WHY THE ALIAS LAYER, NOT THE `--dsw-static-*` RAMP. A static is shared by
+    // roles that are not the same role (in the dark palette
+    // `neutral-bluish-50` is both the primary label and the brand fill), so
+    // recoloring the ramp drags unrelated surfaces along with it. The alias
+    // layer is the semantic one, and it is the layer ui-theme documents as the
+    // third-party surface.
+    //
+    // WHAT IS NOT PERSISTED. ui-theme's durable preference schema accepts
+    // `light` / `dark` / `system` only, so an extension theme is an IN-PROCESS
+    // choice: `setTheme('nord')` applies at once, and a reload (or a settings
+    // re-adopt) returns to the durable built-in. That is the shipped boundary,
+    // not something this registration can lift - which is also why nothing here
+    // remembers the choice behind the service's back.
+    // ---------------------------------------------------------------------
+    /**
+     * The Themes control's glyph: a half-filled disc.
+     *
+     * The button used to wear the ACTIVE preference's own icon - a sun for
+     * Light, a moon for Dark, a display for System - which made one button mean
+     * three things and had nothing to draw for a registered theme. It now draws
+     * one "appearance" mark whatever is active; the menu, and the tooltip that
+     * names the active theme, carry the choice. Drawn here in the weight of the
+     * icons beside it (a 16px box, a 1.2px `currentColor` outline), because the
+     * shipped primitive set has no palette/appearance glyph.
+     */
+    function IconThemeOutline16(props) {
+      const size = props && typeof props.size === 'number' ? props.size : 16
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': 'true',
+          focusable: 'false',
+        },
+        // The filled half first, so the outline sits on top of it.
+        h('path', { d: 'M8 2.4A5.6 5.6 0 0 1 8 13.6Z', fill: 'currentColor', stroke: 'none' }),
+        h('circle', { cx: '8', cy: '8', r: '5.6' }),
+      )
+    }
+
+    /**
+     * Nord's own glyph in the menu: a six-spoke snowflake - the palette is named
+     * for the north, and a registered theme is allowed to look like itself. Same
+     * 16px box and the same 1.2px weight as every other glyph in that menu.
+     */
+    function IconSnowflakeOutline16(props) {
+      const size = props && typeof props.size === 'number' ? props.size : 16
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': 'true',
+          focusable: 'false',
+        },
+        h('path', { d: 'M8 2.6v10.8' }),
+        h('path', { d: 'M3.32 5.3 12.68 10.7' }),
+        h('path', { d: 'M12.68 5.3 3.32 10.7' }),
+      )
+    }
+
+    /**
+     * NORD (nordtheme.com) on the DARK base palette: Polar Night surfaces
+     * (`nord0`-`nord3`), Snow Storm text (`nord4`-`nord6`), Frost accents
+     * (`nord7`-`nord10`) and Aurora states (`nord11`-`nord15`).
+     *
+     * Every name here is an alias the app already asks for, so the palette
+     * reaches the surfaces the shipped dark palette reaches: the bars, the
+     * panes, menus, buttons, code blocks, scrollbars, tooltips and the four
+     * state colours. Aliases NOT named here keep their shipped dark value - the
+     * scrims (`bg-mask-*`), the elevation strokes and the shadow scale are
+     * scheme-neutral black/white alphas and read correctly on Polar Night
+     * unchanged.
+     */
+    const NORD_TOKENS = Object.freeze({
+      // Polar Night: the surface ladder, page -> raised -> elevated. `nord0` is
+      // the page for the conversation AND the sidebar, the way vscode-nord
+      // draws editor and sidebar alike; the columns are separated by the frame's
+      // own hairline, not by a lighter rail.
+      '--dsw-alias-bg-base': '#2e3440',
+      '--dsw-specific-sidebar-fill': '#2e3440',
+      '--dsw-alias-bg-layer-1': '#3b4252',
+      '--dsw-alias-bg-layer-2': '#3b4252',
+      '--dsw-alias-bg-layer-3': '#434c5e',
+      '--dsw-alias-bg-overlay': '#434c5e',
+      '--dsw-alias-bg-module-platform': '#3b4252',
+      '--dsw-alias-bg-multi-select': '#434c5e',
+      '--dsw-alias-bg-skeleton': '#d8dee914',
+      '--dsw-specific-menu': '#434c5e',
+      '--dsw-specific-selector': '#434c5e',
+      '--dsw-specific-bubble': '#3b4252',
+      '--dsw-specific-bubble-highlight': '#434c5e',
+      '--dsw-specific-input-major': '#3b4252',
+      '--dsw-specific-login-input': '#2e3440',
+      '--dsw-specific-sidebar-nav-item-hover': '#3b4252',
+      '--dsw-specific-sidebar-nav-item-active': '#434c5e',
+      '--dsw-specific-sidebar-nav-item-active-accent': '#4c566a',
+      '--dsw-specific-tip': '#3b4252',
+      '--dsw-alias-tooltip-bg': '#434c5e',
+      '--dsw-alias-toast-bg': '#434c5e',
+      // Snow Storm and Frost: the text ladder. `nord6` is the body, `nord4`
+      // the secondary tier, `nord9` the muted one.
+      '--dsw-alias-label-primary': '#eceff4',
+      '--dsw-alias-label-primary-bluish': '#eceff4',
+      '--dsw-alias-label-primary-dimmed': '#d8dee9',
+      '--dsw-alias-label-primary-inverted': '#2e3440',
+      '--dsw-alias-label-primary-foreground': '#2e3440',
+      '--dsw-alias-label-secondary': '#d8dee9',
+      '--dsw-alias-label-tertiary': '#81a1c1',
+      '--dsw-alias-label-caption': '#81a1c1',
+      '--dsw-alias-label-dimmed': '#4c566a',
+      // Frost: the accent. `nord8` is the brand (switches, focus rings, the
+      // primary button), `nord9` the quieter interaction, `nord10` the pressed
+      // step; a dark `nord0` foreground keeps light-blue fills legible.
+      '--dsw-alias-brand-primary': '#88c0d0',
+      '--dsw-alias-brand-primary-invert': '#2e3440',
+      // The right bar's active-tab caret and the dock hint accent read this one,
+      // not `brand-primary` (ui-sidebar-right's own generated token name), so
+      // Nord has to name it too or a DeepSeek blue would mark the active tab.
+      '--dsw-alias-brand-primary-new-colorprimary-new-color': '#88c0d0',
+      '--dsw-alias-brand-text': '#88c0d0',
+      '--dsw-alias-link': '#88c0d0',
+      '--dsw-alias-button-primary-fill': '#88c0d0',
+      '--dsw-alias-button-primary-hover': '#8fbcbb',
+      '--dsw-alias-button-primary-dimmed': '#5e81ac',
+      '--dsw-alias-button-info-fill': '#81a1c1',
+      '--dsw-alias-button-info-hover': '#5e81ac',
+      '--dsw-alias-button-contrast-fill': '#eceff4',
+      '--dsw-alias-button-elevated-fill': '#4c566a',
+      // The floating tool-bar chip (the code block's own toolbar) is a
+      // translucent grey by default: the same weight, tinted Polar Night.
+      '--dsw-alias-button-tool-bar-fill': '#4c566a80',
+      '--dsw-alias-button-tool-bar-hover': '#4c566a99',
+      '--dsw-alias-button-floating-fill': '#3b4252',
+      '--dsw-alias-button-floating-hover': '#434c5e',
+      '--dsw-alias-button-ghost-active-border': '#81a1c1',
+      '--dsw-alias-button-ghost-active-fill': '#4c566a',
+      '--dsw-alias-button-ghost-active-hover': '#434c5e',
+      // The interaction washes and the card borders: the shipped palette uses
+      // white alphas on dark, so these are the same weights tinted with Snow
+      // Storm instead - the blue cast is what makes them read as Nord.
+      '--dsw-alias-interactive-bg-hover': '#d8dee91a',
+      '--dsw-alias-interactive-bg-hover-solid': '#434c5e',
+      '--dsw-alias-interactive-bg-hover-accent': '#88c0d040',
+      '--dsw-alias-interactive-bg-hover-danger': '#bf616a2e',
+      '--dsw-alias-interactive-bg-active': '#d8dee926',
+      '--dsw-alias-border-inverted': '#d8dee90f',
+      '--dsw-alias-border-inverted2': '#d8dee914',
+      '--dsw-alias-border-l1': '#d8dee90f',
+      '--dsw-alias-border-l2': '#d8dee921',
+      '--dsw-alias-border-l2-darkmode-thin': '#d8dee90f',
+      '--dsw-alias-border-l3': '#d8dee92e',
+      '--dsw-alias-border-l4': '#d8dee938',
+      // Aurora: the four states. Tertiary steps are the same hue as a wash, the
+      // way the shipped palette uses its darkest static for those slots.
+      '--dsw-alias-state-error-primary': '#bf616a',
+      '--dsw-alias-state-error-secondary': '#bf616a',
+      '--dsw-alias-state-success-primary': '#a3be8c',
+      '--dsw-alias-state-success-secondary': '#a3be8c',
+      '--dsw-alias-state-success-tertiary': '#a3be8c2e',
+      '--dsw-alias-state-warn-primary': '#ebcb8b',
+      '--dsw-alias-state-warn-secondary': '#d08770',
+      '--dsw-alias-state-warn-label': '#ebcb8b',
+      '--dsw-alias-state-warn-tertiary': '#ebcb8b2e',
+      '--dsw-alias-state-business-primary': '#81a1c1',
+      '--dsw-alias-state-business-tertiary': '#5e81ac',
+      // Code: a block sits one step ABOVE the page (`nord1`), its banner and the
+      // inline chip one more (`nord2`), so a fence is visible without a border.
+      '--dsw-alias-markdown-code-block': '#3b4252',
+      '--dsw-alias-markdown-code-block-banner': '#434c5e',
+      '--dsw-alias-markdown-code-segment-selected': '#434c5e',
+      '--dsw-alias-markdown-code-segment-unselected': '#3b4252',
+      '--dsw-alias-markdown-inline-code': '#434c5e',
+      '--dsw-alias-markdown-placeholder': '#3b4252',
+      '--dsw-alias-markdown-tag': '#434c5e',
+      '--dsw-alias-markdown-citation': '#3b4252',
+      // Syntax highlighting, on the same rules nord-vim follows: keywords and
+      // constants in Frost, strings and comments in Aurora/Snow, functions in
+      // `nord8`, punctuation in `nord6`.
+      '--shiki-token-keyword': '#81a1c1',
+      '--shiki-token-constant': '#b48ead',
+      '--shiki-token-string': '#a3be8c',
+      '--shiki-token-string-expression': '#a3be8c',
+      '--shiki-token-comment': '#81a1c1',
+      '--shiki-token-parameter': '#d08770',
+      '--shiki-token-function': '#88c0d0',
+      '--shiki-token-punctuation': '#eceff4',
+      '--shiki-token-link': '#88c0d0',
+      // Scrollbars: the shipped pair is bound to the l1/l2 surface tokens, so
+      // the thumb is a Polar Night step and its hover the Frost accent.
+      '--dsw-alias-scrollbar-bg-l1': '#434c5e',
+      '--dsw-alias-scrollbar-bg-l2': '#4c566a',
+      '--dsw-alias-scrollbar-hover-l1': '#4c566a',
+      '--dsw-alias-scrollbar-hover-l2': '#5e81ac',
+    })
+
+    /**
+     * The themes this package registers, in menu order. Adding one is one entry
+     * here plus its copy (`theme.<id>`, in both dictionaries); the registration
+     * below is what makes it selectable, and the menu picks it up from the
+     * registry without being told about it anywhere else.
+     */
+    const THEME_EXTENSIONS = Object.freeze([
+      Object.freeze({
+        id: 'nord',
+        label: 'theme.nord',
+        colorScheme: 'dark',
+        tokens: NORD_TOKENS,
+        Icon: IconSnowflakeOutline16,
+      }),
+    ])
+
+    /** Theme ids this row has registered and not given back. */
+    const REGISTERED_EXTENSIONS = new Set()
+    /** Ids another plugin already owns: reported once, not on every retry. */
+    const REFUSED_EXTENSIONS = new Set()
+
+    /**
+     * Put this pack's themes into the shipped registry.
+     *
+     * IDEMPOTENT AND RE-ENTRANT. ui-theme may provide its service a tick after
+     * this row activates - the same reason the control re-reads its snapshot on
+     * the next microtask - so this is called again on that tick and on every
+     * `theme/change` while one of our themes is still missing. A profile without
+     * ui-theme simply has nothing to register into. An id taken by ANOTHER
+     * plugin is REPORTED once and never thrown: one refused theme must not take
+     * the header control down with it. The id is claimed BEFORE the service is
+     * asked, because `register` publishes synchronously and the re-entrant call
+     * that publish makes must not try the same id a second time.
+     * @param ctx - the owning client context.
+     * @returns whether every theme of this package is registered.
+     */
+    function registerThemeExtensions(ctx) {
+      let service = null
+      try {
+        const resolved = typeof ctx.get === 'function' ? ctx.get(THEME_SERVICE) : undefined
+        if (resolved && typeof resolved.register === 'function' && typeof resolved.setTheme === 'function') service = resolved
+      } catch (e) {
+        service = null
+      }
+      if (service === null) return false
+      let complete = true
+      for (const theme of THEME_EXTENSIONS) {
+        if (REGISTERED_EXTENSIONS.has(theme.id)) continue
+        if (REFUSED_EXTENSIONS.has(theme.id)) {
+          complete = false
+          continue
+        }
+        REGISTERED_EXTENSIONS.add(theme.id)
+        let dispose = null
+        try {
+          dispose = service.register({
+            id: theme.id,
+            colorScheme: theme.colorScheme,
+            tokens: theme.tokens,
+          })
+        } catch (err) {
+          REGISTERED_EXTENSIONS.delete(theme.id)
+          REFUSED_EXTENSIONS.add(theme.id)
+          complete = false
+          ctx.logger?.warn?.(
+            '[dsh-themes] the "' + theme.id + '" theme was not registered: ' + (err && err.message ? err.message : err),
+          )
+          continue
+        }
+        ctx.effect(
+          () => () => {
+            REGISTERED_EXTENSIONS.delete(theme.id)
+            try {
+              if (typeof dispose === 'function') dispose()
+            } catch (e) {}
+          },
+          'dsh-themes: ' + theme.id + ' theme',
+        )
+      }
+      return complete
+    }
 
     // ---------------------------------------------------------------------
     // The Markdown paper: the RENDERED Markdown view stays on the light palette
@@ -740,9 +1061,57 @@ html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibi
     // The control
     // ---------------------------------------------------------------------
     /**
-     * The header button and its menu. The glyph follows the PERSISTED
-     * preference (the same thing the Settings cubes highlight), not the
-     * resolved palette, so "System" stays visible as the choice it is.
+     * One menu entry's copy and glyph, by theme id.
+     *
+     * The shipped three keep their own words and icons; an extension theme
+     * carries its own (Nord: `theme.nord` and the snowflake); and a theme some
+     * OTHER plugin registered - a valid case, the registry is shared - is named
+     * by its id and wears the generic appearance mark rather than a glyph this
+     * package would be inventing for it.
+     * @param id - a theme id, or the `system` preference.
+     * @returns `{ id, label, Icon }`, where `label` is a locale key or `null`.
+     */
+    function themeMeta(id) {
+      const known = PREFERENCES.find((item) => item.id === id) || THEME_EXTENSIONS.find((item) => item.id === id)
+      if (known) return known
+      return { id: id, label: null, Icon: IconThemeOutline16 }
+    }
+
+    /**
+     * The menu's entries, in the shipped registry's own order.
+     *
+     * `snapshot.themes` IS the registry's list - the built-in `light` / `dark`
+     * pair first, every registered theme after it - so a theme this package
+     * registers (or another plugin does) shows up in the menu by existing. The
+     * `system` preference is not a theme and, as before alpha.12, is appended
+     * last. A snapshot with no `themes` (a stand-in, or a service from an older
+     * line) falls back to the built-in pair, so the menu is never empty.
+     * @param snapshot - the theme snapshot the control is rendering.
+     * @returns the entries to draw, with `system` last.
+     */
+    function themeMenuEntries(snapshot) {
+      const registered = snapshot && Array.isArray(snapshot.themes) ? snapshot.themes : null
+      const ids = []
+      if (registered === null) {
+        ids.push('light', 'dark')
+      } else {
+        for (const theme of registered) {
+          const id = theme && typeof theme.id === 'string' ? theme.id : null
+          if (id === null || id === 'system' || ids.indexOf(id) !== -1) continue
+          ids.push(id)
+        }
+        if (ids.length === 0) ids.push('light', 'dark')
+      }
+      return ids.map(themeMeta).concat([themeMeta('system')])
+    }
+
+    /**
+     * The header button and its menu.
+     *
+     * The glyph is the STATIC appearance mark (alpha.12): it used to be the
+     * active preference's own icon, which meant a sun/moon/display in one place
+     * and nothing to draw once a registered theme became selectable. The menu -
+     * and the tooltip, which names the active theme - carry the choice instead.
      */
     function ThemesAction(props) {
       const t = props.t
@@ -751,12 +1120,13 @@ html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibi
       const [open, setOpen] = React.useState(false)
       const available = state.available()
       const preference = current && typeof current.preference === 'string' ? current.preference : 'system'
-      const entry = PREFERENCES.find((item) => item.id === preference) || PREFERENCES[2]
-      const Glyph = entry.Icon
-      const label = available ? t('theme.current', { name: t(entry.label) }) : t('theme.unavailable')
-      const items = PREFERENCES.map((item) => ({
+      const entries = themeMenuEntries(current)
+      const active = themeMeta(preference)
+      const activeName = active.label === null ? preference : t(active.label)
+      const label = available ? t('theme.current', { name: activeName }) : t('theme.unavailable')
+      const items = entries.map((item) => ({
         id: item.id,
-        label: t(item.label),
+        label: item.label === null ? item.id : t(item.label),
         icon: h(item.Icon, { size: 16 }),
       }))
       return h(
@@ -802,7 +1172,9 @@ html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibi
                     setOpen((value) => !value)
                   },
                 },
-                h(Glyph, { size: 16 }),
+                // The static appearance mark: this button is "the theme", not
+                // "the sun" or "the moon" (see the extensions section above).
+                h(IconThemeOutline16, { size: 16 }),
               ),
             ),
           ),
@@ -1040,9 +1412,12 @@ html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibi
     /**
      * Capture this tab at its own size, as a PNG.
      *
-     * The pack's own header controls are hidden for the one frame that is drawn
-     * (the `html[data-dsh-screenshot]` rule above), because the button that took
-     * the picture - and its tooltip - would otherwise be in it.
+     * The picture is the interface as it stands, this package's own three header
+     * controls included. The one thing taken out of the frame is the OPEN TOOLTIP
+     * bubble (the `html[data-dsh-screenshot]` rule above), because a hover card is
+     * not part of the interface and the pointer is usually still on the button
+     * that started the capture. That button asks its own Tooltip to close while
+     * the capture runs (`disabled`), so there is normally no bubble left to hide.
      *
      * @param t - the locale lookup, for the failure copy the caller shows.
      * @returns {Promise<{blob: Blob, width: number, height: number}>} the picture.
@@ -1208,7 +1583,11 @@ html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibi
         null,
         h(
           Tooltip,
-          { label: label, side: 'bottom', delayMs: 500 },
+          // `disabled` while the capture runs: the shipped Tooltip closes its
+          // bubble and refuses to reopen (its own effect, keyed on this prop), so
+          // this button's hover card cannot end up in the frame even though the
+          // pointer is still on it when the captured surface arrives.
+          { label: label, side: 'bottom', delayMs: 500, disabled: busy },
           h(
             'div',
             { className: 'dst-slot', ref: anchor },
@@ -1262,10 +1641,18 @@ html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibi
           }),
         'dsh-themes: dictionaries',
       )
+      // alpha.12: this pack's own palettes go into the shipped registry. The
+      // control's menu lists what the REGISTRY holds, so registering is the whole
+      // of "adding a theme" - there is no second list to keep in step. ui-theme
+      // can provide its service a tick after this row, hence the second call on
+      // the post-boot microtask and the one on every later change below.
+      const ensureThemes = () => registerThemeExtensions(ctx)
+      ensureThemes()
       // Every accepted preference change (from this control, from Settings, or
       // from the OS while the preference is `system`) arrives here.
       if (typeof ctx.on === 'function') {
         ctx.on('theme/change', (snapshot) => {
+          ensureThemes()
           state.adopt(snapshot)
         })
       }
@@ -1275,6 +1662,7 @@ html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibi
       // namespace refetch after a reconnect), so no DOM observation is needed
       // here - the palette itself is not this control's business.
       Promise.resolve().then(() => {
+        ensureThemes()
         state.refresh()
       })
 

@@ -270,6 +270,79 @@ is_installed() {
 }
 
 # ---------------------------------------------------------------------------
+# The master stays the profile's LAST bundle
+# ---------------------------------------------------------------------------
+# dsh-vn-master is the pack's final layer: its row is the slot where a pack-wide
+# patch can restate any other row, and that only holds if it is applied last.
+# `dsh plugin add` APPENDS a bundle the profile does not know yet, so a profile
+# that gains a package after the master was installed ends up with the master in
+# front of it (the alphabetical first-install order happens to put the master
+# last, which is why this only shows up on an upgrade).
+#
+# Re-assert the order with the CLI's own commands - never by editing the
+# profile's package.json. The master is a blank no-op row, so removing and
+# re-adding it costs nothing and changes no state.
+#   usage: assert_master_last <profile-name> <master-folder-or-empty>
+assert_master_last() {
+  profile_name=$1
+  master_folder=$2
+  last=$(installed_bundles "$profile_dir" | tail -n 1)
+  case " $(installed_bundles "$profile_dir") " in
+    *" dsh-vn-master "*) ;;
+    *) return 0 ;;
+  esac
+  [ "$last" = 'dsh-vn-master' ] && return 0
+  if [ -z "$master_folder" ]; then
+    printf '  - dsh-vn-master is not the profile'"'"'s last bundle (this run does not carry it; a full install re-asserts the order)\n'
+    return 0
+  fi
+  printf '  - dsh-vn-master is not the profile'"'"'s last bundle - re-adding it so the master stays the final layer ...\n'
+  invoke_dsh plugin --profile "$profile_name" remove dsh-vn-master || fail 'could not reorder dsh-vn-master'
+  invoke_dsh plugin --profile "$profile_name" add "$master_folder" || fail 'could not re-add dsh-vn-master'
+  printf '  - dsh-vn-master is the last bundle again\n'
+}
+
+# ---------------------------------------------------------------------------
+# Skills a bundle ships
+# ---------------------------------------------------------------------------
+# Copy the skill folders a bundle carries into the harness' own skills root.
+#
+# A package may ship `skills/<name>/SKILL.md`. The row registers those skills at
+# runtime from its own folder, so they work either way - but copying them into
+# <DshHome>/skills also puts them where the harness' filesystem skill provider
+# looks (and where a person can read or edit them without touching this repo).
+#
+# Ownership is explicit: every folder this installer creates gets a marker file,
+# and a target folder WITHOUT the marker is left alone - a person's own skill of
+# the same name is never overwritten, and uninstall only removes what this
+# installer wrote.
+#   usage: install_skills <skills-root> <package-name> <package-folder>
+install_skills() {
+  skills_root=$1
+  name=$2
+  folder=$3
+  [ -d "$folder/skills" ] || return 0
+  for skill in "$folder"/skills/*/; do
+    [ -f "$skill/SKILL.md" ] || continue
+    skill_name=$(basename "$skill")
+    dest="$skills_root/$skill_name"
+    marker="$dest/.vn-harness-$name"
+    if [ -d "$dest" ] && [ ! -f "$marker" ]; then
+      printf "  - skills: left '%s' alone (it is not one of ours; delete it to take the bundled copy)\n" "$skill_name"
+      continue
+    fi
+    mkdir -p "$dest"
+    cp -R "$skill". "$dest"/
+    printf '%s\n' "$name" >"$marker"
+    if [ -n "$skills_copied" ]; then
+      skills_copied="$skills_copied, $skill_name"
+    else
+      skills_copied="$skill_name"
+    fi
+  done
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -382,6 +455,24 @@ done <<EOF
 $bundles
 EOF
 
+# The bundled skills land in <DshHome>/skills, where the harness' own
+# filesystem skill provider reads them (see install_skills).
+skills_copied=''
+master_folder=''
+while IFS="$tab" read -r name version folder; do
+  [ -n "$name" ] || continue
+  if [ "$name" = 'dsh-vn-master' ]; then
+    master_folder=$folder
+  fi
+  install_skills "$dsh_home/skills" "$name" "$folder"
+done <<EOF
+$bundles
+EOF
+assert_master_last "$profile_name" "$master_folder"
+if [ -n "$skills_copied" ]; then
+  step "skills: copied $skills_copied into $dsh_home/skills"
+fi
+
 printf '\n'
 step 'Done.'
 printf '\n'
@@ -406,4 +497,10 @@ printf '    Settings > General > Appearance owns (see packages/dsh-themes).\n'
 printf '  - The camera button, left of the Themes button, screenshots the whole\n'
 printf '    window: the browser captures the tab and the pack writes the PNG to\n'
 printf '    this machine'"'"'s Desktop as vn-harness-<timestamp>.png.\n'
+printf '  - Diagrams (see packages/dsh-diagrams): ask for one in the chat - Mermaid\n'
+printf '    or TikZ - and it renders inline, with a link that opens it as its own\n'
+printf '    tab. "+" -> Diagrams lists everything in this conversation; the tab has\n'
+printf '    a source drawer and an export menu (mmd/tex/pdf/svg/png into the\n'
+printf '    conversation folder). TikZ needs a TeX engine (pdflatex and friends);\n'
+printf '    without one TikZ diagrams are still stored and exported as .tex.\n'
 printf '  - API keys are never touched by this installer - add your key in Settings > Models.\n'

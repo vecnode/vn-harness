@@ -413,13 +413,35 @@ check('launch bodies unchanged', calls[1].body, '{"app":"explorer","path":"C:/wo
 const themes = loadBundle('packages/dsh-themes/lib/client.js', {})
 check('themes bundle id', themes.id, 'dsh-themes')
 check('themes inject', JSON.stringify(themes.exports.inject), '["slots","locale"]')
-let themeSnapshot = { preference: 'dark', active: { id: 'dark', colorScheme: 'dark' }, revision: 3 }
+let themeSnapshot = {
+  preference: 'dark',
+  active: { id: 'dark', colorScheme: 'dark' },
+  themes: [
+    { id: 'light', colorScheme: 'light', tokens: {} },
+    { id: 'dark', colorScheme: 'dark', tokens: {} },
+  ],
+  revision: 3,
+}
 const themeWrites = []
+// alpha.12: the registry's own write entry. The package registers its palettes
+// through it (`ctx.theme.register` - ui-theme's documented third-party surface)
+// and the control's menu reads the registry back through `snapshot.themes`.
+const themeRegistrations = []
 const themeService = {
   getTheme: () => themeSnapshot,
+  register(definition) {
+    themeRegistrations.push(definition)
+    themeSnapshot = { ...themeSnapshot, themes: [...themeSnapshot.themes, definition], revision: themeSnapshot.revision + 1 }
+    return () => {}
+  },
   setTheme(id) {
     themeWrites.push(id)
-    themeSnapshot = { preference: id, active: { id: 'system', colorScheme: 'light' }, revision: themeSnapshot.revision + 1 }
+    themeSnapshot = {
+      ...themeSnapshot,
+      preference: id,
+      active: { id: 'system', colorScheme: 'light' },
+      revision: themeSnapshot.revision + 1,
+    }
   },
 }
 const themeEvents = []
@@ -479,6 +501,7 @@ const themesCopy = {
   'theme.light': 'Light',
   'theme.dark': 'Dark',
   'theme.system': 'System',
+  'theme.nord': 'Nord',
   'theme.current': 'Theme: {name}',
   'theme.unavailable': 'The theme service is unavailable',
   'download.title': 'Download session log',
@@ -514,6 +537,38 @@ check('themes writes through the service', themeWrites.join(','), 'light')
 check('themes adopts the written value', themesFacade.themeState.getSnapshot().preference, 'light')
 for (const listener of themeEvents) listener({ preference: 'system', active: { id: 'system', colorScheme: 'dark' }, revision: 9 })
 check('themes follows theme/change', themesFacade.themeState.getSnapshot().preference, 'system')
+
+// --------------------------------------------- the theme extensions (Nord)
+// alpha.12: this package REGISTERS its own palettes into the shipped registry
+// and the control's menu is built FROM that registry, so a theme this pack adds
+// becomes selectable by being registered - there is no second list to keep in
+// step. Nord rides the dark base palette and recolors the alias layer only.
+const nord = themeRegistrations.find((theme) => theme.id === 'nord')
+check('nord is registered into the registry', themeRegistrations.map((theme) => theme.id).join(','), 'nord')
+check('nord rides the dark base palette', nord && nord.colorScheme, 'dark')
+check(
+  'nord overrides token variables only',
+  nord &&
+    Object.keys(nord.tokens).every(
+      (name) => name.startsWith('--dsw-alias-') || name.startsWith('--dsw-specific-') || name.startsWith('--shiki-token-'),
+    ),
+  true,
+)
+check('nord paints the Polar Night page', nord && nord.tokens['--dsw-alias-bg-base'], '#2e3440')
+check('nord paints the Snow Storm text', nord && nord.tokens['--dsw-alias-label-primary'], '#eceff4')
+check('nord paints the Frost accent', nord && nord.tokens['--dsw-alias-brand-primary'], '#88c0d0')
+check('nord keeps the sidebar on the page colour', nord && nord.tokens['--dsw-specific-sidebar-fill'], '#2e3440')
+check('nord brings its own copy', themeLocales.themes.en['theme.nord'], 'Nord')
+check('nord copy is in both dictionaries', themeLocales.themes.zh['theme.nord'], 'Nord')
+// The button wears ONE static appearance mark: it used to paint the active
+// preference's own sun/moon, which left a registered theme with nothing to draw.
+// A static render answers from `getServerSnapshot` (the service is browser-side),
+// so the mark - preference-independent by design - is what the markup can prove;
+// the control's STATE is where the registered theme and its words are asserted.
+for (const listener of themeEvents) listener({ preference: 'nord', active: nord, themes: themeSnapshot.themes, revision: 11 })
+const nordMarkup = renderToStaticMarkup(h(ThemesAction, { t: themesT, themeState: themesFacade.themeState }))
+check('the control reads the registered theme', themesFacade.themeState.getSnapshot().themes.some((theme) => theme.id === 'nord'))
+check('themes button wears the static mark', nordMarkup.includes('M8 2.4A5.6 5.6 0 0 1 8 13.6Z'))
 // The dictionaries really carry the download copy (the renders below use the
 // registered English dictionary, so this is what the app would show).
 check('download copy is registered', themeLocales.themes.en['download.title'], 'Download session log')
@@ -785,12 +840,37 @@ check(
   themesCss.includes('.dst-button{width:28px;height:28px;box-sizing:border-box;') &&
     themesCss.includes('border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:28px'),
 )
-// alpha.10: the captured frame leaves the pack's own controls out of the shot.
-// Both selectors matter: the Themes and Screenshot controls carry a `.dst-slot`
-// wrapper (and their tooltip bubble with it), the download seat does not.
+// alpha.11: the captured frame is the interface as it stands, so the pack's own
+// controls STAY in it (alpha.10 hid them, which left a hole in the record). The
+// ONE thing left out of the frame is the open tooltip bubble, and that rule is
+// keyed on the shipped Tooltip's own semantic `role="tooltip"` marker - never a
+// hashed class, and never one of the pack's own class names.
 check(
-  'capture rule hides the pack controls',
-  themesCss.includes('html[data-dsh-screenshot] .dst-slot,html[data-dsh-screenshot] .dst-button{visibility:hidden}'),
+  'capture rule keeps the pack controls in the shot',
+  themesCss.includes('html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}') &&
+    themesCss.includes('html[data-dsh-screenshot] .dst-button') === false &&
+    themesCss.includes('html[data-dsh-screenshot] .dst-slot') === false,
+)
+// And the button that starts the capture closes its OWN tooltip for the frame,
+// through the shipped Tooltip's `disabled` prop (its close-and-stay-closed
+// switch), so the bubble is gone rather than merely invisible.
+const themesSource = readFileSync(path.join(repo, 'packages/dsh-themes/lib/client.js'), 'utf8')
+// The MENU is the registry's own list, not a copy of it: the control iterates
+// `snapshot.themes` and appends the `system` preference last, so the shipped
+// trio keeps its places and a registered theme lands between Dark and System.
+check(
+  'the menu is built from the registry',
+  themesSource.includes('Array.isArray(snapshot.themes)') && themesSource.includes('ids.map(themeMeta)'),
+)
+check('the menu keeps system last', themesSource.includes("concat([themeMeta('system')])"))
+check('the button names the active theme', themesSource.includes('const active = themeMeta(preference)'))
+check(
+  'the button no longer picks a per-preference glyph',
+  themesSource.includes('const Glyph = entry.Icon') === false && themesSource.includes("h(IconThemeOutline16, { size: 16 })"),
+)
+check(
+  'the clicked button closes its own tooltip while it captures',
+  themesSource.includes("{ label: label, side: 'bottom', delayMs: 500, disabled: busy }"),
 )
 const ringTag = themes.document.head.children.filter((tag) => tag.dataset && tag.dataset.pluginCss === 'dsh-themes/header-ring.css').pop()
 const headerRing = ringTag ? ringTag.textContent : ''
@@ -950,6 +1030,235 @@ check(
   'right bar cap lift is a recorded patch',
   syncSource.includes('lift the two-pane cap') && syncSource.includes('offer every drop band a pane has'),
 )
+
+// ------------------------------------------------------------- dsh-diagrams
+// The diagrams bundle registers TWO tab types (one per diagram, plus the
+// conversation index whose guide entry opens it), their keyed bodies and
+// titles, and one conversation card per diagram tool. These checks drive the
+// real factory with a stub ctx and render the seats the shell would render.
+const diagrams = loadBundle('packages/dsh-diagrams/lib/client.js', {})
+check('diagrams bundle id', diagrams.id, 'dsh-diagrams')
+check(
+  'diagrams inject',
+  JSON.stringify(diagrams.exports.inject),
+  '["slots","sidebarRightTabs"]',
+)
+const diagTypes = []
+const diagSeats = {}
+const openedTabs = []
+const diagTabTypes = { register: (definition) => (diagTypes.push(definition), () => {}), entries: () => [] }
+diagrams.exports.apply({
+  slots: {
+    inject: (name, fn) => fn(),
+    register(spec, component) {
+      diagSeats[spec.name + (spec.key ? '#' + spec.key : '')] = { spec, component }
+      return () => {}
+    },
+  },
+  sidebarRightTabs: diagTabTypes,
+  get: (name) => (name === 'sidebarRight' ? { openResource: (address) => openedTabs.push(address) } : undefined),
+  effect: (fn) => fn(),
+  logger: { debug() {}, warn() {} },
+})
+check('diagrams registers two tab types', diagTypes.length, 2)
+// The stylesheet is injected when the row activates (apply), so it is read
+// here rather than at load time.
+const diagCssTag = diagrams.document.head.children.filter((tag) => tag.dataset && tag.dataset.pluginCss === 'dsh-diagrams/diagrams.css').pop()
+const diagCss = diagCssTag ? diagCssTag.textContent : ''
+check(
+  'diagrams stylesheet injected',
+  diagCss.includes('.dsd-root{') &&
+    diagCss.includes('.dsd-card{') &&
+    diagCss.includes('.dsd-pill[data-status="ok"]') &&
+    diagCss.includes('.dsd-svg svg{'),
+)
+// The panel's toolbar is the same 38px border-box top bar the Files tab, the
+// document preview, the editor and the History tab use, so every right-column
+// pane draws its first hairline on the y=76 line.
+check(
+  'diagrams top bar is the 38px pane header',
+  diagCss.includes('.dsd-tools{flex:none;display:flex;align-items:center;gap:6px;box-sizing:border-box;height:38px;padding:0 10px 0 12px;'),
+)
+const viewerType = diagTypes.find((entry) => entry.kind === 'diagram')
+const indexType = diagTypes.find((entry) => entry.kind === 'diagrams')
+check('viewer type identity', viewerType.id, 'dsh-diagrams-viewer')
+check('index type identity', indexType.id, 'dsh-diagrams-index')
+// One tab per DIAGRAM: a resource kind whose glob owns the address the host's
+// tool results carry, in the extension band so it beats any shipped viewer.
+check(
+  'viewer owns the diagram address grammar',
+  viewerType.patterns.join(',') + '/' + viewerType.priority,
+  'dsh-resource://diagram/session/**/extension',
+)
+check('viewer claims a host address', viewerType.patterns[0].includes('dsh-resource://diagram/session/'))
+check('viewer has no guide entry', viewerType.guide === undefined)
+// The index is a PAGE type: no patterns, so it never competes for a file
+// address, and its one guide entry sits after Files (10), Editor (20) and
+// History (30) on the "+" / Start page.
+check('index is a page type', indexType.patterns === undefined)
+check('index guide entry', indexType.guide.map((entry) => entry.order + ':' + entry.title()).join(','), '40:Diagrams')
+check('index chip title', indexType.title(), 'Diagrams')
+check(
+  'diagrams seats',
+  Object.keys(diagSeats).sort().join(','),
+  [
+    'sidebar.right.pane.tab#dsh-diagrams-index',
+    'sidebar.right.pane.tab#dsh-diagrams-viewer',
+    'sidebar.right.pane.tab.title#dsh-diagrams-index',
+    'sidebar.right.pane.tab.title#dsh-diagrams-viewer',
+    'tool.call.toolview#diagram_delete',
+    'tool.call.toolview#diagram_patch',
+    'tool.call.toolview#diagram_read',
+    'tool.call.toolview#diagram_write',
+  ].join(','),
+)
+// The chip of a diagram tab is the diagram's own name; with nothing loaded yet
+// it falls back to the id the address carries rather than an empty chip.
+const viewerAddress = 'dsh-resource://diagram/session/sess-1/auth-flow'
+check('viewer chip falls back to the address id', viewerType.title(viewerAddress), 'auth-flow')
+
+const ViewerBody = diagSeats['sidebar.right.pane.tab#dsh-diagrams-viewer'].component
+const viewerTab = { id: 'tabD', contentId: viewerAddress, title: 'auth-flow', navigation: { revision: 0 } }
+const viewerMarkup = renderToStaticMarkup(h(ViewerBody, { useTabInfo: () => ({ tab: viewerTab }), sessionId: 'sess-1' }))
+check('viewer body waits for the store', viewerMarkup.includes('Loading the diagram...'))
+const badTab = { id: 'tabE', contentId: 'sidebar://diagrams', title: 'Diagrams', navigation: { revision: 0 } }
+check(
+  'viewer body rejects a non-diagram address',
+  renderToStaticMarkup(h(ViewerBody, { useTabInfo: () => ({ tab: badTab }), sessionId: 'sess-1' })).includes('carries no diagram address'),
+)
+
+const IndexBody = diagSeats['sidebar.right.pane.tab#dsh-diagrams-index'].component
+const indexMarkup = renderToStaticMarkup(h(IndexBody, { sessionId: 'sess-1' }))
+check('index body renders its empty state', indexMarkup.includes('No diagrams in this conversation yet.'))
+check(
+  'index body offers both engines',
+  indexMarkup.includes('>New Mermaid<') && indexMarkup.includes('>New TikZ<') && indexMarkup.includes('dsh-diagrams 0.1.0-alpha.2'),
+)
+check('index title seat', renderToStaticMarkup(h(diagSeats['sidebar.right.pane.tab.title#dsh-diagrams-index'].component, {})), 'Diagrams')
+
+// The conversation card draws from the tool call itself, so it is right on
+// replay. The block shapes are the SHELL's: a call still running is a call
+// block with no `kind` (`ui-tool` reads `done = "kind" in block`), and a
+// settled call is a `tool-result` block carrying `call.argsRaw` plus the
+// presentation `meta` the host declared - which is where a `diagram_write`
+// gets its id, because the write itself never names one.
+const WriteCard = diagSeats['tool.call.toolview#diagram_write'].component
+const writeArgs = JSON.stringify({ kind: 'tikz', title: 'Layers', source: '\\node {A};' })
+const runningMarkup = renderToStaticMarkup(
+  h(WriteCard, {
+    toolName: 'diagram_write',
+    sessionId: 'sess-1',
+    block: { callId: 'c1', name: 'diagram_write', argsRaw: writeArgs, subCalls: [] },
+  }),
+)
+check('write card shows the pending state', runningMarkup.includes('Writing a diagram...'))
+check('write card offers no link while it runs', runningMarkup.includes('Open tab') === false)
+const settledMarkup = renderToStaticMarkup(
+  h(WriteCard, {
+    toolName: 'diagram_write',
+    sessionId: 'sess-1',
+    block: {
+      kind: 'tool-result',
+      callId: 'c1',
+      call: { name: 'diagram_write', argsRaw: writeArgs },
+      content: [{ type: 'text', text: 'Wrote diagram "layers" (tikz) - status: ok.' }],
+      isError: false,
+      meta: {
+        id: 'layers',
+        kind: 'tikz',
+        title: 'Layers',
+        status: 'ok',
+        address: 'dsh-resource://diagram/session/sess-1/layers',
+      },
+      subCalls: [],
+    },
+  }),
+)
+check('a settled write is not still writing', settledMarkup.includes('Writing a diagram...') === false)
+check(
+  'write card names the diagram the host created',
+  settledMarkup.includes('TikZ') && settledMarkup.includes('Layers') && settledMarkup.includes('layers'),
+)
+check('write card links its tab', settledMarkup.includes('>Open tab<'))
+check('write card keeps the picture behind the toggle', settledMarkup.includes('>Show<') && settledMarkup.includes('dsd-cardBody') === false)
+// A call that never settled (an interrupted turn) still has to render honestly
+// instead of claiming a diagram it never wrote.
+const callOnlyMarkup = renderToStaticMarkup(
+  h(WriteCard, {
+    toolName: 'diagram_write',
+    sessionId: 'sess-1',
+    block: { callId: 'c2', name: 'diagram_write', argsRaw: JSON.stringify({ kind: 'mermaid', source: 'flowchart TD\n A-->B' }), subCalls: [] },
+  }),
+)
+check('write card survives a call with no title yet', callOnlyMarkup.includes('dsd-card'))
+// A replayed log can settle a call whose call block is gone (`call: null`): the
+// view in `meta` still names the diagram, and nothing may dereference the args.
+const calllessMarkup = renderToStaticMarkup(
+  h(WriteCard, {
+    toolName: 'diagram_write',
+    sessionId: 'sess-1',
+    block: {
+      kind: 'tool-result',
+      callId: 'c6',
+      call: null,
+      content: [{ type: 'text', text: 'Wrote diagram "layers" (tikz) - status: ok.' }],
+      isError: false,
+      meta: { id: 'layers', kind: 'tikz', title: 'Layers', status: 'ok' },
+      subCalls: [],
+    },
+  }),
+)
+check('write card survives a missing call block', calllessMarkup.includes('Layers') && calllessMarkup.includes('>Open tab<'))
+
+const ReadCard = diagSeats['tool.call.toolview#diagram_read'].component
+check(
+  'read card names the index',
+  renderToStaticMarkup(h(ReadCard, { toolName: 'diagram_read', sessionId: 'sess-1', block: { callId: 'c3', name: 'diagram_read', argsRaw: '{}', subCalls: [] } })).includes(
+    'Diagram index',
+  ),
+)
+const readNamedMarkup = renderToStaticMarkup(
+  h(ReadCard, {
+    toolName: 'diagram_read',
+    sessionId: 'sess-1',
+    block: {
+      kind: 'tool-result',
+      callId: 'c4',
+      call: { name: 'diagram_read', argsRaw: JSON.stringify({ id: 'auth-flow' }) },
+      content: [{ type: 'text', text: 'auth-flow' }],
+      isError: false,
+      meta: { id: 'auth-flow', kind: 'mermaid', title: 'Auth flow', status: 'ok', address: 'dsh-resource://diagram/session/sess-1/auth-flow' },
+      subCalls: [],
+    },
+  }),
+)
+check('read card links the diagram it read', readNamedMarkup.includes('auth-flow') && readNamedMarkup.includes('>Open tab<'))
+const DeleteCard = diagSeats['tool.call.toolview#diagram_delete'].component
+check(
+  'delete card is a one-liner',
+  renderToStaticMarkup(
+    h(DeleteCard, { toolName: 'diagram_delete', sessionId: 'sess-1', block: { callId: 'c5', name: 'diagram_delete', argsRaw: JSON.stringify({ id: 'old-one' }), subCalls: [] } }),
+  ).includes('Deleted diagram') &&
+    renderToStaticMarkup(
+      h(DeleteCard, { toolName: 'diagram_delete', sessionId: 'sess-1', block: { callId: 'c5', name: 'diagram_delete', argsRaw: JSON.stringify({ id: 'old-one' }), subCalls: [] } }),
+    ).includes('old-one'),
+)
+// A mounted index tab re-reads the host when it becomes visible again: that is
+// what keeps an open "Diagrams" page in step with writes made in the chat.
+check(
+  'the index re-reads on visibility',
+  readFileSync(path.join(repo, 'packages/dsh-diagrams/lib/client.js'), 'utf8').includes('tabInfoNow(props)'),
+)
+// The client never invents the host's routes: the vendored engine, the state
+// and the artifact routes are the ones lib/index.js registers.
+const diagSource = readFileSync(path.join(repo, 'packages/dsh-diagrams/lib/client.js'), 'utf8')
+check(
+  'client routes match the host half',
+  ['/api/dsh-diagrams/state', '/api/dsh-diagrams/diagram', '/api/dsh-diagrams/artifact', '/api/dsh-diagrams/export', '/api/dsh-diagrams/vendor/mermaid.js'].every(
+    (route) => diagSource.includes(route),
+  ),
+)
+check('client loads the engine as a classic script', diagSource.includes('new Blob([source]') && diagSource.includes('window.mermaid'))
 
 console.log('')
 console.log(failures === 0 ? 'all client-bundle checks passed' : failures + ' check(s) FAILED')

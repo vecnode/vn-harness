@@ -85,6 +85,36 @@ The pack targets the harness line DeepSeek ships to the raw web install
     reaped. Sessions do not survive a harness restart.
   - **New package**, so the first install after this change needs a plain
     `install.bat` / `./install.sh` run or `-Force`.
+- **dsh-diagrams** adds **Mermaid and TikZ diagrams** as a surface of their own:
+  four tools (`diagram_write` / `diagram_patch` / `diagram_read` /
+  `diagram_delete`) whose every write is validated before it is stored, two
+  bundled skills, one tab per diagram plus an index page, and a conversation
+  card per tool call.
+  - **Mermaid is validated headlessly** by a child process that loads the same
+    vendored engine the browser renders with behind a DOM stub; **TikZ is
+    compiled** by the machine's own TeX engine (argv only, `-no-shell-escape`,
+    `MIKTEX_AUTOINSTALL=0`, `openin_any`/`openout_any` paranoid, a private temp
+    cwd, a 20 s kill), so a broken diagram returns the parser's or compiler's own
+    line-accurate error and the model fixes it in the same turn.
+  - **TeX is optional**: with no `pdflatex`/`xelatex`/`lualatex` on the server's
+    PATH, TikZ diagrams are still stored, listed and exported as `.tex`, and
+    every surface says the diagram was not validated. Mermaid needs no engine.
+  - **State is one file per conversation** under `$DSH_HOME/dsh-diagrams`
+    (never a session event: `dsh-session-persistence` refuses a log containing a
+    type outside `KNOWN_SESSION_EVENT_TYPES` without the `ignorable` marker,
+    which `Session.append()` cannot set) plus a content-addressed artifact cache.
+  - The **vendored Mermaid engine** (`lib/vendor/mermaid.min.js`, ~3.4 MB) is a
+    GENERATED file rebuilt by `vendor/build.mjs`, hashed into
+    `lib/vendor/VERSION.json` and re-checked by the tracked route check. The
+    harness' Connection fetch registry takes **exact** routes with
+    `GET | HEAD | POST` only, which is why the engine is one self-contained file
+    on one route and every write is a POST.
+  - No npm dependency, no network, no core patch, no forked bundle. The two
+    skills are copied into `$DSH_HOME/skills` by both installers (each copied
+    folder carries a marker, so a person's own skill is never overwritten and
+    uninstall removes only what it wrote).
+  - **New package**, so the first install after this change needs a plain
+    `install.bat` / `./install.sh` run or `-Force`.
 - **dsh-modal** provides the shared `modals` client service the editor's save-as
   dialog uses. It owns no slot and no ordering edge, and the editor resolves it
   lazily (falling back to the browser's own prompt), so neither plugin requires

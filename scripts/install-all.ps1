@@ -336,9 +336,87 @@ function Test-LiveLink {
     }
 }
 
-function Install-To-Profile {
+# ---------------------------------------------------------------------------
+# The master stays the profile's LAST bundle
+# ---------------------------------------------------------------------------
+<#
+    dsh-vn-master is the pack's final layer: its row is the slot where a
+    pack-wide patch can restate any other row, and that only holds if it is
+    applied last. `dsh plugin add` APPENDS a bundle the profile does not know
+    yet, so a profile that gains a package after the master was installed ends up
+    with the master in front of it (the alphabetical first-install order happens
+    to put the master last, which is why this only shows up on an upgrade).
+
+    Re-assert the order with the CLI's own commands - never by editing the
+    profile's package.json. The master is a blank no-op row, so removing and
+    re-adding it costs nothing and changes no state.
+#>
+function Assert-MasterLast {
     param($Target, $Packages)
     $installed = Get-InstalledBundles -ProfileDir $Target.ProfileDir
+    if ($installed.Count -eq 0) { return }
+    if ($installed -notcontains 'dsh-vn-master') { return }
+    if ($installed[$installed.Count - 1] -eq 'dsh-vn-master') { return }
+    # Only reorder when this run actually carries the master: removing a bundle
+    # this run could not add back would leave the profile without it.
+    $master = @($Packages | Where-Object { $_.Name -eq 'dsh-vn-master' })[0]
+    if (-not $master) {
+        Write-Host '  - dsh-vn-master is not the profile''s last bundle (this run does not carry it; a full install re-asserts the order)'
+        return
+    }
+    Write-Host "  - dsh-vn-master is not the profile's last bundle - re-adding it so the master stays the final layer ..."
+    Invoke-Dsh -DshHome $Target.DshHome -ProfileDir $Target.ProfileDir -Arguments @('plugin', '--profile', $Target.Profile, 'remove', 'dsh-vn-master')
+    Invoke-Dsh -DshHome $Target.DshHome -ProfileDir $Target.ProfileDir -Arguments @('plugin', '--profile', $Target.Profile, 'add', $master.Folder)
+    Write-Host '  - dsh-vn-master is the last bundle again'
+}
+
+# ---------------------------------------------------------------------------
+# Skills a bundle ships
+# ---------------------------------------------------------------------------
+<#
+    Copy the skill folders a bundle carries into the harness' own skills root.
+
+    A package may ship `skills/<name>/SKILL.md`. The row registers those skills
+    at runtime from its own folder, so they work either way - but copying them
+    into <DshHome>/skills also puts them where the harness' filesystem skill
+    provider looks (and where a person can read or edit them without touching
+    this repository).
+
+    Ownership is explicit: every folder this installer creates gets a marker
+    file, and a target folder WITHOUT the marker is left alone - a person's own
+    skill of the same name is never overwritten, and uninstall only removes what
+    this installer wrote.
+#>
+function Copy-PackSkills {
+    param($Target, $Packages)
+    $skillsRoot = Join-Path $Target.DshHome 'skills'
+    $copied = @()
+    foreach ($pkg in $Packages) {
+        $skillsDir = Join-Path $pkg.Folder 'skills'
+        if (-not (Test-Path $skillsDir)) { continue }
+        foreach ($skill in (Get-ChildItem $skillsDir -Directory | Sort-Object Name)) {
+            $manifest = Join-Path $skill.FullName 'SKILL.md'
+            if (-not (Test-Path $manifest)) { continue }
+            $dest = Join-Path $skillsRoot $skill.Name
+            $marker = Join-Path $dest ('.vn-harness-' + $pkg.Name)
+            if ((Test-Path $dest) -and -not (Test-Path $marker)) {
+                Write-Host "  - skills: left '$($skill.Name)' alone (it is not one of ours; delete it to take the bundled copy)"
+                continue
+            }
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Copy-Item -Path (Join-Path $skill.FullName '*') -Destination $dest -Recurse -Force
+            Set-Content -Path $marker -Value $pkg.Name -Encoding ASCII
+            $copied += $skill.Name
+        }
+    }
+    if ($copied.Count -gt 0) {
+        Write-Host "  - skills: copied $($copied -join ', ') into $skillsRoot"
+    }
+    return $copied
+}
+
+function Install-To-Profile {
+    param($Target, $Packages)    $installed = Get-InstalledBundles -ProfileDir $Target.ProfileDir
     $packagesRoot = Join-Path $repoRoot 'packages'
     Write-Host ''
     Write-Step "Target: $($Target.Label) - profile '$($Target.Profile)' at $($Target.ProfileDir)"
@@ -403,6 +481,8 @@ Write-Step ("Bundles to install: " + (($packages | ForEach-Object { $_.Name + '@
 
 $web = Resolve-WebTarget -HomeDir $DshHome -Profile $ProfileName
 Install-To-Profile -Target $web -Packages $packages
+Assert-MasterLast -Target $web -Packages $packages
+Copy-PackSkills -Target $web -Packages $packages | Out-Null
 
 Write-Host ''
 Write-Step 'Done.'
@@ -426,4 +506,10 @@ Write-Host '    Settings > General > Appearance owns (see packages/dsh-themes).'
 Write-Host '  - The camera button, left of the Themes button, screenshots the whole'
 Write-Host '    window: the browser captures the tab and the pack writes the PNG to'
 Write-Host '    this machine''s Desktop as vn-harness-<timestamp>.png.'
+Write-Host '  - Diagrams (see packages/dsh-diagrams): ask for one in the chat - Mermaid'
+Write-Host '    or TikZ - and it renders inline, with a link that opens it as its own'
+Write-Host '    tab. "+" -> Diagrams lists everything in this conversation; the tab has'
+Write-Host '    a source drawer and an export menu (mmd/tex/pdf/svg/png into the'
+Write-Host '    conversation folder). TikZ needs a TeX engine (pdflatex and friends);'
+Write-Host '    without one TikZ diagrams are still stored and exported as .tex.'
 Write-Host '  - API keys are never touched by this installer - add your key in Settings > Models.'

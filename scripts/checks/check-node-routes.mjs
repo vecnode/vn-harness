@@ -486,6 +486,219 @@ try {
   await fsp.rm(themesHome, { recursive: true, force: true })
 }
 
+// ------------------------------------------------------------- dsh-diagrams
+// One row owns the tools, the per-conversation state file, the artifact cache
+// and the routes. DSH_HOME points at a temp folder for this block, so the store
+// and the cache are never touched for real; the tool bodies are driven directly
+// with a fake exec, which is the same seam the agent loop uses.
+const diagramsHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'dsh-diagrams-home-'))
+const diagramsWorkspace = await fsp.mkdtemp(path.join(os.tmpdir(), 'dsh-diagrams-ws-'))
+const previousDshHome = process.env.DSH_HOME
+process.env.DSH_HOME = diagramsHome
+try {
+  const diagramsModule = await import(pathToFileURL(path.join(repo, 'packages/dsh-diagrams/lib/index.js')).href)
+  const diagRoutes = new Map()
+  const diagTools = []
+  const diagSessions = { get: (id) => (id === 'session-diagrams' ? { header: { cwd: diagramsWorkspace } } : undefined) }
+  diagramsModule.apply({
+    get(name) {
+      if (name === 'connection') {
+        return {
+          fetch: {
+            register(route) {
+              diagRoutes.set(route.path, route)
+              return () => {}
+            },
+          },
+        }
+      }
+      if (name === 'sessions') return diagSessions
+      // No skill registry on this stub: the row must activate anyway.
+      return undefined
+    },
+    tools: { register: (tool) => (diagTools.push(tool), () => {}) },
+    effect: (fn) => fn(),
+    logger: { debug() {}, warn() {} },
+  })
+
+  check('diagrams: route set', [...diagRoutes.keys()].sort().join(','), [
+    '/api/dsh-diagrams/artifact',
+    '/api/dsh-diagrams/diagram',
+    '/api/dsh-diagrams/export',
+    '/api/dsh-diagrams/health',
+    '/api/dsh-diagrams/state',
+    '/api/dsh-diagrams/vendor/mermaid.js',
+  ].join(','))
+  check(
+    'diagrams: tools registered',
+    diagTools.map((tool) => tool.name).sort().join(','),
+    'diagram_delete,diagram_patch,diagram_read,diagram_write',
+  )
+  check(
+    'diagrams: every tool declares a JSON-schema surface',
+    diagTools.every(
+      (tool) =>
+        tool.parameters &&
+        tool.parameters.type === 'object' &&
+        Object.keys(tool.parameters.properties ?? {}).length > 0 &&
+        (tool.parameters.required ?? []).every((key) => Object.hasOwn(tool.parameters.properties, key)) &&
+        tool.output &&
+        tool.output.schema &&
+        typeof tool.output.render === 'function' &&
+        typeof tool.execute === 'function',
+    ),
+  )
+  // The Connection registry takes GET/HEAD/POST only, and every write must be
+  // a POST for that reason (not a stylistic choice).
+  check(
+    'diagrams: methods stay inside the registry vocabulary',
+    [...diagRoutes.values()].every((route) => route.methods.every((method) => ['GET', 'HEAD', 'POST'].includes(method))),
+  )
+
+  const call = (routePath, request) => diagRoutes.get(routePath).fetch(request)
+  const post = (routePath, body) =>
+    call(
+      routePath,
+      new Request('http://x' + routePath, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+    )
+  const getJson = (routePath, query) => call(routePath, new Request('http://x' + routePath + '?' + query, { method: 'GET' }))
+  const tool = (toolName) => diagTools.find((entry) => entry.name === toolName)
+  const exec = { agent: { session: { id: 'session-diagrams' } }, signal: new AbortController().signal }
+
+  // --- the vendored engine, and the drift check on the generated tree
+  const vendor = await call('/api/dsh-diagrams/vendor/mermaid.js', new Request('http://x/api/dsh-diagrams/vendor/mermaid.js'))
+  const vendorBytes = Buffer.from(await vendor.arrayBuffer())
+  check('diagrams: serves the vendored engine', vendor.status === 200 && vendorBytes.length > 1000000, true)
+  check('diagrams: engine content type', vendor.headers.get('content-type'), 'text/javascript; charset=utf-8')
+  const vendorEtag = vendor.headers.get('etag')
+  const vendorCached = await call(
+    '/api/dsh-diagrams/vendor/mermaid.js',
+    new Request('http://x/api/dsh-diagrams/vendor/mermaid.js', { headers: { 'if-none-match': vendorEtag } }),
+  )
+  check('diagrams: engine is etag-cached', vendorCached.status, 304)
+  const { createHash } = await import('node:crypto')
+  const recorded = JSON.parse(await fsp.readFile(path.join(repo, 'packages/dsh-diagrams/lib/vendor/VERSION.json'), 'utf8'))
+  check(
+    'diagrams: vendored engine matches its recorded hash',
+    createHash('sha256').update(vendorBytes).digest('hex') === recorded.sha256 && recorded.bytes === vendorBytes.length,
+    true,
+  )
+  check('diagrams: vendored engine is the single-file build', vendorBytes.toString('utf8', -400).includes('globalThis["mermaid"]'), true)
+
+  const health = await getJson('/api/dsh-diagrams/health', '')
+  const healthBody = await health.json()
+  check('diagrams: health answers', health.status === 200 && healthBody.ok === true)
+  check('diagrams: health names the vendored mermaid', healthBody.mermaid.version, recorded.version)
+  check('diagrams: health reports the TeX capability', typeof healthBody.tex.available, 'boolean')
+
+  // --- model writes: mermaid (validated through the vendored engine)
+  const goodMermaid = await tool('diagram_write').execute(
+    { kind: 'mermaid', title: 'Auth flow', source: 'flowchart TD\n  A[Client] --> B{OK?}\n  B -->|yes| C[Home]' },
+    exec,
+  )
+  check('diagrams: mermaid write validates', goodMermaid.view.status, 'ok')
+  check('diagrams: write names the parse type', goodMermaid.view.diagramType, 'flowchart-v2')
+  check('diagrams: write hands back a tab address', goodMermaid.view.address, 'dsh-resource://diagram/session/session-diagrams/auth-flow')
+  const badMermaid = await tool('diagram_write').execute({ kind: 'mermaid', id: 'broken', source: 'flowchart TD\n  A[Start --> B{{{' }, exec)
+  check('diagrams: a broken mermaid is reported', badMermaid.view.status, 'error')
+  check('diagrams: the parse error travels to the model', badMermaid.diagnostics.length > 0 && /Parse error|Expecting/.test(badMermaid.diagnostics[0].text), true)
+
+  const read = await tool('diagram_read').execute({ id: 'auth-flow' }, exec)
+  check('diagrams: read returns the source', read.text.includes('flowchart TD') && read.text.includes('Auth flow'), true)
+  const list = await tool('diagram_read').execute({}, exec)
+  check('diagrams: read lists both diagrams', list.text.includes('auth-flow') && list.text.includes('broken'), true)
+
+  const patched = await tool('diagram_patch').execute({ id: 'auth-flow', oldString: 'B{OK?}', newString: 'B{Credentials?}' }, exec)
+  check('diagrams: patch reports the occurrence count', patched.occurrences, 1)
+  check('diagrams: patch kept the diagram valid', patched.view.status, 'ok')
+  const ambiguous = await tool('diagram_patch')
+    .execute({ id: 'auth-flow', oldString: 'o', newString: '0' }, exec)
+    .then(() => 'no error')
+    .catch((err) => err.code)
+  check('diagrams: an ambiguous patch is refused', ambiguous, 'AMBIGUOUS')
+
+  // --- the state file is the source of truth for the panels
+  const state = await (await getJson('/api/dsh-diagrams/state', 'session=session-diagrams')).json()
+  check('diagrams: state lists the conversation', state.diagrams.map((entry) => entry.id).join(','), 'auth-flow,broken')
+  const stored = JSON.parse(await fsp.readFile(path.join(diagramsHome, 'dsh-diagrams', 'sessions', (await fsp.readdir(path.join(diagramsHome, 'dsh-diagrams', 'sessions')))[0]), 'utf8'))
+  check('diagrams: state is one file per conversation', stored.sessionId, 'session-diagrams')
+
+  const one = await (await getJson('/api/dsh-diagrams/diagram', 'session=session-diagrams&id=auth-flow')).json()
+  check('diagrams: one diagram carries its source', one.diagram.source.includes('Credentials?'), true)
+  const missing = await getJson('/api/dsh-diagrams/diagram', 'session=session-diagrams&id=nope')
+  check('diagrams: an unknown diagram is a 404', missing.status, 404)
+
+  // --- the panel's own edit path (POST, never PUT)
+  const edited = await (
+    await post('/api/dsh-diagrams/diagram', {
+      session: 'session-diagrams',
+      id: 'auth-flow',
+      source: 'flowchart LR\n  A[Client] --> B[API]',
+    })
+  ).json()
+  check('diagrams: the panel edit is validated too', edited.status, 'ok')
+  check('diagrams: the panel edit is marked as the user\'s', edited.diagram.by, 'user')
+  const created = await (await post('/api/dsh-diagrams/diagram', { session: 'session-diagrams', kind: 'mermaid', title: 'New one', source: 'pie title P\n "a" : 1', create: true })).json()
+  check('diagrams: the panel can create a diagram', created.diagram.status, 'ok')
+  const deleted = await (await post('/api/dsh-diagrams/diagram', { session: 'session-diagrams', id: 'broken', delete: true })).json()
+  check('diagrams: the panel can delete a diagram', deleted.deleted, true)
+
+  // --- artifacts: mermaid has none (the browser draws it), TikZ does
+  const noArtifact = await getJson('/api/dsh-diagrams/artifact', 'session=session-diagrams&id=auth-flow&format=svg')
+  check('diagrams: mermaid has no host artifact', noArtifact.status, 404)
+  const sourceArtifact = await getJson('/api/dsh-diagrams/artifact', 'session=session-diagrams&id=auth-flow&format=mmd')
+  check('diagrams: mermaid source is servable', (await sourceArtifact.text()).startsWith('flowchart LR'), true)
+
+  // --- export writes into the conversation folder, create-exclusively
+  const export1 = await (await post('/api/dsh-diagrams/export', { session: 'session-diagrams', id: 'auth-flow', format: 'mmd' })).json()
+  const export2 = await (await post('/api/dsh-diagrams/export', { session: 'session-diagrams', id: 'auth-flow', format: 'mmd' })).json()
+  check('diagrams: export lands in the workspace', export1.ok === true && existsSync(path.join(diagramsWorkspace, export1.path)))
+  check('diagrams: a second export never clobbers the first', export2.path !== export1.path && existsSync(path.join(diagramsWorkspace, export1.path)))
+  check('diagrams: export refuses an unknown format', (await post('/api/dsh-diagrams/export', { session: 'session-diagrams', id: 'auth-flow', format: 'exe' })).status, 400)
+
+  // --- TikZ: compiled when the host has an engine, stored either way
+  const tikz = await tool('diagram_write').execute(
+    { kind: 'tikz', title: 'Layers', source: '\\node[draw,rounded corners,fill=blue!8] (a) {Client};\n\\node[draw,right=of a] (b) {API};\n\\draw[-{Latex[length=2mm]}] (a) -- (b);' },
+    exec,
+  )
+  if (healthBody.tex.available === true) {
+    check('diagrams: tikz compiles', tikz.view.status, 'ok')
+    check('diagrams: tikz compiles to an artifact', (await getJson('/api/dsh-diagrams/artifact', 'session=session-diagrams&id=layers&format=svg')).status, 200)
+    const pdf = await getJson('/api/dsh-diagrams/artifact', 'session=session-diagrams&id=layers&format=pdf')
+    check('diagrams: the PDF artifact is cached too', pdf.headers.get('content-type'), 'application/pdf')
+    const exported = await (await post('/api/dsh-diagrams/export', { session: 'session-diagrams', id: 'layers', format: 'svg' })).json()
+    check('diagrams: a compiled diagram exports its SVG', exported.ok === true && existsSync(path.join(diagramsWorkspace, exported.path)))
+    // A compile error is reported against the wrapped document.
+    const badTikz = await tool('diagram_write').execute({ kind: 'tikz', id: 'bad-tikz', source: '\\draw (a) -- (nowhere);' }, exec)
+    check('diagrams: a broken tikz is reported', badTikz.view.status, 'error')
+    check('diagrams: the compiler line reaches the model', /diagram\.tex:\d+|Package pgf Error/.test(badTikz.diagnostics.map((entry) => entry.text).join('\n')), true)
+  } else {
+    console.log('skip diagrams tikz compile          (no TeX engine on this host)')
+    check('diagrams: tikz is stored without an engine', tikz.view.status, 'unavailable')
+  }
+
+  const removed = await tool('diagram_delete').execute({ id: 'layers' }, exec)
+  check('diagrams: delete removes the diagram', removed.deleted, true)
+  const afterDelete = await (await getJson('/api/dsh-diagrams/state', 'session=session-diagrams')).json()
+  check('diagrams: the state no longer lists it', afterDelete.diagrams.some((entry) => entry.id === 'layers'), false)
+
+  // --- the child validator itself: a parse error is a verdict, not a crash
+  const { spawnSync } = await import('node:child_process')
+  const child = spawnSync(
+    process.execPath,
+    [path.join(repo, 'packages/dsh-diagrams/lib/mermaid-check.mjs'), '-'],
+    { input: 'flowchart TD\n  A[Start --> B{{{', encoding: 'utf8' },
+  )
+  const verdict = JSON.parse(child.stdout.trim().split('\n').pop())
+  check('diagrams: the validator exits cleanly', child.status, 0)
+  check('diagrams: the validator calls a broken diagram a parse error', verdict.reason, 'parse')
+} finally {
+  if (previousDshHome === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = previousDshHome
+  await fsp.rm(diagramsHome, { recursive: true, force: true })
+  await fsp.rm(diagramsWorkspace, { recursive: true, force: true })
+}
+
 console.log('')
 console.log(failures === 0 ? 'all node-route checks passed' : failures + ' check(s) FAILED')
 process.exitCode = failures === 0 ? 0 : 1

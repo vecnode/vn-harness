@@ -1,0 +1,32 @@
+{
+  "name": "dsh-diagrams",
+  "version": "0.1.0-alpha.2",
+  "description": "Diagrams (row `dsh-diagrams`, tab kinds `diagram` / `diagrams`): Mermaid and TikZ LaTeX diagrams as a first-class vn-harness surface. The model gets four tools (diagram_write/patch/read/delete) that validate every diagram on the host - Mermaid is parsed headlessly by the same vendored engine the browser renders with, TikZ is compiled by the machine's own TeX engine - plus two bundled skills that teach Mermaid and TikZ craft. Each diagram becomes a real right-bar tab with a rendered view, a source drawer and an export menu, and every tool call renders the diagram inline in the conversation with a link that opens that tab. State is per-conversation and survives restarts; artifacts are content-addressed and cached. No core patches, no fork, no npm dependencies, no network. Alpha.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "skills",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-tool",
+        "dsh-rightbar"
+      ]
+    }
+  },
+  "license": "MIT"
+}

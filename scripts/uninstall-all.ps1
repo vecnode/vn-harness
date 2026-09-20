@@ -226,9 +226,37 @@ function Get-InstalledBundles {
     return @($json.dsh.profile.bundles)
 }
 
-function Remove-From-Profile {
+# ---------------------------------------------------------------------------
+# Skills a bundle shipped
+# ---------------------------------------------------------------------------
+<#
+    Remove the skill folders this installer copied into <DshHome>/skills.
+
+    Only folders carrying this installer's marker for that package are touched,
+    so a skill a person wrote - or took over by deleting the marker - is never
+    deleted.
+#>
+function Remove-PackSkills {
     param($Target, $Packages)
-    $installed = Get-InstalledBundles -ProfileDir $Target.ProfileDir
+    $skillsRoot = Join-Path $Target.DshHome 'skills'
+    if (-not (Test-Path $skillsRoot)) { return }
+    $removed = @()
+    foreach ($pkg in $Packages) {
+        $skillsDir = Join-Path $pkg.Folder 'skills'
+        if (-not (Test-Path $skillsDir)) { continue }
+        foreach ($skill in (Get-ChildItem $skillsDir -Directory | Sort-Object Name)) {
+            $dest = Join-Path $skillsRoot $skill.Name
+            $marker = Join-Path $dest ('.vn-harness-' + $pkg.Name)
+            if (-not (Test-Path $marker)) { continue }
+            Remove-Item -Path $dest -Recurse -Force
+            $removed += $skill.Name
+        }
+    }
+    if ($removed.Count -gt 0) { Write-Host "  - skills: removed $($removed -join ', ') from $skillsRoot" }
+}
+
+function Remove-From-Profile {
+    param($Target, $Packages)    $installed = Get-InstalledBundles -ProfileDir $Target.ProfileDir
     Write-Host ''
     Write-Step "Target: $($Target.Label) - profile '$($Target.Profile)' at $($Target.ProfileDir)"
     if (-not (Test-Path $Target.ProfileDir)) { Write-Host '  (profile not present - nothing to do)'; return }
@@ -265,6 +293,7 @@ $packages = Get-Packages
 
 $web = Resolve-WebTarget -HomeDir $DshHome -Profile $ProfileName
 Remove-From-Profile -Target $web -Packages $packages
+Remove-PackSkills -Target $web -Packages $packages
 
 Write-Host ''
 Write-Step 'Uninstall finished. Restart the CLI app afterwards.'

@@ -1,0 +1,9 @@
+{
+  "name": "dsh-diagrams-vendor",
+  "private": true,
+  "description": "Build root for the vendored Mermaid engine. Run `node build.mjs` from this folder (see packages/dsh-diagrams/README.md).",
+  "type": "module",
+  "dependencies": {
+    "mermaid": "11.17.2"
+  }
+}
