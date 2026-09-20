@@ -1,4 +1,4 @@
-# dsh-diagrams (alpha.4)
+# dsh-diagrams (alpha.6)
 
 **Mermaid and TikZ diagrams as a first-class surface of the harness**: the model
 writes them as tools, the host validates every write with a real parser or a
@@ -6,21 +6,71 @@ real TeX engine, they render inline in the conversation, and each one lives in
 its own right-bar tab with a zoom ladder, a source drawer and an export menu
 that saves to the Desktop of the machine running the harness.
 
+A diagram can live in **two places**. By default it belongs to the conversation
+that drew it; publish it and it joins the **LIBRARY**, one shared store every
+conversation reads, whose address names no conversation
+(`dsh-resource://diagram/library/<id>`) - so `jepa-model` means the same diagram
+in every chat, and survives the chat it was drawn in.
+
 - Row `diagrams`, bundle `dsh-diagrams`, tab kinds `diagram` (one tab per
-  diagram) and `diagrams` (the conversation index, reachable from the tab
-  strip's `+` / **Start** page).
+  diagram, in either scope) and `diagrams` (the index, reachable from the tab
+  strip's `+` / **Start** page, showing the library and this conversation).
 - Tools: `diagram_write`, `diagram_patch`, `diagram_read`, `diagram_verify`,
-  `diagram_delete`.
+  `diagram_publish`, `diagram_delete` - each taking an optional `scope`
+  (`conversation` | `library`), and each resolving a bare id in the LIBRARY
+  first.
 - Skills: `mermaid-diagrams`, `tikz-diagrams` (authored in `skills/`, copied
   into `$DSH_HOME/skills` by the installer), each with a
   `reference/complex-diagrams.md` for pictures too big for the syntax summary.
 - No core patch, no forked bundle, no npm dependency, **no network**.
 
-Alpha. `0.1.0-alpha.4`.
+Alpha. `0.1.0-alpha.6`.
 
 ---
 
 ## 0. What changed in this alpha
+
+### alpha.6
+
+**The library, and the model can cite it.** A diagram was owned by the
+conversation that drew it, and only by that one. There is now a second scope:
+one file for the whole harness (`$DSH_HOME/dsh-diagrams/library.json`), written
+by the same store class - same caps, same atomic write, same render reports -
+with a fixed file name instead of one per conversation.
+
+- `diagram_write { scope: "library" }` writes straight into it, and
+  `diagram_publish { id }` copies a conversation diagram in (one call, no
+  source round-trip; an id the library already holds is replaced).
+- Every read resolves a **bare id in the library first**, then this
+  conversation, so `diagram_read { id: "jepa-model" }` finds the shared diagram
+  from a chat that never saw it written - and says which scope it found it in.
+  `diagram_read` with no id lists both halves.
+- The address is `dsh-resource://diagram/library/<id>`: it names no
+  conversation, which is what makes a citation durable and what lets one tab be
+  opened from anywhere. The `diagram` tab type claims that address too.
+- The index page shows both halves, library first; the state route carries the
+  library with every conversation's diagrams (so the client needs no second
+  store); the artifact, export, diagram and render-report routes all take a
+  `scope`.
+- Two things had to be careful: a **panel edit writes back where the diagram
+  already is** (without that, editing a library diagram in its tab would have
+  quietly created a conversation-only second copy), and **deleting a diagram no
+  longer drops its cached artifact blindly**, because the cache is
+  content-addressed and shared - an identical diagram elsewhere is the same
+  file.
+
+### alpha.5
+
+Two fixes in how a verdict is shaped, both found by using the plugin: a key that
+is only sometimes meaningful must be **absent**, never `null` or `undefined`.
+`reported: null` against a schema declaring `integer` made every FRESH write
+fail output validation ("must be an integer"), and `error: undefined` on a drawn
+verdict failed the registry's lossless-JSON rule, which made every diagram the
+browser had RENDERED unreadable to the model. The tracked check now validates
+every tool result against the schema the tool declares, which is the gap that
+let both through.
+
+### alpha.4
 
 ### alpha.4
 
@@ -185,15 +235,16 @@ a profile whose host row is not mounted.
 ## 2. What the model gets
 
 Five tools with raw JSON-Schema parameters (the registry validates both the
-arguments and the returned canonical value):
+arguments and the returned canonical value), plus `diagram_publish`:
 
 | Tool | Purpose |
 |---|---|
-| `diagram_write` | create or replace one diagram (`kind`, `source`, optional `id`, `title`, `note`) and validate it |
+| `diagram_write` | create or replace one diagram (`kind`, `source`, optional `id`, `title`, `scope`, `note`) and validate it |
 | `diagram_patch` | literal `oldString`/`newString` replacement inside one diagram - the cheap iteration path for a long TikZ picture; ambiguous matches are refused (`AMBIGUOUS`), a miss is refused (`NO_MATCH`) |
-| `diagram_read` | one diagram's full source plus its last diagnostics, warnings and browser verdict, or the index of the conversation |
+| `diagram_read` | one diagram's full source plus its last diagnostics, warnings and browser verdict, or both indexes (library and conversation) |
 | `diagram_verify` | re-validate the stored source without writing: it never bumps the revision and never discards the browser's render report |
-| `diagram_delete` | remove one diagram and drop its cached artifacts |
+| `diagram_publish` | copy a conversation diagram into the shared LIBRARY, so every chat can read it and cite its id |
+| `diagram_delete` | remove one diagram from whichever scope holds it |
 
 Two rules make this more than a text box:
 
@@ -266,15 +317,15 @@ delete - is a **POST**.
 | Route | Behavior |
 |---|---|
 | `GET /health` | the vendored Mermaid version, the TeX capability (`engine`, `svg`, `png`), cache entry count. `?refresh=1` re-probes the engines |
-| `GET /state?session=` | the conversation's diagram index (source + revision + warnings + last render report) + the capability block |
-| `GET /diagram?session=&id=` | one diagram, source included |
-| `POST /diagram` | create/replace (`{session, id?, kind?, title?, source, create?, recompile?}`), or delete (`{session, id, delete: true}`). Used by the panel; the model goes through the tools |
-| `GET /artifact?session=&id=&format=` | `svg`/`png`/`pdf`/`tex` from the cache (Mermaid: `mmd`/`source` only - its picture exists in the browser) |
+| `GET /state?session=` | the conversation's diagrams **and the shared library** (each with source, revision, scope, warnings and last render report) + the capability block |
+| `GET /diagram?session=&id=&scope=` | one diagram, source included. Without `scope` the id resolves library-first |
+| `POST /diagram` | create/replace (`{session, id?, kind?, title?, source, scope?, create?, recompile?}`), or delete (`{session, id, scope?, delete: true}`). Used by the panel; the model goes through the tools |
+| `GET /artifact?session=&id=&scope=&format=` | `svg`/`png`/`pdf`/`tex` from the cache (Mermaid: `mmd`/`source` only - its picture exists in the browser) |
 | `POST /export` | save one format to the **Desktop** of the machine running the harness, create-exclusively, and answer with the absolute path, the folder and the name it wrote |
-| `POST /render-report` | what the BROWSER did with one revision (`{session, id, revision, ok, phase?, error?, theme?, ms?}`). Deliberately forgiving: a report about a deleted diagram or an older revision answers 200, because a verification channel must not fail loudly |
+| `POST /render-report` | what the BROWSER did with one revision (`{session, id, scope?, revision, ok, phase?, error?, theme?, ms?}`). Deliberately forgiving: a report about a deleted diagram or an older revision answers 200, because a verification channel must not fail loudly |
 | `GET /vendor/mermaid.js` | the vendored engine (ETag, immutable) |
 
-### State: one file per conversation
+### State: one file per conversation, and one for the library
 
 `$DSH_HOME/dsh-diagrams/sessions/<session>.json` - `{order, diagrams{id →
 {kind, title, source, status, diagnostics, warnings, render, artifact, revision,
@@ -282,6 +333,14 @@ history}}}`, one atomic write per change, capped (64 diagrams, 256 KiB per
 source, 4 MiB of source per conversation, 16 MiB per file). The browser reads it
 through the routes; the model reads it through `diagram_read`, which is what
 makes a diagram survive compaction, a reload or the browser closing.
+
+`$DSH_HOME/dsh-diagrams/library.json` is the **same shape in one file** for the
+whole harness, written by the same class with a fixed name instead of a name per
+conversation. It has its own 4 MiB source budget, its own render reports and its
+own revisions, so the library copy of a diagram is an independent entry that
+happens to share its source - and therefore its artifact, because the cache is
+content-addressed. Nothing about a conversation leaks into it: the file knows no
+session.
 
 `render` is the browser's own report about the revision it drew
 (`{revision, ok, phase, error, theme, at}`), stored by `recordRender` and read

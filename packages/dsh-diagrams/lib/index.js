@@ -66,6 +66,18 @@ const TIKZ_RENDERER_VERSION = '1'
 /** Files each kind may export. */
 const EXPORT_FORMATS = { mermaid: ['mmd', 'md', 'svg', 'png'], tikz: ['tex', 'pdf', 'svg', 'png'] }
 /**
+ * The two places a diagram can live.
+ *
+ * `conversation` is per-chat and is the default for a write: a diagram drawn to
+ * answer a question should not land in a shared namespace. `library` is ONE file
+ * for the whole harness, so a diagram published there is the same diagram in
+ * every conversation - which is what makes its id citable from a chat that never
+ * saw it being written, and what makes it outlive the chat it came from.
+ */
+const LIBRARY_SCOPE = 'library'
+/** The scope names a caller may pass. */
+const SCOPES = ['conversation', 'library']
+/**
  * How many names one export may try before it gives up. An export always lands
  * on the Desktop of the machine running the harness - the same place the
  * screenshot control writes - and never in the conversation folder: a diagram is
@@ -437,17 +449,19 @@ export function tikzDegenerateReason(source) {
  * Mermaid produces no host artifact (the browser renders it from the source,
  * live and themed); TikZ produces the cached PDF/SVG/PNG the UI draws.
  *
- * @param deps - `{ store, cache, enginesNow }`.
- * @param sessionId - the conversation id.
+ * @param deps - `{ storeFor, cache, enginesNow }`.
+ * @param scopeKey - where the diagram lives: a conversation id, or
+ *   {@link LIBRARY_SCOPE} for the shared library.
  * @param entry - the stored diagram.
  * @param options - `{ signal, force }`.
  * @returns the verdict `{ status, diagramType, diagnostics, artifact, ms, cached }`.
  */
-async function checkAndRecord(deps, sessionId, entry, { signal, force = false } = {}) {
+async function checkAndRecord(deps, scopeKey, entry, { signal, force = false } = {}) {
+  const store = deps.storeFor(scopeKey)
   const started = Date.now()
   if (entry.kind === 'mermaid') {
     const verdict = await checkMermaid(entry.source, { signal })
-    const stored = deps.store.recordVerdict(sessionId, entry.id, {
+    const stored = store.recordVerdict(scopeKey, entry.id, {
       status: verdict.status,
       diagramType: verdict.diagramType ?? null,
       diagnostics: verdict.diagnostics,
@@ -461,7 +475,7 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
   // in words instead of being handed on as an empty panel.
   const degenerate = tikzDegenerateReason(entry.source)
   if (degenerate) {
-    const stored = deps.store.recordVerdict(sessionId, entry.id, {
+    const stored = store.recordVerdict(scopeKey, entry.id, {
       status: 'error',
       diagramType: null,
       diagnostics: [{ kind: 'source', text: degenerate }],
@@ -472,7 +486,7 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
 
   const engines = deps.enginesNow()
   if (!engines.available) {
-    const stored = deps.store.recordVerdict(sessionId, entry.id, {
+    const stored = store.recordVerdict(scopeKey, entry.id, {
       status: 'unavailable',
       diagramType: null,
       diagnostics: [{ kind: 'engine', text: 'No TeX engine found on this host (looked for pdflatex, xelatex, lualatex).' }],
@@ -509,7 +523,7 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
     const cachedDiagnostics = Array.isArray(cachedMeta.diagnostics) ? cachedMeta.diagnostics : []
     const cachedStatus = cachedDiagnostics.length > 0 ? 'error' : 'ok'
     const warnings = tikzWarnings({ source: normalized.document, meta: cachedMeta, diagnostics: cachedDiagnostics })
-    const stored = deps.store.recordVerdict(sessionId, entry.id, {
+    const stored = store.recordVerdict(scopeKey, entry.id, {
       status: cachedStatus,
       diagramType: 'tikz',
       diagnostics: cachedDiagnostics,
@@ -572,7 +586,7 @@ async function checkAndRecord(deps, sessionId, entry, { signal, force = false } 
       at: meta.at,
     }
   }
-  const stored = deps.store.recordVerdict(sessionId, entry.id, { status, diagramType: 'tikz', diagnostics, warnings, artifact })
+  const stored = store.recordVerdict(scopeKey, entry.id, { status, diagramType: 'tikz', diagnostics, warnings, artifact })
   return { ok: status === 'ok', status, diagramType: 'tikz', diagnostics, warnings, artifact: stored.artifact, ms: Date.now() - started }
 }
 
@@ -723,6 +737,16 @@ export function registerSkills(ctx, log) {
 const ID_SCHEMA = { type: 'string', description: 'The diagram id (lowercase letters, digits and dashes).' }
 /** JSON Schema for a diagram kind. */
 const KIND_SCHEMA = { type: 'string', enum: [...KINDS], description: 'mermaid | tikz' }
+/**
+ * JSON Schema for the scope a diagram lives in - the argument that decides
+ * whether a diagram belongs to one chat or to every chat.
+ */
+const SCOPE_SCHEMA = {
+  type: 'string',
+  enum: SCOPES,
+  description:
+    '"conversation" (the default) keeps the diagram in this chat. "library" puts it in ONE shared store that every conversation reads, which is what you want for a diagram worth citing by id later - a reference picture, a model diagram, an architecture figure - because the library address names no conversation and survives this chat.',
+}
 /** The durable, UI-facing shape one write/patch returns. */
 const VIEW_SCHEMA = {
   type: 'object',
@@ -731,6 +755,7 @@ const VIEW_SCHEMA = {
     kind: { type: 'string' },
     title: { type: 'string' },
     status: { type: 'string' },
+    scope: { type: 'string', enum: SCOPES },
     diagramType: { type: 'string' },
     address: { type: 'string' },
     lines: { type: 'integer' },
@@ -752,7 +777,7 @@ const VIEW_SCHEMA = {
       required: ['state', 'revision'],
     },
   },
-  required: ['id', 'kind', 'title', 'status', 'address', 'verification'],
+  required: ['id', 'kind', 'title', 'status', 'scope', 'address', 'verification'],
 }
 /** Diagnostics array shared by the write/patch output schemas. */
 const DIAGNOSTICS_SCHEMA = {
@@ -766,13 +791,14 @@ function writeDescription(engines) {
     ? 'TikZ diagrams are compiled on this host by ' + engines.engine + ', and the first compile error comes straight back to you.'
     : 'This host has NO TeX engine, so a TikZ diagram is stored and returned as .tex but cannot be compiled or previewed here.'
   return [
-    'Create or replace ONE diagram in this conversation and validate it immediately.',
+    'Create or replace ONE diagram and validate it immediately. By default it belongs to this conversation; pass `scope: "library"` to put it in the SHARED library instead.',
     '',
     'kind "mermaid": the source is Mermaid text (flowchart, sequenceDiagram, classDiagram, stateDiagram-v2, erDiagram, gantt, pie, mindmap, timeline, quadrantChart, journey, ...). It is parsed exactly as written; a parse error returns the offending line.',
     'kind "tikz": the source is TikZ/LaTeX. A bare body of TikZ commands, one picture environment, or a complete document are all accepted - a preamble with the standard libraries (arrows.meta, positioning, shapes.geometric, shapes.misc, calc, fit, backgrounds, matrix, chains, decorations, patterns, quotes, angles, intersections, pgfplots) is supplied for you, and leading \\usepackage / \\usetikzlibrary / \\tikzset lines are moved into it.',
     engineLine,
     '',
     'Pass `id` to replace an existing diagram (check it with diagram_read first); omit it to create a new one, whose id is derived from the title.',
+    'Pass `scope: "library"` when the diagram is worth keeping beyond this chat: the library is ONE store every conversation reads, its address (`dsh-resource://diagram/library/<id>`) names no conversation, and any later chat can read it by id alone. Keep scratch diagrams in the conversation (the default) so the shared library stays worth reading.',
     'Always read the returned `status` and `diagnostics`, and fix the diagram until the status is "ok". A diagram the user cannot see is a failed call.',
     '',
     'The result carries three separate things, and they answer different questions:',
@@ -792,24 +818,53 @@ function writeDescription(engines) {
  * @returns the tool definitions.
  */
 export function buildTools(deps) {
-  const { store } = deps
-
   /** The acting conversation of one tool run. */
   const sessionOf = (exec) => {
     const session = exec && exec.agent && exec.agent.session
     if (!session || typeof session.id !== 'string') throw new Error('diagram tools require an owning agent session')
     return session.id
   }
-  /** The address the right bar opens this diagram with. */
-  const addressOf = (sessionId, id) => 'dsh-resource://diagram/session/' + sessionId + '/' + id
+  /** The store key of a scope: a conversation id, or the library's one key. */
+  const keyFor = (sessionId, scope) => (scope === 'library' ? LIBRARY_SCOPE : sessionId)
+  /** The scope name a store key stands for. */
+  const scopeOf = (scopeKey) => (scopeKey === LIBRARY_SCOPE ? 'library' : 'conversation')
+  /**
+   * The address the right bar opens this diagram with.
+   *
+   * The library address deliberately names NO conversation: that is what makes
+   * it citable from any chat and durable after this one ends.
+   */
+  const addressOf = (scopeKey, id) =>
+    scopeKey === LIBRARY_SCOPE ? 'dsh-resource://diagram/library/' + id : 'dsh-resource://diagram/session/' + scopeKey + '/' + id
+  /**
+   * Where one id lives: the scope the caller named, or - with none named - the
+   * LIBRARY first, then this conversation. The library wins because it is the
+   * citable namespace: "read jepa-model" has to mean the shared diagram even
+   * when a scratch diagram in this chat happens to share the id.
+   */
+  const locate = (sessionId, id, scope) => {
+    if (scope === 'library') {
+      const entry = deps.library.get(LIBRARY_SCOPE, id)
+      return entry ? { scopeKey: LIBRARY_SCOPE, entry } : null
+    }
+    if (scope === 'conversation') {
+      const entry = deps.store.get(sessionId, id)
+      return entry ? { scopeKey: sessionId, entry } : null
+    }
+    const shared = deps.library.get(LIBRARY_SCOPE, id)
+    if (shared) return { scopeKey: LIBRARY_SCOPE, entry: shared }
+    const local = deps.store.get(sessionId, id)
+    return local ? { scopeKey: sessionId, entry: local } : null
+  }
   /** The durable, UI-facing projection of one stored diagram. */
-  const viewOf = (sessionId, entry) => ({
+  const viewOf = (scopeKey, entry) => ({
     id: entry.id,
     kind: entry.kind,
     title: entry.title,
     status: entry.status,
+    scope: scopeOf(scopeKey),
     diagramType: entry.diagramType ?? '',
-    address: addressOf(sessionId, entry.id),
+    address: addressOf(scopeKey, entry.id),
     lines: entry.source.length === 0 ? 0 : entry.source.split('\n').length,
     bytes: Buffer.byteLength(entry.source, 'utf8'),
     warnings: entry.warnings ?? [],
@@ -834,9 +889,10 @@ export function buildTools(deps) {
       )
     }
     if (verification.state === 'stale') {
+      const about = verification.reported === undefined ? 'a report with no revision' : 'revision ' + verification.reported
       return (
-        'Browser: stale - the newest report is about revision ' +
-        verification.reported +
+        'Browser: stale - the newest report is about ' +
+        about +
         (entry.render && entry.render.at ? ' (at ' + entry.render.at + ')' : '') +
         ', but the current revision is ' +
         verification.revision +
@@ -860,8 +916,11 @@ export function buildTools(deps) {
   /** The advisory findings, as text lines. */
   const warningLines = (entry) => (entry.warnings ?? []).map((warning) => '  ! ' + warning.text)
   /** Model-facing text for one finished write/patch. */
-  const resultText = (verb, sessionId, entry, verdict) => {
+  const resultText = (verb, scopeKey, entry, verdict) => {
     const lines = [verb + ' diagram "' + entry.id + '" (' + entry.kind + ') - status: ' + verdict.status + '.']
+    if (scopeKey === LIBRARY_SCOPE) {
+      lines.push('It lives in the shared LIBRARY, so this id is the same diagram in every conversation.')
+    }
     if (verdict.status === 'ok') {
       if (entry.kind === 'mermaid') {
         lines.push('It parses as a ' + (verdict.diagramType ?? 'diagram') + ' and is rendering in the conversation and in its own tab.')
@@ -886,7 +945,7 @@ export function buildTools(deps) {
       lines.push('Advisory (the diagram is still valid - these are judgement calls, fix them only if they are wrong):')
       for (const warning of warnings) lines.push(warning)
     }
-    lines.push('Tab address: ' + addressOf(sessionId, entry.id))
+    lines.push('Tab address: ' + addressOf(scopeKey, entry.id))
     if (entry.kind === 'tikz' && verdict.status !== 'ok' && verdict.artifact) {
       lines.push('(A best-effort render of the failing document is cached and shown, flagged as errored.)')
     }
@@ -917,6 +976,7 @@ export function buildTools(deps) {
         kind: KIND_SCHEMA,
         source: { type: 'string', description: 'The complete diagram source (Mermaid text, or TikZ/LaTeX).' },
         id: ID_SCHEMA,
+        scope: SCOPE_SCHEMA,
         title: { type: 'string', description: 'A short human title; the tab chip and the diagram list show it.' },
         note: { type: 'string', description: 'One line on what changed, kept in the diagram history.' },
       },
@@ -934,7 +994,9 @@ export function buildTools(deps) {
     presentResult: resultView,
     async execute(args, exec) {
       const sessionId = sessionOf(exec)
-      const entry = store.write(sessionId, {
+      const scopeKey = keyFor(sessionId, args.scope)
+      const target = deps.storeFor(scopeKey)
+      const entry = target.write(scopeKey, {
         id: typeof args.id === 'string' && args.id.length > 0 ? args.id : undefined,
         kind: String(args.kind),
         title: typeof args.title === 'string' ? args.title : undefined,
@@ -942,9 +1004,9 @@ export function buildTools(deps) {
         by: 'model',
         note: typeof args.note === 'string' ? args.note : undefined,
       })
-      const verdict = await checkAndRecord(deps, sessionId, entry, { signal: exec.signal })
-      const fresh = store.get(sessionId, entry.id)
-      return { text: resultText('Wrote', sessionId, fresh, verdict), view: viewOf(sessionId, fresh), diagnostics: verdict.diagnostics ?? [] }
+      const verdict = await checkAndRecord(deps, scopeKey, entry, { signal: exec.signal })
+      const fresh = target.get(scopeKey, entry.id)
+      return { text: resultText('Wrote', scopeKey, fresh, verdict), view: viewOf(scopeKey, fresh), diagnostics: verdict.diagnostics ?? [] }
     },
   }
   const patch = {
@@ -952,6 +1014,7 @@ export function buildTools(deps) {
     description: [
       'Replace a literal string inside ONE existing diagram\'s source and re-validate the whole diagram.',
       'Use this instead of rewriting a diagram when only part of it changes: it is far cheaper than re-emitting a long TikZ picture.',
+      'The id is looked up in the LIBRARY first and then in this conversation, so a shared diagram can be patched by id from any chat; pass `scope` to be explicit.',
       '`oldString` must appear exactly once unless `replaceAll` is true; the call is refused with NO_MATCH or AMBIGUOUS otherwise, so a wrong edit never silently corrupts the picture.',
     ].join('\n'),
     parameters: {
@@ -963,6 +1026,7 @@ export function buildTools(deps) {
         oldString: { type: 'string', description: 'The exact text to replace.' },
         newString: { type: 'string', description: 'The replacement text (empty deletes it).' },
         replaceAll: { type: 'boolean', description: 'Replace every occurrence instead of requiring uniqueness.' },
+        scope: SCOPE_SCHEMA,
         note: { type: 'string', description: 'One line on what changed, kept in the diagram history.' },
       },
     },
@@ -984,7 +1048,10 @@ export function buildTools(deps) {
     presentResult: resultView,
     async execute(args, exec) {
       const sessionId = sessionOf(exec)
-      const { entry, occurrences } = store.patch(sessionId, {
+      const target = locate(sessionId, String(args.id), args.scope)
+      if (!target) throw new Error('No diagram "' + String(args.id) + '" in the library or in this conversation.')
+      const scopeKey = target.scopeKey
+      const { entry, occurrences } = deps.storeFor(scopeKey).patch(scopeKey, {
         id: String(args.id),
         oldString: String(args.oldString ?? ''),
         newString: String(args.newString ?? ''),
@@ -992,11 +1059,11 @@ export function buildTools(deps) {
         by: 'model',
         note: typeof args.note === 'string' ? args.note : undefined,
       })
-      const verdict = await checkAndRecord(deps, sessionId, entry, { signal: exec.signal })
-      const fresh = store.get(sessionId, entry.id)
+      const verdict = await checkAndRecord(deps, scopeKey, entry, { signal: exec.signal })
+      const fresh = deps.storeFor(scopeKey).get(scopeKey, entry.id)
       return {
-        text: resultText('Patched', sessionId, fresh, verdict) + '\nReplaced ' + occurrences + ' occurrence(s).',
-        view: viewOf(sessionId, fresh),
+        text: resultText('Patched', scopeKey, fresh, verdict) + '\nReplaced ' + occurrences + ' occurrence(s).',
+        view: viewOf(scopeKey, fresh),
         occurrences,
         diagnostics: verdict.diagnostics ?? [],
       }
@@ -1006,9 +1073,9 @@ export function buildTools(deps) {
   const read = {
     name: 'diagram_read',
     description: [
-      'Read the diagrams of this conversation.',
-      'With `id`: that diagram\'s complete source, kind, status, last diagnostics, the advisory warnings, and what the BROWSER reported about this revision (drawn / failed / stale / pending) plus the exact address of its tab.',
-      'Without `id`: the index of every diagram (id, kind, title, status, size, last update).',
+      'Read the diagrams available here: the SHARED LIBRARY and this conversation.',
+      'With `id`: that diagram\'s complete source, kind, scope, status, last diagnostics, the advisory warnings, and what the BROWSER reported about this revision (drawn / failed / stale / pending) plus the exact address of its tab. The id is looked up in the LIBRARY first and then in this conversation, so a diagram published from another chat is readable by id alone.',
+      'Without `id`: both indexes - every library diagram (shared by every conversation) and every diagram of this conversation.',
       'Read before patching or replacing a diagram you did not just write - your context may have been compacted since.',
     ].join('\n'),
     parameters: {
@@ -1016,6 +1083,7 @@ export function buildTools(deps) {
       additionalProperties: false,
       properties: {
         id: ID_SCHEMA,
+        scope: SCOPE_SCHEMA,
         includeSource: { type: 'boolean', description: 'With an id, pass false for a status-only answer. Defaults to true.' },
       },
     },
@@ -1027,6 +1095,7 @@ export function buildTools(deps) {
           id: { type: 'string' },
           kind: { type: 'string' },
           status: { type: 'string' },
+          scope: { type: 'string', enum: SCOPES },
           address: { type: 'string' },
           verification: { type: 'object', properties: { state: { type: 'string' } }, required: ['state'] },
         },
@@ -1038,18 +1107,33 @@ export function buildTools(deps) {
     execute(args, exec) {
       const sessionId = sessionOf(exec)
       if (typeof args.id === 'string' && args.id.length > 0) {
-        const entry = store.get(sessionId, args.id)
-        if (!entry) {
-          const known = store.ids(sessionId)
+        const found = locate(sessionId, args.id, args.scope)
+        if (!found) {
+          const known = [...deps.library.ids(LIBRARY_SCOPE), ...deps.store.ids(sessionId)]
           return {
             text:
               'No diagram "' +
               args.id +
-              '" in this conversation.' +
-              (known.length > 0 ? ' Known ids: ' + known.join(', ') + '.' : ' No diagrams yet.'),
+              '" in the library or in this conversation.' +
+              (known.length > 0 ? ' Known ids: ' + known.join(', ') + '.' : ' Nothing here yet.'),
           }
         }
-        const header = ['Diagram "' + entry.id + '" (' + entry.kind + '), status: ' + entry.status + (entry.title ? ', title: ' + entry.title : '') + '.']
+        const scopeKey = found.scopeKey
+        const entry = found.entry
+        const address = addressOf(scopeKey, entry.id)
+        const where = scopeKey === LIBRARY_SCOPE ? 'the shared library' : 'this conversation'
+        const header = [
+          'Diagram "' +
+            entry.id +
+            '" (' +
+            entry.kind +
+            ', in ' +
+            where +
+            '), status: ' +
+            entry.status +
+            (entry.title ? ', title: ' + entry.title : '') +
+            '.',
+        ]
         if (entry.diagnostics && entry.diagnostics.length > 0) {
           header.push('Last diagnostics:')
           for (const diagnostic of entry.diagnostics) header.push('  - ' + diagnostic.text)
@@ -1060,52 +1144,52 @@ export function buildTools(deps) {
           header.push('Advisory (valid, but worth a look):')
           for (const warning of warnings) header.push(warning)
         }
-        header.push('Tab address: ' + addressOf(sessionId, entry.id))
-        if (args.includeSource === false) {
-          return {
-            text: header.join('\n'),
-            id: entry.id,
-            kind: entry.kind,
-            status: entry.status,
-            address: addressOf(sessionId, entry.id),
-            verification: verificationOf(entry),
-          }
-        }
-        const body = '---8<--- source ---8<---\n' + entry.source + '\n---8<--- end source ---8<---'
-        return {
-          text: header.join('\n') + '\n\n' + body,
+        header.push('Tab address: ' + address)
+        const fields = {
           id: entry.id,
           kind: entry.kind,
           status: entry.status,
-          address: addressOf(sessionId, entry.id),
+          scope: scopeOf(scopeKey),
+          address,
           verification: verificationOf(entry),
         }
+        if (args.includeSource === false) return { text: header.join('\n'), ...fields }
+        const body = '---8<--- source ---8<---\n' + entry.source + '\n---8<--- end source ---8<---'
+        return { text: header.join('\n') + '\n\n' + body, ...fields }
       }
-      const listed = store.list(sessionId)
-      if (listed.diagrams.length === 0) {
-        return { text: 'This conversation has no diagrams yet. Write one with diagram_write (kind "mermaid" or "tikz").' }
+      // No id: both indexes, the library first, because that is the half that is
+      // the same in every conversation.
+      const shared = deps.library.list(LIBRARY_SCOPE)
+      const local = deps.store.list(sessionId)
+      if (shared.diagrams.length === 0 && local.diagrams.length === 0) {
+        return {
+          text:
+            'Nothing here yet: this conversation has no diagrams and the shared library is empty. Write one with diagram_write (kind "mermaid" or "tikz"), and pass scope: "library" when it should stay citable from other chats.',
+        }
       }
-      const lines = ['This conversation has ' + listed.diagrams.length + ' diagram(s):']
-      for (const entry of listed.diagrams) {
-        lines.push(
-          '  - ' +
-            entry.id +
-            ' [' +
-            entry.kind +
-            ', ' +
-            entry.status +
-            '] ' +
-            entry.title +
-            ' (' +
-            entry.lines +
-            ' line' +
-            (entry.lines === 1 ? '' : 's') +
-            ', updated ' +
-            entry.updatedAt +
-            ')',
-        )
-      }
-      lines.push('Read one with diagram_read { id } to get its source.')
+      const describe = (entry) =>
+        '  - ' +
+        entry.id +
+        ' [' +
+        entry.kind +
+        ', ' +
+        entry.status +
+        '] ' +
+        entry.title +
+        ' (' +
+        entry.lines +
+        ' line' +
+        (entry.lines === 1 ? '' : 's') +
+        ', updated ' +
+        entry.updatedAt +
+        ')'
+      const lines = ['Library (shared by every conversation - ' + shared.diagrams.length + ' diagram(s)' + (shared.diagrams.length === 0 ? ', empty' : '') + '):']
+      for (const entry of shared.diagrams) lines.push(describe(entry))
+      lines.push('')
+      lines.push('This conversation (' + local.diagrams.length + ' diagram(s)' + (local.diagrams.length === 0 ? ', none' : '') + '):')
+      for (const entry of local.diagrams) lines.push(describe(entry))
+      lines.push('')
+      lines.push('Read one with diagram_read { id }: a library id resolves from any conversation.')
       return { text: lines.join('\n') }
     },
   }
@@ -1118,9 +1202,10 @@ export function buildTools(deps) {
         'after a long gap in the conversation, or when you are about to build on a diagram whose last verdict you no longer trust.',
       'It re-parses a Mermaid diagram with the vendored engine and recompiles TikZ (through the artifact cache, so an unchanged document costs nothing), ' +
         'then reports the status, the diagnostics, the advisory warnings, and what the BROWSER last did with this revision.',
+      'The id is looked up in the LIBRARY first and then in this conversation, so a shared diagram can be re-checked from any chat; pass `scope` to be explicit.',
       'Unlike diagram_write it never bumps the revision and never invents an id, so it is always safe to call.',
     ].join('\n'),
-    parameters: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: ID_SCHEMA } },
+    parameters: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: ID_SCHEMA, scope: SCOPE_SCHEMA } },
     output: {
       schema: {
         type: 'object',
@@ -1128,6 +1213,7 @@ export function buildTools(deps) {
           text: { type: 'string' },
           id: { type: 'string' },
           status: { type: 'string' },
+          scope: { type: 'string', enum: SCOPES },
           diagnostics: DIAGNOSTICS_SCHEMA,
           verification: { type: 'object', properties: { state: { type: 'string' } }, required: ['state'] },
         },
@@ -1140,21 +1226,23 @@ export function buildTools(deps) {
     presentResult: resultView,
     async execute(args, exec) {
       const sessionId = sessionOf(exec)
-      const entry = store.get(sessionId, args.id)
-      if (!entry) {
-        const known = store.ids(sessionId)
+      const found = locate(sessionId, String(args.id), args.scope)
+      if (!found) {
+        const known = [...deps.library.ids(LIBRARY_SCOPE), ...deps.store.ids(sessionId)]
         return {
           text:
             'No diagram "' +
             String(args.id) +
-            '" in this conversation.' +
-            (known.length > 0 ? ' Known ids: ' + known.join(', ') + '.' : ' No diagrams yet.'),
+            '" in the library or in this conversation.' +
+            (known.length > 0 ? ' Known ids: ' + known.join(', ') + '.' : ' Nothing here yet.'),
           id: String(args.id),
           status: 'missing',
         }
       }
-      const verdict = await checkAndRecord(deps, sessionId, entry, { signal: exec.signal })
-      const fresh = store.get(sessionId, entry.id)
+      const scopeKey = found.scopeKey
+      const entry = found.entry
+      const verdict = await checkAndRecord(deps, scopeKey, entry, { signal: exec.signal })
+      const fresh = deps.storeFor(scopeKey).get(scopeKey, entry.id)
       const lines = ['Checked diagram "' + entry.id + '" (' + entry.kind + '), revision ' + entry.revision + ' - status: ' + verdict.status + '.']
       if (verdict.status === 'ok') {
         lines.push(
@@ -1170,21 +1258,94 @@ export function buildTools(deps) {
         lines.push('Advisory (valid, but worth a look):')
         for (const warning of warnings) lines.push(warning)
       }
-      lines.push('Tab address: ' + addressOf(sessionId, entry.id))
+      lines.push('Tab address: ' + addressOf(scopeKey, entry.id))
       return {
         text: lines.join('\n'),
         id: entry.id,
         status: verdict.status,
+        scope: scopeOf(scopeKey),
         diagnostics: verdict.diagnostics ?? [],
         verification: verificationOf(fresh),
       }
     },
   }
 
+  /**
+   * Publish one conversation diagram into the shared library.
+   *
+   * A separate verb rather than a flag on `diagram_write`, because the question
+   * it answers - should this outlive the chat? - is asked once, about a diagram
+   * that is already good, and is worth a name. The library keeps ONE diagram per
+   * id, so publishing an id it already holds replaces it.
+   */
+  const publish = {
+    name: 'diagram_publish',
+    description: [
+      'Copy one diagram from this conversation into the shared LIBRARY, so every conversation can read it and its id can be cited later.',
+      'The library address it returns (`dsh-resource://diagram/library/<id>`) names no conversation: it is the same diagram in every chat, and it survives this one.',
+      'Publishing an id the library already holds REPLACES it (one diagram per id), and the copy is validated on the way in. Check what is there with diagram_read { scope: "library" }.',
+      'Publish the diagrams worth citing - a reference figure, a model diagram, an architecture picture - and leave scratch work in the conversation.',
+    ].join('\n'),
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id'],
+      properties: {
+        id: { type: 'string', description: 'The id of a diagram in THIS conversation to publish into the library.' },
+        note: { type: 'string', description: 'One line on why it is being published, kept in the diagram history.' },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          text: { type: 'string' },
+          view: VIEW_SCHEMA,
+          address: { type: 'string' },
+          diagnostics: DIAGNOSTICS_SCHEMA,
+        },
+        required: ['text'],
+      },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+      presentationMeta: (_args, value) => value.view,
+    },
+    presentCall: (args) => callView(args, 'Publish'),
+    presentResult: resultView,
+    async execute(args, exec) {
+      const sessionId = sessionOf(exec)
+      const source = deps.store.get(sessionId, String(args.id))
+      if (!source) {
+        return {
+          text:
+            'No diagram "' +
+            String(args.id) +
+            '" in this conversation, so there is nothing to publish. Read the library with diagram_read { scope: "library" } to see what it already holds.',
+        }
+      }
+      const entry = deps.library.write(LIBRARY_SCOPE, {
+        id: source.id,
+        kind: source.kind,
+        title: source.title,
+        source: source.source,
+        by: 'model',
+        note: typeof args.note === 'string' ? args.note : 'published from a conversation',
+      })
+      const verdict = await checkAndRecord(deps, LIBRARY_SCOPE, entry, { signal: exec.signal })
+      const fresh = deps.library.get(LIBRARY_SCOPE, entry.id)
+      return {
+        text: resultText('Published', LIBRARY_SCOPE, fresh, verdict),
+        view: viewOf(LIBRARY_SCOPE, fresh),
+        address: addressOf(LIBRARY_SCOPE, fresh.id),
+        diagnostics: verdict.diagnostics ?? [],
+      }
+    },
+  }
+
   const remove = {
     name: 'diagram_delete',
-    description: 'Delete one diagram from this conversation. Its tab shows the diagram is gone; its cached artifacts are dropped.',
-    parameters: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: ID_SCHEMA } },
+    description:
+      'Delete one diagram. The id is looked up in the LIBRARY first and then in this conversation, and `scope` makes it explicit; its tab shows the diagram is gone. A cached artifact another diagram still uses is kept: the cache is content-addressed and shared, and the same source in two places is the same file.',
+    parameters: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: ID_SCHEMA, scope: SCOPE_SCHEMA } },
     output: {
       schema: { type: 'object', properties: { text: { type: 'string' }, deleted: { type: 'boolean' } }, required: ['text'] },
       render: (_args, value) => [{ type: 'text', text: value.text }],
@@ -1192,18 +1353,29 @@ export function buildTools(deps) {
     presentCall: (args) => callView(args, 'Delete'),
     execute(args, exec) {
       const sessionId = sessionOf(exec)
-      const entry = store.get(sessionId, args.id)
-      const hash = entry && entry.artifact ? entry.artifact.hash : null
-      const deleted = store.remove(sessionId, args.id)
-      if (deleted && hash) deps.cache.drop(hash)
+      const found = locate(sessionId, String(args.id), args.scope)
+      if (!found) return { text: 'No diagram "' + String(args.id) + '" in the library or in this conversation.', deleted: false }
+      const scopeKey = found.scopeKey
+      const hash = found.entry.artifact ? found.entry.artifact.hash : null
+      const deleted = deps.storeFor(scopeKey).remove(scopeKey, found.entry.id)
+      // The cache is shared: an identical diagram elsewhere (the library, or this
+      // conversation) hashes to the same artifact, and dropping it blindly would
+      // blank a picture that is still there. The LRU prunes the rest.
+      const referenced =
+        hash !== null &&
+        (deps.library.list(LIBRARY_SCOPE).diagrams.some((other) => other.artifact && other.artifact.hash === hash) ||
+          deps.store.list(sessionId).diagrams.some((other) => other.artifact && other.artifact.hash === hash))
+      if (deleted && hash && !referenced) deps.cache.drop(hash)
       return {
-        text: deleted ? 'Deleted diagram "' + args.id + '".' : 'No diagram "' + args.id + '" in this conversation.',
+        text: deleted
+          ? 'Deleted diagram "' + found.entry.id + '" from ' + (scopeKey === LIBRARY_SCOPE ? 'the shared library' : 'this conversation') + '.'
+          : 'No diagram "' + String(args.id) + '".',
         deleted,
       }
     },
   }
 
-  return [write, patch, read, verify, remove]
+  return [write, patch, read, verify, publish, remove]
 }
 
 // ---------------------------------------------------------------------------
@@ -1243,15 +1415,18 @@ function healthSnapshot(deps) {
   return {
     tex: { available: engines.available, engine: engines.engine, svg: engines.svg, png: engines.png },
     mermaid: { version: deps.version },
+    library: { diagrams: deps.library.list(LIBRARY_SCOPE).diagrams.length },
   }
 }
 
 /** One diagram as the client sees it. */
-function publicDiagram(entry) {
+function publicDiagram(entry, scopeKey) {
   return {
     id: entry.id,
     kind: entry.kind,
     title: entry.title,
+    scope: scopeKey === LIBRARY_SCOPE ? 'library' : 'conversation',
+    address: scopeKey === LIBRARY_SCOPE ? 'dsh-resource://diagram/library/' + entry.id : 'dsh-resource://diagram/session/' + scopeKey + '/' + entry.id,
     source: entry.source,
     status: entry.status,
     diagramType: entry.diagramType ?? null,
@@ -1268,6 +1443,23 @@ function publicDiagram(entry) {
     by: entry.by,
     revision: entry.revision,
   }
+}
+
+/**
+ * Which store an id lives in, from a route's `scope` (optional) - the same rule
+ * the tools use: the library first, then the conversation.
+ */
+function locateRoute(deps, session, id, scope) {
+  if (scope === 'library') {
+    const entry = deps.library.get(LIBRARY_SCOPE, id)
+    return entry ? { scopeKey: LIBRARY_SCOPE, entry } : null
+  }
+  if (scope !== 'conversation') {
+    const shared = deps.library.get(LIBRARY_SCOPE, id)
+    if (shared) return { scopeKey: LIBRARY_SCOPE, entry: shared }
+  }
+  const local = deps.store.get(session, id)
+  return local ? { scopeKey: session, entry: local } : null
 }
 
 /** A safe, readable file name for one export. */
@@ -1375,6 +1567,7 @@ export function registerRoutes(ctx, deps) {
       mermaid: { version: deps.version, vendored: true, route: VENDOR_ROUTE },
       tex: { available: engines.available, engine: engines.engine, engines: engines.engines, svg: engines.svg, png: engines.png },
       store: { root: deps.store.root, artifacts: deps.cache.root, entries: deps.cache.entries().length },
+      library: { path: deps.library.fileFor(LIBRARY_SCOPE), diagrams: deps.library.list(LIBRARY_SCOPE).diagrams.length },
     })
   })
 
@@ -1382,7 +1575,18 @@ export function registerRoutes(ctx, deps) {
     const session = new URL(request.url).searchParams.get('session')
     if (!session) throw httpError(400, 'BAD_REQUEST', 'A session id is required.')
     const listed = deps.store.list(session)
-    return json(200, { ok: true, session, diagrams: listed.diagrams, capabilities: healthSnapshot(deps) })
+    // The LIBRARY travels with every state answer: it is the half of the index
+    // that is the same in every conversation, so the tab and the index page can
+    // show it without a second request or a second store on the client.
+    const shared = deps.library.list(LIBRARY_SCOPE)
+    return json(200, {
+      ok: true,
+      session,
+      diagrams: listed.diagrams,
+      library: shared.diagrams,
+      libraryPath: deps.library.fileFor(LIBRARY_SCOPE),
+      capabilities: healthSnapshot(deps),
+    })
   })
 
   register(DIAGRAM_ROUTE, ['GET', 'HEAD', 'POST'], async (request) => {
@@ -1390,29 +1594,43 @@ export function registerRoutes(ctx, deps) {
       const url = new URL(request.url)
       const session = url.searchParams.get('session')
       const id = url.searchParams.get('id')
+      const scope = url.searchParams.get('scope')
       if (!session || !id) throw httpError(400, 'BAD_REQUEST', 'A session id and a diagram id are required.')
-      const entry = deps.store.get(session, id)
-      if (!entry) throw httpError(404, 'NOT_FOUND', 'No such diagram in this conversation.')
-      return json(200, { ok: true, diagram: publicDiagram(entry) })
+      const found = locateRoute(deps, session, id, scope)
+      if (!found) throw httpError(404, 'NOT_FOUND', 'No such diagram in the library or in this conversation.')
+      return json(200, { ok: true, diagram: publicDiagram(found.entry, found.scopeKey), scope: found.scopeKey === LIBRARY_SCOPE ? 'library' : 'conversation' })
     }
 
     const body = await readJsonBody(request)
     const session = typeof body.session === 'string' ? body.session : ''
     if (!session) throw httpError(400, 'BAD_REQUEST', 'A session id is required.')
+    const scope = body.scope === 'library' ? 'library' : body.scope === 'conversation' ? 'conversation' : undefined
 
     if (body.delete === true) {
-      const entry = deps.store.get(session, String(body.id ?? ''))
-      const deleted = deps.store.remove(session, String(body.id ?? ''))
-      if (deleted && entry && entry.artifact) deps.cache.drop(entry.artifact.hash)
+      const found = locateRoute(deps, session, String(body.id ?? ''), scope)
+      if (!found) return json(200, { ok: true, deleted: false })
+      const deleted = deps.storeFor(found.scopeKey).remove(found.scopeKey, found.entry.id)
+      const hash = found.entry.artifact ? found.entry.artifact.hash : null
+      const referenced =
+        hash !== null &&
+        (deps.library.list(LIBRARY_SCOPE).diagrams.some((other) => other.artifact && other.artifact.hash === hash) ||
+          deps.store.list(session).diagrams.some((other) => other.artifact && other.artifact.hash === hash))
+      if (deleted && hash && !referenced) deps.cache.drop(hash)
       return json(200, { ok: true, deleted })
     }
 
     if (Buffer.byteLength(String(body.source ?? ''), 'utf8') > MAX_SOURCE_BYTES) {
       throw httpError(413, 'TOO_LARGE', 'The diagram source is larger than ' + Math.round(MAX_SOURCE_BYTES / 1024) + ' KiB.')
     }
-    const existing = typeof body.id === 'string' && body.id.length > 0 ? deps.store.get(session, body.id) : undefined
-    const kind = typeof body.kind === 'string' && KINDS.includes(body.kind) ? body.kind : (existing ? existing.kind : 'mermaid')
-    const entry = deps.store.write(session, {
+    // A panel edit writes back where the diagram ALREADY is unless it says
+    // otherwise: a library diagram edited in its tab must not silently become a
+    // second, conversation-only copy.
+    const known = typeof body.id === 'string' && body.id.length > 0 ? locateRoute(deps, session, body.id, scope) : null
+    const scopeKey = known ? known.scopeKey : scope === 'library' ? LIBRARY_SCOPE : session
+    const target = deps.storeFor(scopeKey)
+    const existing = known ? known.entry : undefined
+    const kind = typeof body.kind === 'string' && KINDS.includes(body.kind) ? body.kind : existing ? existing.kind : 'mermaid'
+    const entry = target.write(scopeKey, {
       id: existing ? existing.id : undefined,
       kind,
       title: typeof body.title === 'string' ? body.title : existing ? existing.title : undefined,
@@ -1420,9 +1638,15 @@ export function registerRoutes(ctx, deps) {
       by: 'user',
       note: existing ? 'edited in the diagram panel' : 'created from the diagram panel',
     })
-    const verdict = await checkAndRecord(deps, session, entry, { force: body.recompile === true })
-    const fresh = deps.store.get(session, entry.id)
-    return json(200, { ok: true, diagram: publicDiagram(fresh), status: verdict.status, diagnostics: verdict.diagnostics ?? [] })
+    const verdict = await checkAndRecord(deps, scopeKey, entry, { force: body.recompile === true })
+    const fresh = target.get(scopeKey, entry.id)
+    return json(200, {
+      ok: true,
+      diagram: publicDiagram(fresh, scopeKey),
+      scope: scopeKey === LIBRARY_SCOPE ? 'library' : 'conversation',
+      status: verdict.status,
+      diagnostics: verdict.diagnostics ?? [],
+    })
   })
 
   register(ARTIFACT_ROUTE, ['GET', 'HEAD'], async (request) => {
@@ -1430,13 +1654,15 @@ export function registerRoutes(ctx, deps) {
     const session = url.searchParams.get('session')
     const id = url.searchParams.get('id')
     const hash = url.searchParams.get('hash')
+    const scope = url.searchParams.get('scope')
     const format = (url.searchParams.get('format') ?? 'svg').toLowerCase()
     if (!session) throw httpError(400, 'BAD_REQUEST', 'A session id is required.')
     let key = hash
     if (!key) {
       if (!id) throw httpError(400, 'BAD_REQUEST', 'Either a diagram id or an artifact hash is required.')
-      const entry = deps.store.get(session, id)
-      if (!entry) throw httpError(404, 'NOT_FOUND', 'No such diagram in this conversation.')
+      const found = locateRoute(deps, session, id, scope)
+      if (!found) throw httpError(404, 'NOT_FOUND', 'No such diagram in the library or in this conversation.')
+      const entry = found.entry
       if (entry.kind === 'mermaid') {
         // A Mermaid diagram has no host-side picture: the source IS the product,
         // and the browser is what draws it.
@@ -1481,8 +1707,9 @@ export function registerRoutes(ctx, deps) {
     const id = typeof body.id === 'string' ? body.id : ''
     const format = String(body.format ?? '').toLowerCase()
     if (!session || !id) throw httpError(400, 'BAD_REQUEST', 'A session id and a diagram id are required.')
-    const entry = deps.store.get(session, id)
-    if (!entry) throw httpError(404, 'NOT_FOUND', 'No such diagram in this conversation.')
+    const found = locateRoute(deps, session, id, typeof body.scope === 'string' ? body.scope : undefined)
+    if (!found) throw httpError(404, 'NOT_FOUND', 'No such diagram in the library or in this conversation.')
+    const entry = found.entry
     const allowed = EXPORT_FORMATS[entry.kind] ?? []
     if (!allowed.includes(format)) throw httpError(400, 'BAD_FORMAT', 'A ' + entry.kind + ' diagram exports as: ' + allowed.join(', ') + '.')
     const bytes = exportBytes(deps, entry, format, body.data)
@@ -1518,9 +1745,11 @@ export function registerRoutes(ctx, deps) {
     const session = typeof body.session === 'string' ? body.session : ''
     const id = typeof body.id === 'string' ? body.id : ''
     if (!session || !id) throw httpError(400, 'BAD_REQUEST', 'A session id and a diagram id are required.')
-    const entry = deps.store.get(session, id)
-    if (!entry) return json(200, { ok: true, stored: false, reason: 'no such diagram in this conversation' })
-    const stored = deps.store.recordRender(session, id, {
+    const found = locateRoute(deps, session, id, typeof body.scope === 'string' ? body.scope : undefined)
+    if (!found) return json(200, { ok: true, stored: false, reason: 'no such diagram in the library or in this conversation' })
+    const scopeKey = found.scopeKey
+    const entry = found.entry
+    const stored = deps.storeFor(scopeKey).recordRender(scopeKey, id, {
       revision: Number.isFinite(body.revision) ? body.revision : entry.revision,
       kind: body.kind,
       ok: body.ok === true,
@@ -1535,6 +1764,7 @@ export function registerRoutes(ctx, deps) {
       ok: true,
       stored: Boolean(stored),
       id,
+      scope: scopeKey === LIBRARY_SCOPE ? 'library' : 'conversation',
       revision: stored ? stored.render.revision : null,
       current: stored ? stored.revision : null,
     })
@@ -1576,10 +1806,21 @@ export function apply(ctx) {
   }
   const root = path.join(resolveHome(), 'dsh-diagrams')
   const store = new DiagramStore({ root })
+  /**
+   * The shared LIBRARY: one file for the whole harness, so a diagram published
+   * here is the same diagram in every conversation and its id can be cited from
+   * a chat that never saw it written. It uses the same class - same caps, same
+   * atomic write, same render reports - with a fixed file name instead of one
+   * per conversation.
+   */
+  const library = new DiagramStore({ root, fixedFile: 'library.json' })
   const cache = new ArtifactCache({ root: path.join(root, 'artifacts') })
   let engines = probeEngines()
   const deps = {
     store,
+    library,
+    /** The store one scope key belongs to: a conversation id, or the library. */
+    storeFor: (scopeKey) => (scopeKey === LIBRARY_SCOPE ? library : store),
     cache,
     version: vendoredVersion(),
     enginesNow: () => engines,
@@ -1595,7 +1836,9 @@ export function apply(ctx) {
       ', tex ' +
       (engines.available ? engines.engine + ' + ' + (engines.svg ?? 'no SVG converter') : 'UNAVAILABLE') +
       ', state ' +
-      root,
+      root +
+      ', library ' +
+      library.fileFor(LIBRARY_SCOPE),
   )
 
   const skillCount = registerSkills(ctx, log)

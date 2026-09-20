@@ -1090,9 +1090,12 @@ check('index type identity', indexType.id, 'dsh-diagrams-index')
 check(
   'viewer owns the diagram address grammar',
   viewerType.patterns.join(',') + '/' + viewerType.priority,
-  'dsh-resource://diagram/session/**/extension',
+  'dsh-resource://diagram/session/**,dsh-resource://diagram/library/**/extension',
 )
 check('viewer claims a host address', viewerType.patterns[0].includes('dsh-resource://diagram/session/'))
+// A LIBRARY address names no conversation: that is what makes one tab - and one
+// citation - work from every chat.
+check('viewer claims the library address too', viewerType.patterns[1] === 'dsh-resource://diagram/library/**')
 check('viewer has no guide entry', viewerType.guide === undefined)
 // The index is a PAGE type: no patterns, so it never competes for a file
 // address, and its one guide entry sits after Files (10), Editor (20) and
@@ -1110,6 +1113,7 @@ check(
     'sidebar.right.pane.tab.title#dsh-diagrams-viewer',
     'tool.call.toolview#diagram_delete',
     'tool.call.toolview#diagram_patch',
+    'tool.call.toolview#diagram_publish',
     'tool.call.toolview#diagram_read',
     'tool.call.toolview#diagram_verify',
     'tool.call.toolview#diagram_write',
@@ -1132,11 +1136,15 @@ check(
 
 const IndexBody = diagSeats['sidebar.right.pane.tab#dsh-diagrams-index'].component
 const indexMarkup = renderToStaticMarkup(h(IndexBody, { sessionId: 'sess-1' }))
-check('index body renders its empty state', indexMarkup.includes('No diagrams in this conversation yet.'))
+check('index body renders its empty state', indexMarkup.includes('Nothing yet: this conversation has no diagrams and the library is empty.'))
 check(
   'index body offers both engines',
-  indexMarkup.includes('>New Mermaid<') && indexMarkup.includes('>New TikZ<') && indexMarkup.includes('dsh-diagrams 0.1.0-alpha.4'),
+  indexMarkup.includes('>New Mermaid<') && indexMarkup.includes('>New TikZ<') && indexMarkup.includes('dsh-diagrams 0.1.0-alpha.6'),
 )
+// The index is where the LIBRARY becomes visible: the file bar always counts
+// both halves, and the two labelled lists are asserted from the source below
+// (with an empty store the page draws its empty state instead).
+check('index counts the shared library', indexMarkup.includes('in the library') && indexMarkup.includes(' here'))
 check('index title seat', renderToStaticMarkup(h(diagSeats['sidebar.right.pane.tab.title#dsh-diagrams-index'].component, {})), 'Diagrams')
 
 // The conversation card draws from the tool call itself, so it is right on
@@ -1381,6 +1389,43 @@ check(
   'a failed render is red, an absent verdict is neutral',
   diagCss.includes('.dsd-pill[data-status="error"],.dsd-pill[data-status="failed"]') &&
     diagCss.includes('.dsd-pill[data-status="unchecked"],.dsd-pill[data-status="pending"],.dsd-pill[data-status="stale"]'),
+)
+
+// LIBRARY. A diagram published to the shared store is the same diagram in every
+// conversation, and its address names no conversation - which is what makes one
+// citation work from anywhere. The client has to know all of that: a second list
+// in the store, a second address shape, and a scope on every request that names
+// a diagram.
+check(
+  'the library address opens without a session',
+  diagSource.includes('function addressFor(sessionId, diagramId, scope)') &&
+    diagSource.includes('if (scope === LIBRARY_SCOPE) return LIBRARY_PREFIX + encodeURIComponent(diagramId)'),
+)
+check(
+  'the address parser knows both shapes',
+  /if \(text\.startsWith\(LIBRARY_PREFIX\)\)/.test(diagSource) && diagSource.includes("scope: 'conversation', sessionId: decodeURIComponent"),
+)
+check(
+  'the store keeps the two halves apart',
+  diagSource.includes('libraryById') && diagSource.includes('store.library = Array.isArray(payload && payload.library)'),
+)
+check(
+  'an id with no scope resolves library-first, like the host',
+  /function entryNow\(sessionId, diagramId, scope\)[\s\S]{0,400}return store\.libraryById\.get\(diagramId\) \?\? store\.byId\.get\(diagramId\)/.test(diagSource),
+)
+check(
+  'the index shows both halves, library first',
+  diagSource.includes("'Library - every conversation sees these") &&
+    diagSource.includes("'This conversation'") &&
+    diagCss.includes('.dsd-listHead{'),
+)
+check(
+  'the scope travels with every request that names a diagram',
+  diagSource.includes('revision, scope, ...report') &&
+    diagSource.includes("'&scope=' +") &&
+    diagSource.includes('{ session: sessionId, id: diagramId, format, data, scope }') &&
+    diagSource.includes('scope,\n              recompile:') &&
+    diagSource.includes('scope: entry.scope'),
 )
 
 console.log('')

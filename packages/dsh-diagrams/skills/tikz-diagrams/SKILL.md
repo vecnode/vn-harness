@@ -40,6 +40,22 @@ read `reference/complex-diagrams.md`, which sits beside this file in the same
 skill folder. Every example in it was compiled by the host's own engine, and it
 is the file to open before writing anything over ~20 lines.
 
+## Publishing a picture you will want again
+
+A diagram belongs to the conversation that drew it unless you say otherwise. A
+good TikZ figure is expensive to produce, so when it is worth citing later - a
+reference figure, a model diagram, an architecture picture - put it in the shared
+**library**:
+
+- `diagram_write { ..., scope: "library" }` writes it there directly, or
+  `diagram_publish { id }` copies one you already have.
+- Its address is `dsh-resource://diagram/library/<id>`: it names no conversation,
+  so the id resolves in ANY chat, and `diagram_read { id: "jepa-model-tikz" }`
+  finds it from a conversation that never saw it written.
+- A bare id resolves **library-first**, and the artifact cache is
+  content-addressed, so the library copy shares the compiled PDF/SVG with the
+  conversation copy rather than costing a second compile.
+
 ## The verdicts, and the two the compiler cannot give you
 
 | Signal | Question it answers | What to do |

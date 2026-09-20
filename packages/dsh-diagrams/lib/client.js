@@ -55,8 +55,16 @@ window.__ModuleLoader__.load({
     /** The index page's implementation identity and kind (its address is `sidebar://diagrams`). */
     const INDEX_ID = 'dsh-diagrams-index'
     const INDEX_KIND = 'diagrams'
-    /** Address grammar of one diagram: `dsh-resource://diagram/session/<session>/<id>`. */
+    /**
+     * Address grammar of one diagram. Two shapes, because a diagram lives in one
+     * of two places: `dsh-resource://diagram/session/<session>/<id>` for this
+     * conversation, and `dsh-resource://diagram/library/<id>` for the shared
+     * library. The library address names NO conversation on purpose - that is
+     * what makes it citable from any chat and durable after this one ends.
+     */
     const ADDRESS_PREFIX = 'dsh-resource://diagram/session/'
+    const LIBRARY_PREFIX = 'dsh-resource://diagram/library/'
+    const LIBRARY_SCOPE = 'library'
     /** Keep in sync with lib/index.js. */
     const STATE_ROUTE = '/api/dsh-diagrams/state'
     const DIAGRAM_ROUTE = '/api/dsh-diagrams/diagram'
@@ -65,7 +73,7 @@ window.__ModuleLoader__.load({
     const REPORT_ROUTE = '/api/dsh-diagrams/render-report'
     const VENDOR_ROUTE = '/api/dsh-diagrams/vendor/mermaid.js'
     /** Version marker shown in the panel footer, so a fresh bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.4'
+    const PLUGIN_VERSION = '0.1.0-alpha.6'
     /**
      * The zoom ladder the diagram tab steps through, the share of the pane a
      * picture occupies at 100%, and the last zoom each tab was left at.
@@ -80,7 +88,7 @@ window.__ModuleLoader__.load({
     const ZOOM_FIT_WIDTH = 80
     const zoomMemory = new Map()
     /** The tools this package registers conversation cards for. */
-    const TOOL_NAMES = ['diagram_write', 'diagram_patch', 'diagram_read', 'diagram_verify', 'diagram_delete']
+    const TOOL_NAMES = ['diagram_write', 'diagram_patch', 'diagram_read', 'diagram_verify', 'diagram_publish', 'diagram_delete']
     /** Client services, all resolved lazily (none of them is required to draw). */
     const SIDEBAR_SERVICE = 'sidebarRight'
     const THEME_SERVICE = 'theme'
@@ -176,6 +184,8 @@ window.__ModuleLoader__.load({
 .dsd-rowTitle{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsd-rowMeta{font-size:11px;color:var(--dsw-alias-label-tertiary,#8a8a8a);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dsd-list{flex:1;min-height:0;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:4px}
+/* The two halves of the index: the shared library, then this conversation. */
+.dsd-listHead{flex:none;padding:8px 10px 2px;font-size:11px;letter-spacing:.02em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary,#8a8a8a)}
 .dsd-empty{padding:28px 20px;text-align:center;color:var(--dsw-alias-label-secondary,#666);font-size:12.5px;line-height:1.7}
 .dsd-menu{position:absolute;z-index:20;min-width:190px;padding:5px;border-radius:10px;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.22));background:var(--dsw-alias-surface-l1,#fff);box-shadow:0 8px 26px rgba(0,0,0,.18)}
 .dsd-menuItem{display:block;width:100%;text-align:left;appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-primary,#1f1f1f);font:inherit;font-size:12.5px;padding:7px 9px;border-radius:7px;cursor:pointer}
@@ -287,22 +297,30 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     // Addresses
     // ---------------------------------------------------------------------
-    /** The address of one diagram. */
-    function addressFor(sessionId, diagramId) {
+    /**
+     * The address of one diagram. A library diagram's address names NO
+     * conversation, which is what makes it openable - and citable - from any
+     * chat.
+     */
+    function addressFor(sessionId, diagramId, scope) {
+      if (scope === LIBRARY_SCOPE) return LIBRARY_PREFIX + encodeURIComponent(diagramId)
       return ADDRESS_PREFIX + encodeURIComponent(sessionId) + '/' + encodeURIComponent(diagramId)
     }
 
     /** The session id + diagram id an address carries, or nulls. */
     function parseDiagramAddress(address) {
       const text = String(address ?? '')
-      if (!text.startsWith(ADDRESS_PREFIX)) return { sessionId: null, diagramId: null }
-      const rest = text.slice(ADDRESS_PREFIX.length)
-      const slash = rest.indexOf('/')
-      if (slash === -1) return { sessionId: null, diagramId: null }
       try {
-        return { sessionId: decodeURIComponent(rest.slice(0, slash)), diagramId: decodeURIComponent(rest.slice(slash + 1)) }
+        if (text.startsWith(LIBRARY_PREFIX)) {
+          return { scope: LIBRARY_SCOPE, sessionId: null, diagramId: decodeURIComponent(text.slice(LIBRARY_PREFIX.length)) }
+        }
+        if (!text.startsWith(ADDRESS_PREFIX)) return { scope: null, sessionId: null, diagramId: null }
+        const rest = text.slice(ADDRESS_PREFIX.length)
+        const slash = rest.indexOf('/')
+        if (slash === -1) return { scope: null, sessionId: null, diagramId: null }
+        return { scope: 'conversation', sessionId: decodeURIComponent(rest.slice(0, slash)), diagramId: decodeURIComponent(rest.slice(slash + 1)) }
       } catch (err) {
-        return { sessionId: null, diagramId: null }
+        return { scope: null, sessionId: null, diagramId: null }
       }
     }
 
@@ -310,10 +328,13 @@ window.__ModuleLoader__.load({
     // The store: one entry per conversation
     // ---------------------------------------------------------------------
     /**
-     * `stores` is the whole client-side model: `{ diagrams, byId, capabilities,
-     * loaded, error, inflight, listeners }` per session. Both the conversation
-     * card and every tab read it, which is what keeps an open tab in step with
-     * a write that happened in the chat.
+     * `stores` is the whole client-side model: `{ diagrams, byId, library,
+     * libraryById, capabilities, loaded, error, inflight, listeners }` per
+     * session. Both the conversation card and every tab read it, which is what
+     * keeps an open tab in step with a write that happened in the chat. The
+     * LIBRARY rides along in every session's copy - the state route returns it -
+     * so a diagram published anywhere is visible everywhere without a second
+     * request.
      */
     const stores = new Map()
 
@@ -322,7 +343,19 @@ window.__ModuleLoader__.load({
       const key = String(sessionId ?? '')
       let store = stores.get(key)
       if (!store) {
-        store = { sessionId: key, diagrams: [], byId: new Map(), capabilities: null, loaded: false, error: null, inflight: null, listeners: new Set() }
+        store = {
+          sessionId: key,
+          diagrams: [],
+          byId: new Map(),
+          library: [],
+          libraryById: new Map(),
+          libraryPath: null,
+          capabilities: null,
+          loaded: false,
+          error: null,
+          inflight: null,
+          listeners: new Set(),
+        }
         stores.set(key, store)
       }
       return store
@@ -362,6 +395,9 @@ window.__ModuleLoader__.load({
       const store = storeFor(sessionId)
       store.diagrams = Array.isArray(payload && payload.diagrams) ? payload.diagrams : []
       store.byId = new Map(store.diagrams.map((entry) => [entry.id, entry]))
+      store.library = Array.isArray(payload && payload.library) ? payload.library : []
+      store.libraryById = new Map(store.library.map((entry) => [entry.id, entry]))
+      store.libraryPath = (payload && payload.libraryPath) || null
       if (payload && payload.capabilities) store.capabilities = payload.capabilities
       store.loaded = true
       store.error = null
@@ -395,31 +431,64 @@ window.__ModuleLoader__.load({
       return run
     }
 
-    /** Merge one diagram the caller already has into the store (no round trip). */
+    /**
+     * Merge one diagram the caller already has into the store (no round trip).
+     *
+     * The diagram says which half it belongs to (`scope`), so a write into the
+     * library lands in the library list and a write into the conversation lands
+     * in the conversation list - and both are visible in this session either way.
+     */
     function upsertDiagram(sessionId, diagram) {
       if (!sessionId || !diagram || !diagram.id) return
       const store = storeFor(sessionId)
-      const existing = store.byId.get(diagram.id)
+      const inLibrary = diagram.scope === LIBRARY_SCOPE
+      const map = inLibrary ? store.libraryById : store.byId
+      const existing = map.get(diagram.id)
       if (existing) Object.assign(existing, diagram)
       else {
         // The new entry IS the payload: the route and the tool result both carry
         // the full diagram (source, revision, verification), and a placeholder
         // summary here would leave the tab without a source to render until the
         // next state refresh.
-        store.byId.set(diagram.id, diagram)
-        store.diagrams = store.diagrams.concat([diagram])
+        map.set(diagram.id, diagram)
+        if (inLibrary) store.library = store.library.concat([diagram])
+        else store.diagrams = store.diagrams.concat([diagram])
       }
-      // The map is the source of truth; keep the array pointing at the same objects.
+      // The maps are the source of truth; keep the arrays pointing at the same objects.
+      store.byId = new Map(store.diagrams.map((entry) => [entry.id, store.byId.get(entry.id) ?? entry]))
+      store.libraryById = new Map(store.library.map((entry) => [entry.id, store.libraryById.get(entry.id) ?? entry]))
       store.diagrams = store.diagrams.map((entry) => store.byId.get(entry.id) ?? entry)
+      store.library = store.library.map((entry) => store.libraryById.get(entry.id) ?? entry)
       notify(sessionId)
     }
 
-    /** Forget one diagram after a delete. */
-    function dropDiagram(sessionId, diagramId) {
+    /** Forget one diagram after a delete, from whichever half held it. */
+    function dropDiagram(sessionId, diagramId, scope) {
       const store = storeFor(sessionId)
-      store.byId.delete(diagramId)
-      store.diagrams = store.diagrams.filter((entry) => entry.id !== diagramId)
+      if (scope !== 'conversation') {
+        store.libraryById.delete(diagramId)
+        store.library = store.library.filter((entry) => entry.id !== diagramId)
+      }
+      if (scope !== LIBRARY_SCOPE) {
+        store.byId.delete(diagramId)
+        store.diagrams = store.diagrams.filter((entry) => entry.id !== diagramId)
+      }
       notify(sessionId)
+    }
+
+    /**
+     * One stored diagram, by scope: `library` reads the shared list, anything
+     * else this conversation. A caller with no scope (a card that only has an id
+     * from a tool result) gets the LIBRARY first, which is the same rule the host
+     * applies - so the card and the model never disagree about which diagram an
+     * id names.
+     */
+    function entryNow(sessionId, diagramId, scope) {
+      if (!diagramId) return null
+      const store = storeFor(sessionId)
+      if (scope === LIBRARY_SCOPE) return store.libraryById.get(diagramId) ?? null
+      if (scope === 'conversation') return store.byId.get(diagramId) ?? null
+      return store.libraryById.get(diagramId) ?? store.byId.get(diagramId) ?? null
     }
 
     /** Subscribe to one session's store. */
@@ -831,19 +900,20 @@ window.__ModuleLoader__.load({
      * exists. The report is best-effort and never surfaces to the user - a
      * failed POST costs nothing but the missing line in `diagram_read`.
      */
-    function postRenderReport(sessionId, diagramId, revision, report) {
+    function postRenderReport(sessionId, diagramId, revision, report, scope) {
       if (!sessionId || !diagramId) return
       try {
         fetch(REPORT_ROUTE, {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ session: sessionId, id: diagramId, revision, ...report }),
+          // The scope travels with the report: a LIBRARY diagram is reported from
+          // whichever conversation happens to have its tab open.
+          body: JSON.stringify({ session: sessionId, id: diagramId, revision, scope, ...report }),
         }).catch(() => {})
       } catch (err) {
         /* a report is a courtesy; it must never break a picture */
-      }
-    }
+      }    }
 
     /**
      * The failing source drawn as TEXT, with the parser's own words.
@@ -926,15 +996,21 @@ window.__ModuleLoader__.load({
         const key = [revision, theme, state.error ? state.phase : 'ok', state.nonce].join('|')
         if (reported.current === key) return
         reported.current = key
-        postRenderReport(props.sessionId, props.diagramId, revision, {
-          kind: 'mermaid',
-          ok: !state.error,
-          phase: state.phase,
-          error: state.error,
-          diagnostics: state.diagnostics,
-          theme,
-          ms: state.ms,
-        })
+        postRenderReport(
+          props.sessionId,
+          props.diagramId,
+          revision,
+          {
+            kind: 'mermaid',
+            ok: !state.error,
+            phase: state.phase,
+            error: state.error,
+            diagnostics: state.diagnostics,
+            theme,
+            ms: state.ms,
+          },
+          props.scope,
+        )
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [state.busy, state.error, state.phase, revision, dark, state.nonce])
 
@@ -974,6 +1050,7 @@ window.__ModuleLoader__.load({
       const sessionId = props.sessionId
       const diagramId = props.diagramId
       const revision = props.revision ?? 0
+      const scope = props.scope
       const [state, setState] = useState({ url: null, error: null, bytes: 0 })
       const reported = useRef(null)
       useEffect(() => {
@@ -984,7 +1061,18 @@ window.__ModuleLoader__.load({
           setState({ url: null, error: 'This tab does not know which conversation the diagram belongs to.', bytes: 0 })
           return () => {}
         }
-        const url = ARTIFACT_ROUTE + '?session=' + encodeURIComponent(sessionId) + '&id=' + encodeURIComponent(diagramId) + '&format=' + (props.format || 'svg') + '&v=' + revision
+        const url =
+          ARTIFACT_ROUTE +
+          '?session=' +
+          encodeURIComponent(sessionId) +
+          '&id=' +
+          encodeURIComponent(diagramId) +
+          '&format=' +
+          (props.format || 'svg') +
+          '&scope=' +
+          encodeURIComponent(scope ?? '') +
+          '&v=' +
+          revision
         fetch(url, { credentials: 'same-origin' })
           .then(async (response) => {
             if (!response.ok) {
@@ -1011,7 +1099,7 @@ window.__ModuleLoader__.load({
           cancelled = true
           if (objectUrl) URL.revokeObjectURL(objectUrl)
         }
-      }, [sessionId, diagramId, revision, props.format])
+      }, [sessionId, diagramId, revision, props.format, scope])
 
       // The host compiled it; the browser confirms the artifact actually loads.
       useEffect(() => {
@@ -1020,15 +1108,21 @@ window.__ModuleLoader__.load({
         const key = [revision, state.error ? 'error' : 'ok'].join('|')
         if (reported.current === key) return
         reported.current = key
-        postRenderReport(sessionId, diagramId, revision, {
-          kind: 'tikz',
-          ok: !state.error,
-          phase: state.error ? 'artifact' : null,
-          error: state.error,
-          bytes: state.bytes,
-        })
+        postRenderReport(
+          sessionId,
+          diagramId,
+          revision,
+          {
+            kind: 'tikz',
+            ok: !state.error,
+            phase: state.error ? 'artifact' : null,
+            error: state.error,
+            bytes: state.bytes,
+          },
+          scope,
+        )
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [state.url, state.error, revision, sessionId, diagramId])
+      }, [state.url, state.error, revision, sessionId, diagramId, scope])
 
       if (state.error) return h('div', { className: 'dsd-notice' }, state.error)
       if (!state.url) return h('div', { className: 'dsd-notice' }, 'Loading the compiled picture...')
@@ -1044,6 +1138,7 @@ window.__ModuleLoader__.load({
           sessionId: props.sessionId,
           diagramId: props.diagramId,
           revision: props.revision,
+          scope: props.scope,
           format: 'svg',
           alt: props.title,
         })
@@ -1053,6 +1148,7 @@ window.__ModuleLoader__.load({
         sessionId: props.sessionId,
         diagramId: props.diagramId,
         revision: props.revision,
+        scope: props.scope,
         onEdit: props.onEdit,
         onOpen: props.onOpen,
       })
@@ -1088,6 +1184,7 @@ window.__ModuleLoader__.load({
         sessionId: props.sessionId,
         diagramId: entry.id,
         revision: entry.revision,
+        scope: props.scope,
         title: entry.title,
         onEdit: props.onEdit,
         onOpen: props.onOpen,
@@ -1097,9 +1194,9 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     // Data helpers shared by the panel and the cards
     // ---------------------------------------------------------------------
-    /** The stored diagram of a conversation, or null. */
-    function diagramNow(sessionId, diagramId) {
-      return storeFor(sessionId).byId.get(diagramId) ?? null
+    /** The stored diagram of a conversation, or null. Library-first, like the host. */
+    function diagramNow(sessionId, diagramId, scope) {
+      return entryNow(sessionId, diagramId, scope)
     }
 
     /** The source of one diagram: the panel prefers its own edited copy, then the store. */
@@ -1232,10 +1329,12 @@ window.__ModuleLoader__.load({
       const info = typeof props.useTabInfo === 'function' ? props.useTabInfo() : null
       const tab = info && info.tab ? info.tab : null
       const parsed = parseDiagramAddress(tab ? tab.contentId : '')
+      /** The scope the ADDRESS names: a library tab is one tab for every chat. */
+      const scope = parsed.scope
       const sessionId = parsed.sessionId || props.sessionId
       const diagramId = parsed.diagramId
       const { store, version } = useDiagramStore(sessionId)
-      const entry = diagramId ? store.byId.get(diagramId) ?? null : null
+      const entry = entryNow(sessionId, diagramId, scope)
       const [drawer, setDrawer] = useState(false)
       const [draft, setDraft] = useState('')
       const [status, setStatus] = useState('')
@@ -1402,7 +1501,13 @@ window.__ModuleLoader__.load({
           const answer = await apiFetch(DIAGRAM_ROUTE, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ session: sessionId, id: diagramId, source: draft, recompile: entry && entry.kind === 'tikz' }),
+            body: JSON.stringify({
+              session: sessionId,
+              id: diagramId,
+              source: draft,
+              scope,
+              recompile: entry && entry.kind === 'tikz',
+            }),
           })
           if (answer && answer.diagram) upsertDiagram(sessionId, answer.diagram)
           setStatus(answer && answer.status ? 'status: ' + answer.status : 'saved')
@@ -1437,7 +1542,7 @@ window.__ModuleLoader__.load({
             const answer = await apiFetch(EXPORT_ROUTE, {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ session: sessionId, id: diagramId, format, data }),
+              body: JSON.stringify({ session: sessionId, id: diagramId, format, data, scope }),
             })
             setStatus('saved to ' + (answer && answer.path ? answer.path : 'the Desktop'))
           } catch (err) {
@@ -1588,7 +1693,7 @@ window.__ModuleLoader__.load({
                 'data-zoomed': zoom > ZOOM_DEFAULT ? 'true' : undefined,
                 style: { width: ZOOM_FIT_WIDTH * zoom + '%' },
               },
-              h(StoredPicture, { entry, sessionId, onEdit: () => setDrawer(true) }),
+              h(StoredPicture, { entry, sessionId, scope, onEdit: () => setDrawer(true) }),
               entry.status === 'unavailable'
                 ? h('div', { className: 'dsd-notice' }, 'This diagram was stored but could not be validated on this host.')
                 : null,
@@ -1669,7 +1774,7 @@ window.__ModuleLoader__.load({
         const answer = await apiFetch(DIAGRAM_ROUTE, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ session: sessionId, id: diagramId, kind: entry.kind, source: entry.source, recompile: true }),
+          body: JSON.stringify({ session: sessionId, id: diagramId, kind: entry.kind, source: entry.source, scope: entry.scope, recompile: true }),
         })
         if (answer && answer.diagram) upsertDiagram(sessionId, answer.diagram)
         setStatus('status: ' + (answer && answer.status ? answer.status : 'ok'))
@@ -1687,7 +1792,7 @@ window.__ModuleLoader__.load({
       const parsed = parseDiagramAddress(tab ? tab.contentId : '')
       const sessionId = props.sessionId ?? parsed.sessionId
       const { store } = useDiagramStore(sessionId, { load: false })
-      const entry = parsed.diagramId ? store.byId.get(parsed.diagramId) : null
+      const entry = parsed.diagramId ? entryNow(sessionId, parsed.diagramId, parsed.scope) : null
       if (entry && entry.title) return entry.title
       return parsed.diagramId || 'Diagram'
     }
@@ -1742,6 +1847,22 @@ window.__ModuleLoader__.load({
 
       const capabilities = store.capabilities
       const texNote = capabilities && capabilities.tex && capabilities.tex.available === false
+      /** One list row; the scope decides which tab address it opens. */
+      const row = (entry, scope) =>
+        h(
+          'div',
+          { key: scope + '/' + entry.id, className: 'dsd-row', onClick: () => openDiagramFrom(sessionId, entry.id, setStatus, scope) },
+          h('span', { className: 'dsd-badge' }, entry.kind === 'tikz' ? 'TikZ' : 'Mermaid'),
+          h(
+            'div',
+            { className: 'dsd-rowMain' },
+            h('div', { className: 'dsd-rowTitle' }, entry.title || entry.id),
+            h('div', { className: 'dsd-rowMeta' }, metaLine(entry)),
+          ),
+          h(StatusPill, { status: entry.status, title: verdictTitle(entry) }),
+          h(RenderPill, { entry }),
+        )
+      const nothing = store.diagrams.length === 0 && store.library.length === 0
       return h(
         'div',
         { className: 'dsd-root' },
@@ -1751,57 +1872,51 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dsd-cardTitle' }, 'Diagrams'),
           h('span', { className: 'dsd-status' }, status),
           h('span', { className: 'dsd-toolsSpacer' }),
-          h(Button, { disabled: busy, title: 'Create a Mermaid diagram', onClick: () => create('mermaid') }, 'New Mermaid'),
-          h(Button, { disabled: busy || texNote, title: texNote ? 'No TeX engine on this host' : 'Create a TikZ diagram', onClick: () => create('tikz') }, 'New TikZ'),
+          h(Button, { disabled: busy, title: 'Create a Mermaid diagram in this conversation', onClick: () => create('mermaid') }, 'New Mermaid'),
+          h(Button, { disabled: busy || texNote, title: texNote ? 'No TeX engine on this host' : 'Create a TikZ diagram in this conversation', onClick: () => create('tikz') }, 'New TikZ'),
         ),
         h(
           'div',
           { className: 'dsd-filebar' },
-          h('b', null, store.diagrams.length + (store.diagrams.length === 1 ? ' diagram' : ' diagrams')),
+          h('b', null, store.diagrams.length + ' here'),
+          h('span', null, store.library.length + ' in the library'),
           texNote ? h('span', null, 'no TeX engine on this host: TikZ diagrams are stored and exported as .tex only') : null,
         ),
-        store.diagrams.length === 0
+        nothing
           ? h(
               'div',
               { className: 'dsd-empty' },
-              'No diagrams in this conversation yet.',
+              'Nothing yet: this conversation has no diagrams and the library is empty.',
               h('br', null),
               'Ask for one in the chat, or start a blank one above - the model can edit whatever you create here.',
             )
           : h(
               'div',
               { className: 'dsd-list' },
-              store.diagrams.map((entry) =>
-                h(
-                  'div',
-                  { key: entry.id, className: 'dsd-row', onClick: () => openDiagramFrom(sessionId, entry.id, setStatus) },
-                  h('span', { className: 'dsd-badge' }, entry.kind === 'tikz' ? 'TikZ' : 'Mermaid'),
-                  h(
-                    'div',
-                    { className: 'dsd-rowMain' },
-                    h('div', { className: 'dsd-rowTitle' }, entry.title || entry.id),
-                    h('div', { className: 'dsd-rowMeta' }, metaLine(entry)),
-                  ),
-                  h(StatusPill, { status: entry.status, title: verdictTitle(entry) }),
-                  h(RenderPill, { entry }),
-                ),
-              ),
+              // The LIBRARY first: it is the half that is the same in every
+              // conversation, and the half whose ids are worth citing.
+              h('div', { className: 'dsd-listHead' }, 'Library - every conversation sees these, and their ids are citable from any chat'),
+              store.library.length === 0 ? h('div', { className: 'dsd-empty' }, 'Nothing published yet. Ask the model to publish a diagram, and it becomes citable from any chat.') : null,
+              store.library.map((entry) => row(entry, LIBRARY_SCOPE)),
+              h('div', { className: 'dsd-listHead' }, 'This conversation'),
+              store.diagrams.length === 0 ? h('div', { className: 'dsd-empty' }, 'No diagrams in this conversation yet.') : null,
+              store.diagrams.map((entry) => row(entry, 'conversation')),
             ),
         h('div', { className: 'dsd-filebar', style: { paddingTop: '4px' } }, 'dsh-diagrams ' + PLUGIN_VERSION),
       )
     }
 
     /** Open one diagram's tab through the right bar's controller. */
-    function openDiagram(sessionId, diagramId) {
+    function openDiagram(sessionId, diagramId, scope) {
       const controller = sidebarRightNow()
       if (!controller) throw new Error('The right bar is not mounted.')
-      controller.openResource(addressFor(sessionId, diagramId))
+      controller.openResource(addressFor(sessionId, diagramId, scope))
     }
 
     /** Open a diagram from a surface that shows a message instead of throwing. */
-    function openDiagramFrom(sessionId, diagramId, setStatus) {
+    function openDiagramFrom(sessionId, diagramId, setStatus, scope) {
       try {
-        openDiagram(sessionId, diagramId)
+        openDiagram(sessionId, diagramId, scope)
       } catch (err) {
         if (typeof setStatus === 'function') setStatus(err && err.message ? err.message : 'could not open the tab')
       }
@@ -1874,10 +1989,12 @@ window.__ModuleLoader__.load({
       // settled result's own view is what names it there.
       const meta = settled ? viewOfBlock(block) : null
       const id = (args && args.id) || (meta && meta.id) || null
-      const known = id ? store.byId.get(id) : null
+      /** `meta.scope` is where the host says the diagram ended up. */
+      const scope = (meta && meta.scope) || null
+      const known = id ? entryNow(sessionId, id, scope) : null
       const kind = (args && args.kind) || (meta && meta.kind) || (known && known.kind) || null
       const title = (args && args.title) || (meta && meta.title) || (known && known.title) || null
-      const address = id && sessionId ? addressFor(sessionId, id) : null
+      const address = id && sessionId ? addressFor(sessionId, id, (known && known.scope) || scope) : null
 
       // A settled call asks the host for this conversation once - that is what
       // turns the call into a picture, a status and a live "Open tab" link (and
@@ -1913,7 +2030,7 @@ window.__ModuleLoader__.load({
           body = h(
             'div',
             { className: 'dsd-cardBody' },
-            h(StoredPicture, { entry: known, sessionId }),
+            h(StoredPicture, { entry: known, sessionId, scope: known.scope }),
             (known.diagnostics ?? []).length > 0 ? h(Diagnostics, { diagnostics: known.diagnostics }) : null,
             (known.warnings ?? []).length > 0 ? h(Warnings, { warnings: known.warnings }) : null,
           )
@@ -1983,7 +2100,7 @@ window.__ModuleLoader__.load({
               running
                 ? h('div', { className: 'dsd-notice' }, 'Writing the diagram...')
                 : known
-                  ? h(StoredPicture, { entry: known, sessionId })
+                  ? h(StoredPicture, { entry: known, sessionId, scope: known.scope })
                   : h(Picture, {
                       kind,
                       source: stripFence((args && args.source) || ''),
@@ -2001,16 +2118,18 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     // Tab-type definitions
     // ---------------------------------------------------------------------
-    /** The `diagram` type: one resource address per diagram. */
+    /** The `diagram` type: one resource address per diagram, in either scope. */
     function viewerDefinition() {
       return {
         id: VIEWER_ID,
         kind: VIEWER_KIND,
-        patterns: [ADDRESS_PREFIX + '**'],
+        // Two address shapes: one tab per conversation diagram, and one tab per
+        // LIBRARY diagram - the same tab, opened from any chat.
+        patterns: [ADDRESS_PREFIX + '**', LIBRARY_PREFIX + '**'],
         priority: 'extension',
         title: (address) => {
           const parsed = parseDiagramAddress(address)
-          const entry = parsed.sessionId && parsed.diagramId ? diagramNow(parsed.sessionId, parsed.diagramId) : null
+          const entry = parsed.diagramId ? entryNow(parsed.sessionId, parsed.diagramId, parsed.scope) : null
           if (entry && entry.title) return entry.title
           return parsed.diagramId || 'Diagram'
         },

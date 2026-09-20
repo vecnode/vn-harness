@@ -82,24 +82,31 @@ export const KINDS = ['mermaid', 'tikz']
  * verdict out and must not be able to disagree with one another.
  *
  * @param entry - the stored diagram.
- * @returns `{ state, revision, reported, kind, error, at }`.
+ * @returns `{ state, revision }` plus `reported` / `kind` / `error` / `at` when
+ *   there is something to say - a key that exists only sometimes must be ABSENT,
+ *   never null or undefined (see the note in the body).
  */
 export function verificationOf(entry) {
   const current = Number.isFinite(entry && entry.revision) ? entry.revision : 0
   const report = entry ? entry.render : null
-  if (!report) return { state: 'pending', revision: current, reported: null, kind: null }
+  // `reported`, `kind`, `error` and `at` are OMITTED when there is nothing to
+  // say. Two shipped bugs were this one mistake in two costumes: the tool
+  // registry validates the value against the schema the model was given -
+  // `reported` is declared an integer, so `null` fails with "must be an
+  // integer" and EVERY fresh write was refused - and it also requires the value
+  // to survive a JSON round trip losslessly, which `undefined` does not, so
+  // `error: undefined` on a drawn verdict made every RENDERED diagram
+  // unreadable. Absent is the only honest way to say nothing.
+  if (!report) return { state: 'pending', revision: current }
   const reported = Number.isFinite(report.revision) ? report.revision : null
   if (reported === null || reported !== current) {
-    return { state: 'stale', revision: current, reported, kind: report.kind ?? null }
+    const stale = { state: 'stale', revision: current }
+    if (reported !== null) stale.reported = reported
+    if (typeof report.kind === 'string' && report.kind.length > 0) stale.kind = report.kind
+    return stale
   }
-  const verdict = { state: report.ok ? 'drawn' : 'failed', revision: current, reported, kind: report.kind ?? null }
-  // `error` and `at` are OMITTED when there is nothing to say, never set to
-  // `undefined`. The tool registry requires the value it is handed to survive a
-  // JSON round trip losslessly, and `JSON.stringify` DROPS a property whose value
-  // is `undefined` - which is exactly how a diagram the browser had DRAWN became
-  // unreadable to the model: the report carried `error: null`, the verdict
-  // turned it into `undefined`, and every `diagram_verify` / `diagram_read` of a
-  // rendered diagram came back as "value is not lossless JSON".
+  const verdict = { state: report.ok ? 'drawn' : 'failed', revision: current, reported: current }
+  if (typeof report.kind === 'string' && report.kind.length > 0) verdict.kind = report.kind
   if (typeof report.error === 'string' && report.error.length > 0) verdict.error = report.error
   if (typeof report.at === 'string' && report.at.length > 0) verdict.at = report.at
   return verdict
@@ -145,10 +152,11 @@ function slugify(text, fallback) {
 }
 
 /** `order` and `diagrams` kept consistent: summaries in a stable, useful order. */
-function summarize(entry) {
+function summarize(entry, scope) {
   return {
     id: entry.id,
     kind: entry.kind,
+    scope,
     title: entry.title,
     // The SOURCE travels with the summary, and it has to: the browser half holds
     // no other copy of it. Mermaid is rendered from its source in the browser,
@@ -190,19 +198,28 @@ function summarize(entry) {
 /** The per-conversation diagram state. */
 export class DiagramStore {
   /**
-   * @param options - `{ root }`, the store root (defaults to `$DSH_HOME/dsh-diagrams`).
+   * @param options - `{ root, fixedFile }`.
    * @param options.root - absolute directory the store owns.
+   * @param options.fixedFile - when set, this store keeps ONE file with that name
+   *   directly under `root`, whatever key it is asked for. That is the LIBRARY:
+   *   named once, it is the same diagram in every conversation, which is what
+   *   makes its id citable from a chat that did not create it - and what makes a
+   *   diagram outlive the conversation it was drawn in.
    */
-  constructor({ root } = {}) {
+  constructor({ root, fixedFile = null } = {}) {
     this.root = root ?? path.join(resolveHome(), 'dsh-diagrams')
     this.sessionsDir = path.join(this.root, 'sessions')
-    /** Loaded conversations, by session id; the memory copy is authoritative while loaded. */
+    this.fixedFile = fixedFile ?? null
+    /** `library` for the shared store, `conversation` for a per-chat one. */
+    this.scope = this.fixedFile ? 'library' : 'conversation'
+    /** Loaded scopes, by store key; the memory copy is authoritative while loaded. */
     this.loaded = new Map()
   }
 
-  /** Absolute path of one conversation's state file. */
-  fileFor(sessionId) {
-    return path.join(this.sessionsDir, safeSessionName(sessionId) + '.json')
+  /** Absolute path of one scope's state file. */
+  fileFor(scopeKey) {
+    if (this.fixedFile) return path.join(this.root, this.fixedFile)
+    return path.join(this.sessionsDir, safeSessionName(scopeKey) + '.json')
   }
 
   /** The empty state for a conversation that has none yet. */
@@ -277,21 +294,22 @@ export class DiagramStore {
     const state = this.state(sessionId)
     return {
       sessionId: state.sessionId,
+      scope: this.scope,
       updatedAt: state.updatedAt,
-      diagrams: state.order.map((id) => summarize(state.diagrams[id])).filter(Boolean),
+      diagrams: state.order.map((id) => summarize(state.diagrams[id], this.scope)).filter(Boolean),
     }
   }
 
   /** One diagram, or undefined. */
-  get(sessionId, id) {
-    const state = this.state(sessionId)
+  get(scopeKey, id) {
+    const state = this.state(scopeKey)
     const entry = state.diagrams[id]
     if (!entry) return undefined
     // A file written by an older version of this plugin has neither field; the
     // read path normalizes them so no caller has to guard for it.
     if (!Array.isArray(entry.warnings)) entry.warnings = []
     if (entry.render === undefined) entry.render = null
-    return { ...entry, summary: summarize(entry) }
+    return { ...entry, scope: this.scope, summary: summarize(entry, this.scope) }
   }
 
   /** Every id in the conversation (in creation order). */

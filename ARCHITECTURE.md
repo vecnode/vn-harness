@@ -1225,6 +1225,26 @@ something a person keeps, the Desktop is where that person is looking, and the
 conversation folder is not a place to drop files the user did not ask for. The
 browser download stays as the fallback for a profile whose host row is absent.
 
+**The library is a scope, not a second plugin.** A diagram used to belong to the
+conversation that drew it and to nothing else, which makes a good one disposable:
+the JEPA figure you want to cite next week lives in a chat you have closed. The
+fix is not a second store implementation but a second SCOPE: the same
+`DiagramStore` class, constructed with a fixed file name
+(`$DSH_HOME/dsh-diagrams/library.json`) instead of one name per conversation, so
+the library gets the same caps, the same atomic temp+rename write, the same
+render reports and the same source budget - and `deps.storeFor(scopeKey)` is the
+only seam every tool and route goes through. Two consequences are load-bearing.
+**A bare id resolves library-first** (`locate`), because the library is the
+citable namespace: `diagram_read { id: "jepa-model" }` has to mean the shared
+diagram even when a scratch diagram in this chat shares the id, or a citation
+would resolve differently in every conversation. And **the address carries the
+scope**: `dsh-resource://diagram/library/<id>` names no conversation at all,
+which is what makes it durable and what lets one tab type claim both address
+shapes. The artifact cache stays global and content-addressed, so the library
+copy of a diagram compiles to the SAME artifact as the conversation copy - which
+is also why deleting a diagram no longer drops its hash blindly: an identical
+diagram elsewhere is the same file.
+
 **Why the state is a file, not a session event.** The first design appended
 `diagram/write` to the session, folded it into a projection, and let the client
 read it with `useProjection`. It cannot work on this line:

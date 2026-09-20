@@ -67,6 +67,21 @@ and the exact wording of every parse error and lint finding - read
 folder. It carries the readability budgets, the layout recipes and full sources
 that the host has actually parsed.
 
+## Publishing a diagram you will want again
+
+A diagram belongs to the conversation that drew it unless you say otherwise. When
+it is worth citing later - a reference figure, a model diagram, an architecture
+picture - put it in the shared **library** instead:
+
+- `diagram_write { ..., scope: "library" }` writes it there directly, or
+  `diagram_publish { id }` copies one you already have.
+- Its address is `dsh-resource://diagram/library/<id>`: it names no conversation,
+  so the id resolves in ANY chat, and `diagram_read { id: "jepa-model" }` finds
+  the shared diagram from a conversation that never saw it written.
+- A bare id resolves **library-first**, so the same citation means the same
+  picture everywhere. Keep scratch work in the conversation (the default) and the
+  library stays worth reading.
+
 ## Verifying without changing anything
 
 **`diagram_verify { id }`** re-parses the stored source and reports the status,

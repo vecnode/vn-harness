@@ -27,6 +27,70 @@ function check(label, actual, expected) {
   return ok
 }
 
+/**
+ * The subset of JSON Schema the tool registry enforces, applied to a returned
+ * value.
+ *
+ * The diagrams below drive `execute()` directly - the same seam the agent loop
+ * uses - so NOTHING else here would notice a value that contradicts the schema
+ * the model was handed. That gap shipped two bugs: `verification.reported: null`
+ * against `type: "integer"` made every fresh write fail at the registry with
+ * "must be an integer", and `error: undefined` failed the registry's
+ * lossless-JSON rule. A key that is only sometimes meaningful must be ABSENT,
+ * and this is what says so.
+ *
+ * @param schema - the tool's declared `output.schema`.
+ * @param value - the value `execute()` returned.
+ * @param label - the path shown in a failure.
+ * @returns an array of problems (empty when the value conforms).
+ */
+function schemaErrors(schema, value, label = 'value') {
+  const problems = []
+  if (!schema || typeof schema !== 'object') return problems
+  const actual = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
+  if (schema.type) {
+    const wanted = Array.isArray(schema.type) ? schema.type : [schema.type]
+    const matches = wanted.some((one) => {
+      if (one === 'integer') return Number.isInteger(value)
+      if (one === 'number') return typeof value === 'number'
+      if (one === 'string') return typeof value === 'string'
+      if (one === 'boolean') return typeof value === 'boolean'
+      if (one === 'array') return Array.isArray(value)
+      if (one === 'object') return actual === 'object'
+      if (one === 'null') return value === null
+      return true
+    })
+    if (!matches) problems.push(label + ' must be ' + wanted.join('|') + ' (got ' + actual + ')')
+  }
+  if (schema.enum && !schema.enum.includes(value)) problems.push(label + ' is not one of ' + schema.enum.join(','))
+  if (Array.isArray(value) && schema.items) {
+    value.forEach((item, index) => problems.push(...schemaErrors(schema.items, item, label + '[' + index + ']')))
+  }
+  if (value !== null && actual === 'object' && schema.properties) {
+    for (const key of Object.keys(schema.properties)) {
+      if (value[key] === undefined) continue
+      problems.push(...schemaErrors(schema.properties[key], value[key], label + '.' + key))
+    }
+    for (const key of schema.required ?? []) {
+      if (value[key] === undefined) problems.push(label + '.' + key + ' is required')
+    }
+  }
+  return problems
+}
+
+/** The value must also survive a JSON round trip with every key intact. */
+function losslessErrors(value, label = 'value') {
+  if (value === null || typeof value !== 'object') return []
+  const keys = Object.keys(value)
+  const round = JSON.parse(JSON.stringify(value))
+  const problems = []
+  for (const key of keys) {
+    if (!Object.hasOwn(round, key)) problems.push(label + '.' + key + ' is dropped by JSON.stringify (undefined)')
+    else problems.push(...losslessErrors(value[key], label + '.' + key))
+  }
+  return problems
+}
+
 /** Register one row against a stub context and hand back its route handler. */
 async function capture(modulePath, routePath, ctx) {
   const module = await import(pathToFileURL(modulePath).href)
@@ -545,7 +609,7 @@ try {
   check(
     'diagrams: tools registered',
     diagTools.map((tool) => tool.name).sort().join(','),
-    'diagram_delete,diagram_patch,diagram_read,diagram_verify,diagram_write',
+    'diagram_delete,diagram_patch,diagram_publish,diagram_read,diagram_verify,diagram_write',
   )
   check(
     'diagrams: every tool declares a JSON-schema surface',
@@ -811,8 +875,11 @@ try {
   // partial picture is evidence), and reading that back as "ok" was the plugin
   // telling the model its own diagram was fine.
   const stubStore = new DiagramStore({ root: path.join(diagramsHome, 'stub-state') })
+  const stubLibrary = new DiagramStore({ root: path.join(diagramsHome, 'stub-state'), fixedFile: 'library.json' })
   const stubTools = diagramsModule.buildTools({
     store: stubStore,
+    library: stubLibrary,
+    storeFor: (scopeKey) => (scopeKey === 'library' ? stubLibrary : stubStore),
     cache: {
       keyFor: () => 'a'.repeat(24),
       meta: () => ({
@@ -837,6 +904,70 @@ try {
     .execute({ id: 'cached-failure' }, { agent: { session: { id: 'session-cached' } }, signal: new AbortController().signal })
   check('diagrams: a cache hit keeps the verdict it was cached with', cachedVerdict.status, 'error')
   check('diagrams: the cached diagnostics still reach the model', /stubbed/.test(cachedVerdict.text), true)
+
+  // --- THE LIBRARY. One store for the whole harness, which is what makes an id
+  // citable from a conversation that never saw it written - and what makes a
+  // diagram outlive the chat it was drawn in. `session-elsewhere` stands in for
+  // "another chat" everywhere below.
+  const otherExec = { agent: { session: { id: 'session-elsewhere' } }, signal: new AbortController().signal }
+  const sharedWrite = await tool('diagram_write').execute(
+    { kind: 'mermaid', id: 'jepa-model', title: 'JEPA model', scope: 'library', source: 'flowchart TD\n  A[Context x] --> B[Encoder]' },
+    exec,
+  )
+  check('diagrams: a library write lands in the library', sharedWrite.view.scope, 'library')
+  check('diagrams: the library address names no conversation', sharedWrite.view.address, 'dsh-resource://diagram/library/jepa-model')
+  const fromElsewhere = await tool('diagram_read').execute({ id: 'jepa-model' }, otherExec)
+  check('diagrams: another conversation reads a library id alone', /in the shared library/.test(fromElsewhere.text) && /flowchart TD/.test(fromElsewhere.text), true)
+  check('diagrams: the reading conversation resolved the library', fromElsewhere.scope, 'library')
+  check('diagrams: the library is ONE file at the store root', existsSync(path.join(diagramsHome, 'dsh-diagrams', 'library.json')), true)
+
+  const published = await tool('diagram_publish').execute({ id: 'auth-flow' }, exec)
+  check('diagrams: publishing copies into the library', published.view.scope + ':' + published.address, 'library:dsh-resource://diagram/library/auth-flow')
+  const readPublished = await tool('diagram_read').execute({ id: 'auth-flow', includeSource: false }, otherExec)
+  check('diagrams: the published diagram reaches another chat', readPublished.scope + ':' + readPublished.status, 'library:ok')
+  const missingPublish = await tool('diagram_publish').execute({ id: 'nothing-here' }, exec)
+  check('diagrams: publishing what is not there says so', /nothing to publish/.test(missingPublish.text), true)
+
+  // The library WINS over a conversation id of the same name: "read X" has to
+  // mean the shared diagram, or a citation would resolve differently per chat.
+  await tool('diagram_write').execute({ kind: 'mermaid', id: 'shadow', title: 'local shadow', source: 'flowchart TD\n  L[local] --> M[local]' }, exec)
+  await tool('diagram_write').execute({ kind: 'mermaid', id: 'shadow', title: 'library shadow', scope: 'library', source: 'flowchart TD\n  S[shared] --> T[shared]' }, exec)
+  check('diagrams: a bare id resolves to the library first', (await tool('diagram_read').execute({ id: 'shadow', includeSource: false }, exec)).scope, 'library')
+  check(
+    'diagrams: an explicit scope reaches the conversation copy',
+    (await tool('diagram_read').execute({ id: 'shadow', scope: 'conversation', includeSource: false }, exec)).scope,
+    'conversation',
+  )
+  await tool('diagram_write').execute({ kind: 'mermaid', id: 'local-only', title: 'Local only', source: 'flowchart TD\n  P[private] --> Q[private]' }, exec)
+  const elsewhereLocal = await tool('diagram_read').execute({ id: 'local-only', scope: 'conversation' }, otherExec)
+  check('diagrams: a conversation diagram is invisible elsewhere', /No diagram "local-only"/.test(elsewhereLocal.text), true)
+  check(
+    'diagrams: this conversation still sees its own diagram',
+    (await tool('diagram_read').execute({ id: 'local-only', scope: 'conversation', includeSource: false }, exec)).scope,
+    'conversation',
+  )
+  check(
+    'diagrams: the library is patched by id from another chat',
+    (await tool('diagram_patch').execute({ id: 'jepa-model', oldString: 'Context x', newString: 'Context $x$' }, otherExec)).view.scope,
+    'library',
+  )
+
+  // --- the routes carry the library too: the client shows it in every
+  // conversation without a second store.
+  const stateHere = await (await getJson('/api/dsh-diagrams/state', 'session=session-diagrams')).json()
+  const stateElsewhere = await (await getJson('/api/dsh-diagrams/state', 'session=session-elsewhere')).json()
+  check('diagrams: state carries the library', stateHere.library.some((entry) => entry.id === 'jepa-model'), true)
+  check('diagrams: library summaries name their scope', stateHere.library.every((entry) => entry.scope === 'library'), true)
+  check('diagrams: the library is the same in every conversation', stateElsewhere.library.length, stateHere.library.length)
+  check('diagrams: another conversation has no diagrams of its own', stateElsewhere.diagrams.length, 0)
+  const oneShared = await (await getJson('/api/dsh-diagrams/diagram', 'session=session-elsewhere&id=jepa-model&scope=library')).json()
+  check('diagrams: one library diagram is readable by scope', oneShared.diagram.scope + ':' + oneShared.diagram.address, 'library:dsh-resource://diagram/library/jepa-model')
+  const elsewhereReport = await (
+    await post('/api/dsh-diagrams/render-report', { session: 'session-elsewhere', id: 'jepa-model', scope: 'library', revision: 1, kind: 'mermaid', ok: true })
+  ).json()
+  check('diagrams: a render report lands on the library copy', elsewhereReport.stored + ':' + elsewhereReport.scope, 'true:library')
+  const droppedShared = await (await post('/api/dsh-diagrams/diagram', { session: 'session-diagrams', id: 'shadow', scope: 'library', delete: true })).json()
+  check('diagrams: the library copy can be deleted by scope', droppedShared.deleted, true)
 
   // --- the state file is the source of truth for the panels
   const state = await (await getJson('/api/dsh-diagrams/state', 'session=session-diagrams')).json()
@@ -953,6 +1084,21 @@ try {
   check('diagrams: delete removes the diagram', removed.deleted, true)
   const afterDelete = await (await getJson('/api/dsh-diagrams/state', 'session=session-diagrams')).json()
   check('diagrams: the state no longer lists it', afterDelete.diagrams.some((entry) => entry.id === 'layers'), false)
+
+  // --- every returned value must satisfy the schema the tool DECLARES and
+  // survive a JSON round trip: the registry enforces both, and nothing else in
+  // this file would notice a value it refuses. That gap let `reported: null`
+  // against `type: "integer"` ship, which made every fresh write fail in front
+  // of the model with "must be an integer".
+  const shapeProblems = [
+    ['diagram_write', goodMermaid],
+    ['diagram_patch', patched],
+    ['diagram_read', read],
+    ['diagram_verify', verified],
+    ['diagram_publish', published],
+    ['diagram_delete', removed],
+  ].flatMap(([name, value]) => [...schemaErrors(tool(name).output.schema, value, name), ...losslessErrors(value, name)])
+  check('diagrams: tool results match their declared schema', shapeProblems.length === 0 ? 'ok' : shapeProblems.join(' | '), 'ok')
 
   // --- the child validator itself: a parse error is a verdict, not a crash
   const { spawnSync } = await import('node:child_process')
