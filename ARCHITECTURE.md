@@ -576,13 +576,14 @@ Design points worth keeping:
   presenter writes the definition's alias tokens as inline `body` variables over
   the base palette `colorScheme` selects, and `getTheme().themes` publishes the
   registry. The control iterates that list and appends `system` last, so
-  `THEME_EXTENSIONS` (this package's **Nord**) is the only place a palette is
-  declared — and a theme another plugin registers shows up too, named by its id
-  with the generic mark. Registration is idempotent and retried on the post-boot
-  microtask and on every `theme/change`, because ui-theme may provide its service
-  a tick after this row. An extension theme is IN-PROCESS by the shipped design:
-  the durable preference schema accepts `light` / `dark` / `system` only, so a
-  reload returns to the stored built-in.
+  `THEME_EXTENSIONS` (this package's **Nord** and, since alpha.13, **Monokai** —
+  the classic TextMate palette, registered after Nord in the same 93-token shape)
+  is the only place a palette is declared — and a theme another plugin registers
+  shows up too, named by its id with the generic mark. Registration is idempotent
+  and retried on the post-boot microtask and on every `theme/change`, because
+  ui-theme may provide its service a tick after this row. An extension theme is
+  IN-PROCESS by the shipped design: the durable preference schema accepts
+  `light` / `dark` / `system` only, so a reload returns to the stored built-in.
 - **Only seeded modules at runtime.** The bundle requires `react` and
   `@deepseek-ai/dsh-client-ui-primitives` (`Menu`, `Tooltip` and the three
   appearance glyphs), so it adds one entry to the boot graph and no new module

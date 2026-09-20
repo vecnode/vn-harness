@@ -1,4 +1,4 @@
-# dsh-themes (alpha.12)
+# dsh-themes (alpha.13)
 
 **The pack's conversation-header package.** It owns three controls on that header
 and the appearance overrides that dress it.
@@ -8,9 +8,9 @@ the size and dress of the header's other icon buttons, sitting immediately **lef
 of the shipped "Open In…" control**. Pressing it opens a menu with the three
 appearances the product already offers — **Light**, **Dark** and **System** — plus
 every theme **registered into the shipped theme registry** (alpha.12), which is
-where this package's own **Nord** comes from. The button wears one static
-appearance mark rather than the active preference's sun/moon. See
-[Registered themes](#registered-themes-alpha12-nord).
+where this package's own **Nord** and **Monokai** (alpha.13) come from. The button
+wears one static appearance mark rather than the active preference's sun/moon. See
+[Registered themes](#registered-themes-nord-alpha12-and-monokai-alpha13).
 
 **2. The Session-log download seat** (alpha.9) — the shipped
 `@deepseek-ai/dsh-session-log-export` browser half put a **three-dot "more
@@ -61,9 +61,9 @@ It is a thin control, not a second theme system:
 
 It can also **register** themes through that same service (`ctx.theme.register`,
 ui-theme's documented third-party surface) — see
-[Registered themes](#registered-themes-alpha12-nord).
+[Registered themes](#registered-themes-nord-alpha12-and-monokai-alpha13).
 
-## Registered themes (alpha.12): Nord
+## Registered themes: Nord (alpha.12) and Monokai (alpha.13)
 
 The **registry is the extension point**, and this package uses it.
 `@deepseek-ai/dsh-client-ui-theme` exposes `register({ id, colorScheme, tokens })`;
@@ -100,6 +100,34 @@ frame's own hairline, not by a lighter rail), a code fence sits one step above i
 and the syntax colours follow the rules nord-vim follows: keywords and comments in
 Frost `#81a1c1`, functions and links in `#88c0d0`, strings in Aurora green,
 numbers in `#b48ead`.
+
+### Monokai (alpha.13)
+
+**Monokai** ([monokai.nl](https://monokai.nl/)) is the classic TextMate palette
+Wimer Hazenberg wrote for Coda, registered on the **dark** base palette with the
+same 93 token overrides Nord carries — 73 alias, 11 `--dsw-specific-*` and the
+nine shiki syntax tokens:
+
+| Monokai | Values | What they paint here |
+|---|---|---|
+| Surfaces | `#272822` `#2f3029` `#3e3d32` `#49483e` | the page, the raised step, and the theme's own line-highlight and selection steps — menus, code blocks, scrollbars |
+| Text | `#f8f8f2` `#dadad5` `#b6b4a8` `#75715e` | the off-white body, its 12% darker step, the comment grey lifted halfway back to the body, and the comment grey itself as the quietest tier |
+| Warm accents | `#f92672` `#fd971f` `#e6db74` | the pink brand — switches, focus rings, the primary button, errors — plus orange parameters and the warn step, and yellow strings and warning |
+| Cool accents | `#66d9ef` `#ae81ff` `#a6e22e` | cyan links, the info state and the ghost-active border, purple constants, green functions and success |
+
+`#272822` is the page for the conversation **and** the sidebar, the theme's line
+highlight (`#3e3d32`) is one step above it and its selection (`#49483e`) the step
+above that, so a code fence, a menu and a selected row are all steps of the same
+near-black. The syntax tokens carry the classic Monokai roles unchanged — keywords
+and tags pink, constants purple, strings yellow, comments the olive grey,
+parameters orange, functions green, punctuation the off-white body.
+
+Steps the classic palette does not define are **derived from its own colours**
+rather than invented: the primary button's hover is Monokai Pro's pink `#ff6188`,
+its dimmed fill is the pink darkened 28% (`#b31b52`), the cyan's hover is the cyan
+lifted a fifth toward white (`#85e1f2`), and the two text tiers between the body
+and the comment grey are the body darkened 12% (`#dadad5`) and the comment grey
+lifted halfway back to the body (`#b6b4a8`).
 
 **Why the alias layer and not the `--dsw-static-*` ramp.** A static is shared by
 roles that are not the same role — in the dark palette `neutral-bluish-50` is both
@@ -508,12 +536,12 @@ lib/index.js       Node half: one authenticated route, POST /api/dsh-themes/scre
                    which writes the client's PNG to this machine's Desktop (the
                    browser bundle needs no host otherwise)
 lib/client.js      Browser half: the Screenshot button (capture + save), the Themes
-                   button + menu, the registered themes (THEME_EXTENSIONS: Nord and
-                   its token map, registered through ctx.theme), the Session-log
-                   download seat (same slot, shipped id at a lower priority) with its
-                   export dialog, the theme snapshot reader, and the appearance
-                   overrides (the Markdown paper, the Markdown chrome, the left
-                   column's top bar, the header ring)
+                   button + menu, the registered themes (THEME_EXTENSIONS: Nord's
+                   and Monokai's token maps and menu glyphs, registered through
+                   ctx.theme), the Session-log download seat (same slot, shipped id
+                   at a lower priority) with its export dialog, the theme snapshot
+                   reader, and the appearance overrides (the Markdown paper, the
+                   Markdown chrome, the left column's top bar, the header ring)
 ```
 
 ## Behaviour worth keeping
@@ -537,9 +565,10 @@ lib/client.js      Browser half: the Screenshot button (capture + save), the The
   its id, with the generic appearance mark, since this package has no words or
   glyph for it.
 - **Extension themes do not touch the durable preference.** `setTheme` only writes
-  `light` / `dark` / `system` through the settings scope, so selecting Nord leaves
-  the stored preference alone — which is exactly why it is session-scoped, and why
-  this package does not fake a persistence layer of its own.
+  `light` / `dark` / `system` through the settings scope, so selecting Nord or
+  Monokai leaves the stored preference alone — which is exactly why it is
+  session-scoped, and why this package does not fake a persistence layer of its
+  own.
 - **Same switch, both surfaces.** Because the write goes through
   `theme.setTheme(id)`, no second copy of the preference (and no second
   persistence path) exists to drift.

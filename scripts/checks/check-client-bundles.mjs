@@ -502,6 +502,7 @@ const themesCopy = {
   'theme.dark': 'Dark',
   'theme.system': 'System',
   'theme.nord': 'Nord',
+  'theme.monokai': 'Monokai',
   'theme.current': 'Theme: {name}',
   'theme.unavailable': 'The theme service is unavailable',
   'download.title': 'Download session log',
@@ -538,13 +539,20 @@ check('themes adopts the written value', themesFacade.themeState.getSnapshot().p
 for (const listener of themeEvents) listener({ preference: 'system', active: { id: 'system', colorScheme: 'dark' }, revision: 9 })
 check('themes follows theme/change', themesFacade.themeState.getSnapshot().preference, 'system')
 
-// --------------------------------------------- the theme extensions (Nord)
+// ------------------------------------- the theme extensions (Nord, Monokai)
 // alpha.12: this package REGISTERS its own palettes into the shipped registry
 // and the control's menu is built FROM that registry, so a theme this pack adds
 // becomes selectable by being registered - there is no second list to keep in
-// step. Nord rides the dark base palette and recolors the alias layer only.
+// step. Nord rides the dark base palette and recolors the alias layer only;
+// Monokai (alpha.13) sits after it in THEME_EXTENSIONS, which is the order the
+// registration loop walks and therefore the order the menu draws.
 const nord = themeRegistrations.find((theme) => theme.id === 'nord')
-check('nord is registered into the registry', themeRegistrations.map((theme) => theme.id).join(','), 'nord')
+const monokai = themeRegistrations.find((theme) => theme.id === 'monokai')
+check(
+  'the registered themes are nord then monokai',
+  themeRegistrations.map((theme) => theme.id).join(','),
+  'nord,monokai',
+)
 check('nord rides the dark base palette', nord && nord.colorScheme, 'dark')
 check(
   'nord overrides token variables only',
@@ -560,6 +568,31 @@ check('nord paints the Frost accent', nord && nord.tokens['--dsw-alias-brand-pri
 check('nord keeps the sidebar on the page colour', nord && nord.tokens['--dsw-specific-sidebar-fill'], '#2e3440')
 check('nord brings its own copy', themeLocales.themes.en['theme.nord'], 'Nord')
 check('nord copy is in both dictionaries', themeLocales.themes.zh['theme.nord'], 'Nord')
+check('monokai rides the dark base palette', monokai && monokai.colorScheme, 'dark')
+check(
+  'monokai overrides token variables only',
+  monokai &&
+    Object.keys(monokai.tokens).every(
+      (name) => name.startsWith('--dsw-alias-') || name.startsWith('--dsw-specific-') || name.startsWith('--shiki-token-'),
+    ),
+  true,
+)
+check('monokai paints the classic near-black page', monokai && monokai.tokens['--dsw-alias-bg-base'], '#272822')
+check('monokai paints the off-white body', monokai && monokai.tokens['--dsw-alias-label-primary'], '#f8f8f2')
+check('monokai paints the keyword pink accent', monokai && monokai.tokens['--dsw-alias-brand-primary'], '#f92672')
+check(
+  'monokai keeps the sidebar on the page colour',
+  monokai && monokai.tokens['--dsw-specific-sidebar-fill'],
+  '#272822',
+)
+check('monokai paints the classic comment grey', monokai && monokai.tokens['--shiki-token-comment'], '#75715e')
+check('monokai brings its own copy', themeLocales.themes.en['theme.monokai'], 'Monokai')
+check('monokai copy is in both dictionaries', themeLocales.themes.zh['theme.monokai'], 'Monokai')
+check(
+  'the registered themes cover the same token names',
+  JSON.stringify(Object.keys(monokai.tokens).sort()) === JSON.stringify(Object.keys(nord.tokens).sort()),
+  true,
+)
 // The button wears ONE static appearance mark: it used to paint the active
 // preference's own sun/moon, which left a registered theme with nothing to draw.
 // A static render answers from `getServerSnapshot` (the service is browser-side),
@@ -568,6 +601,10 @@ check('nord copy is in both dictionaries', themeLocales.themes.zh['theme.nord'],
 for (const listener of themeEvents) listener({ preference: 'nord', active: nord, themes: themeSnapshot.themes, revision: 11 })
 const nordMarkup = renderToStaticMarkup(h(ThemesAction, { t: themesT, themeState: themesFacade.themeState }))
 check('the control reads the registered theme', themesFacade.themeState.getSnapshot().themes.some((theme) => theme.id === 'nord'))
+check(
+  'the control reads the second registered theme',
+  themesFacade.themeState.getSnapshot().themes.some((theme) => theme.id === 'monokai'),
+)
 check('themes button wears the static mark', nordMarkup.includes('M8 2.4A5.6 5.6 0 0 1 8 13.6Z'))
 // The dictionaries really carry the download copy (the renders below use the
 // registered English dictionary, so this is what the app would show).

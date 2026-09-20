@@ -11,8 +11,9 @@
  *    this one at -20). Pressing it opens a menu holding the appearances the
  *    product already offers - Light, Dark, System, exactly the choice Settings >
  *    General > Appearance presents - plus every theme REGISTERED into the shipped
- *    registry (this pack's own **Nord**, alpha.12). The button wears ONE static
- *    "appearance" mark (alpha.12) rather than the active preference's sun/moon: a
+ *    registry (this pack's own **Nord** and **Monokai**, alpha.12/alpha.13). The
+ *    button wears ONE static "appearance" mark (alpha.12) rather than the active
+ *    preference's sun/moon: a
  *    registered palette has no shipped glyph to wear, and the menu - and the
  *    tooltip, which names the active theme - is where the choice is.
  *
@@ -233,6 +234,7 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       'theme.dark': '深色',
       'theme.system': '跟随系统',
       'theme.nord': 'Nord',
+      'theme.monokai': 'Monokai',
       'theme.current': '主题：{name}',
       'theme.menu': '选择应用主题',
       'theme.unavailable': '主题服务不可用',
@@ -261,6 +263,7 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       'theme.dark': 'Dark',
       'theme.system': 'System',
       'theme.nord': 'Nord',
+      'theme.monokai': 'Monokai',
       'theme.current': 'Theme: {name}',
       'theme.menu': 'Choose the app theme',
       'theme.unavailable': 'The theme service is unavailable',
@@ -388,6 +391,37 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
         h('path', { d: 'M8 2.6v10.8' }),
         h('path', { d: 'M3.32 5.3 12.68 10.7' }),
         h('path', { d: 'M12.68 5.3 3.32 10.7' }),
+      )
+    }
+
+    /**
+     * Monokai's own glyph in the menu: a pair of braces - the palette is a
+     * syntax-highlighting scheme, and braces are the mark it is usually drawn
+     * with. Same 16px box and the same 1.2px weight as every other glyph in that
+     * menu.
+     */
+    function IconBracesOutline16(props) {
+      const size = props && typeof props.size === 'number' ? props.size : 16
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': 'true',
+          focusable: 'false',
+        },
+        h('path', {
+          d: 'M6.5 2.5c-1.5 0-2 1-2 2.2 0 1.3-.2 1.9-1.5 2.3 1.3.4 1.5 1 1.5 2.3 0 1.2.5 2.2 2 2.2',
+        }),
+        h('path', {
+          d: 'M9.5 2.5c1.5 0 2 1 2 2.2 0 1.3.2 1.9 1.5 2.3-1.3.4-1.5 1-1.5 2.3 0 1.2-.5 2.2-2 2.2',
+        }),
       )
     }
 
@@ -527,6 +561,155 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
     })
 
     /**
+     * MONOKAI (monokai.nl) on the DARK base palette: the classic TextMate theme
+     * Wimer Hazenberg wrote for Coda - the near-black warm page (`#272822`), the
+     * off-white body (`#f8f8f2`), the pink keywords (`#f92672`), the cyan types
+     * (`#66d9ef`), the yellow strings (`#e6db74`), the green functions
+     * (`#a6e22e`), the orange parameters (`#fd971f`), the purple constants
+     * (`#ae81ff`) and the olive comment grey (`#75715e`), with the theme's own
+     * line highlight (`#3e3d32`) and selection (`#49483e`) as the surface steps.
+     *
+     * Same rules as Nord above: every name is an alias the app already asks for,
+     * so the palette reaches the bars, panes, menus, buttons, code blocks,
+     * scrollbars, tooltips and the four state colours, and the aliases NOT named
+     * here keep their shipped dark value (the scheme-neutral scrims, elevation
+     * strokes and shadow scale).
+     *
+     * Where the classic palette has no second step for a hover or a pressed
+     * fill, the step is DERIVED from the palette's own colour rather than
+     * invented: the pink lightens to Monokai Pro's `#ff6188` on hover and
+     * darkens to `#b31b52` when dimmed, the cyan lifts a fifth toward white for
+     * its hover, and the two text tiers between the body and the comment grey
+     * are the body darkened 12% (`#dadad5`) and the comment grey lifted halfway
+     * back to the body (`#b6b4a8`).
+     */
+    const MONOKAI_TOKENS = Object.freeze({
+      // The surfaces. The page is the classic `#272822`, the raised step is the
+      // theme's line highlight (`#3e3d32`) and the selection (`#49483e`) is the
+      // highest one - so a menu, a bubble and a selected row read as steps of the
+      // same near-black, the way the editor draws them.
+      '--dsw-alias-bg-base': '#272822',
+      '--dsw-specific-sidebar-fill': '#272822',
+      '--dsw-alias-bg-layer-1': '#2f3029',
+      '--dsw-alias-bg-layer-2': '#2f3029',
+      '--dsw-alias-bg-layer-3': '#3e3d32',
+      '--dsw-alias-bg-overlay': '#3e3d32',
+      '--dsw-alias-bg-module-platform': '#2f3029',
+      '--dsw-alias-bg-multi-select': '#3e3d32',
+      '--dsw-alias-bg-skeleton': '#f8f8f214',
+      '--dsw-specific-menu': '#3e3d32',
+      '--dsw-specific-selector': '#3e3d32',
+      '--dsw-specific-bubble': '#2f3029',
+      '--dsw-specific-bubble-highlight': '#3e3d32',
+      '--dsw-specific-input-major': '#2f3029',
+      '--dsw-specific-login-input': '#272822',
+      '--dsw-specific-sidebar-nav-item-hover': '#2f3029',
+      '--dsw-specific-sidebar-nav-item-active': '#3e3d32',
+      '--dsw-specific-sidebar-nav-item-active-accent': '#49483e',
+      '--dsw-specific-tip': '#2f3029',
+      '--dsw-alias-tooltip-bg': '#3e3d32',
+      '--dsw-alias-toast-bg': '#3e3d32',
+      // The text ladder: the body is the off-white `#f8f8f2`, the two quieter
+      // tiers its 12% darker step and the comment grey lifted halfway back to it,
+      // and the quietest is the palette's own `#75715e`.
+      '--dsw-alias-label-primary': '#f8f8f2',
+      '--dsw-alias-label-primary-bluish': '#f8f8f2',
+      '--dsw-alias-label-primary-dimmed': '#dadad5',
+      '--dsw-alias-label-primary-inverted': '#272822',
+      '--dsw-alias-label-primary-foreground': '#272822',
+      '--dsw-alias-label-secondary': '#dadad5',
+      '--dsw-alias-label-tertiary': '#b6b4a8',
+      '--dsw-alias-label-caption': '#b6b4a8',
+      '--dsw-alias-label-dimmed': '#75715e',
+      // The accent. Monokai's signature is the pink it paints keywords with, so
+      // that is the brand (switches, focus rings, the primary button) and a dark
+      // `#272822` foreground keeps the fill legible; links take the cyan the
+      // palette paints types with, which reads better than pink for body copy.
+      '--dsw-alias-brand-primary': '#f92672',
+      '--dsw-alias-brand-primary-invert': '#272822',
+      // The right bar's active-tab caret and the dock hint accent read this one,
+      // not `brand-primary` (ui-sidebar-right's own generated token name), so
+      // Monokai has to name it too or a DeepSeek blue would mark the active tab.
+      '--dsw-alias-brand-primary-new-colorprimary-new-color': '#f92672',
+      '--dsw-alias-brand-text': '#f92672',
+      '--dsw-alias-link': '#66d9ef',
+      '--dsw-alias-button-primary-fill': '#f92672',
+      '--dsw-alias-button-primary-hover': '#ff6188',
+      '--dsw-alias-button-primary-dimmed': '#b31b52',
+      '--dsw-alias-button-info-fill': '#66d9ef',
+      '--dsw-alias-button-info-hover': '#85e1f2',
+      '--dsw-alias-button-contrast-fill': '#f8f8f2',
+      '--dsw-alias-button-elevated-fill': '#49483e',
+      // The floating tool-bar chip (the code block's own toolbar) is a
+      // translucent grey by default: the same weight, tinted with the selection.
+      '--dsw-alias-button-tool-bar-fill': '#49483e80',
+      '--dsw-alias-button-tool-bar-hover': '#49483e99',
+      '--dsw-alias-button-floating-fill': '#3e3d32',
+      '--dsw-alias-button-floating-hover': '#49483e',
+      '--dsw-alias-button-ghost-active-border': '#66d9ef',
+      '--dsw-alias-button-ghost-active-fill': '#49483e',
+      '--dsw-alias-button-ghost-active-hover': '#3e3d32',
+      // The interaction washes and the card borders: the shipped palette uses
+      // white alphas on dark, so these are the same weights tinted with the
+      // off-white body instead - the warm cast is what makes them read as Monokai.
+      '--dsw-alias-interactive-bg-hover': '#f8f8f21a',
+      '--dsw-alias-interactive-bg-hover-solid': '#49483e',
+      '--dsw-alias-interactive-bg-hover-accent': '#f9267240',
+      '--dsw-alias-interactive-bg-hover-danger': '#f926722e',
+      '--dsw-alias-interactive-bg-active': '#f8f8f226',
+      '--dsw-alias-border-inverted': '#f8f8f20f',
+      '--dsw-alias-border-inverted2': '#f8f8f214',
+      '--dsw-alias-border-l1': '#f8f8f20f',
+      '--dsw-alias-border-l2': '#f8f8f221',
+      '--dsw-alias-border-l2-darkmode-thin': '#f8f8f20f',
+      '--dsw-alias-border-l3': '#f8f8f22e',
+      '--dsw-alias-border-l4': '#f8f8f238',
+      // The four states, in the palette's own language: pink for an error (that
+      // is the colour Monokai marks a bad token with), green for success, the
+      // yellow/orange pair for a warning and the cyan for business.
+      '--dsw-alias-state-error-primary': '#f92672',
+      '--dsw-alias-state-error-secondary': '#f92672',
+      '--dsw-alias-state-success-primary': '#a6e22e',
+      '--dsw-alias-state-success-secondary': '#a6e22e',
+      '--dsw-alias-state-success-tertiary': '#a6e22e2e',
+      '--dsw-alias-state-warn-primary': '#e6db74',
+      '--dsw-alias-state-warn-secondary': '#fd971f',
+      '--dsw-alias-state-warn-label': '#e6db74',
+      '--dsw-alias-state-warn-tertiary': '#e6db742e',
+      '--dsw-alias-state-business-primary': '#66d9ef',
+      '--dsw-alias-state-business-tertiary': '#ae81ff',
+      // Code: a block sits one step ABOVE the page (the line highlight), its
+      // banner and the inline chip one more (the selection), so a fence is
+      // visible without a border.
+      '--dsw-alias-markdown-code-block': '#3e3d32',
+      '--dsw-alias-markdown-code-block-banner': '#49483e',
+      '--dsw-alias-markdown-code-segment-selected': '#49483e',
+      '--dsw-alias-markdown-code-segment-unselected': '#3e3d32',
+      '--dsw-alias-markdown-inline-code': '#49483e',
+      '--dsw-alias-markdown-placeholder': '#3e3d32',
+      '--dsw-alias-markdown-tag': '#49483e',
+      '--dsw-alias-markdown-citation': '#3e3d32',
+      // Syntax highlighting: the classic Monokai roles, unchanged - keywords and
+      // tags pink, constants purple, strings yellow, comments the olive grey,
+      // parameters orange, functions green, punctuation the off-white body.
+      '--shiki-token-keyword': '#f92672',
+      '--shiki-token-constant': '#ae81ff',
+      '--shiki-token-string': '#e6db74',
+      '--shiki-token-string-expression': '#e6db74',
+      '--shiki-token-comment': '#75715e',
+      '--shiki-token-parameter': '#fd971f',
+      '--shiki-token-function': '#a6e22e',
+      '--shiki-token-punctuation': '#f8f8f2',
+      '--shiki-token-link': '#66d9ef',
+      // Scrollbars: the shipped pair is bound to the l1/l2 surface tokens, so
+      // the thumb is a Monokai surface step and its hover the pink accent.
+      '--dsw-alias-scrollbar-bg-l1': '#3e3d32',
+      '--dsw-alias-scrollbar-bg-l2': '#49483e',
+      '--dsw-alias-scrollbar-hover-l1': '#49483e',
+      '--dsw-alias-scrollbar-hover-l2': '#f92672',
+    })
+
+    /**
      * The themes this package registers, in menu order. Adding one is one entry
      * here plus its copy (`theme.<id>`, in both dictionaries); the registration
      * below is what makes it selectable, and the menu picks it up from the
@@ -539,6 +722,13 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
         colorScheme: 'dark',
         tokens: NORD_TOKENS,
         Icon: IconSnowflakeOutline16,
+      }),
+      Object.freeze({
+        id: 'monokai',
+        label: 'theme.monokai',
+        colorScheme: 'dark',
+        tokens: MONOKAI_TOKENS,
+        Icon: IconBracesOutline16,
       }),
     ])
 
@@ -1064,10 +1254,11 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
      * One menu entry's copy and glyph, by theme id.
      *
      * The shipped three keep their own words and icons; an extension theme
-     * carries its own (Nord: `theme.nord` and the snowflake); and a theme some
-     * OTHER plugin registered - a valid case, the registry is shared - is named
-     * by its id and wears the generic appearance mark rather than a glyph this
-     * package would be inventing for it.
+     * carries its own (Nord: `theme.nord` and the snowflake; Monokai:
+     * `theme.monokai` and the braces); and a theme some OTHER plugin registered -
+     * a valid case, the registry is shared - is named by its id and wears the
+     * generic appearance mark rather than a glyph this package would be
+     * inventing for it.
      * @param id - a theme id, or the `system` preference.
      * @returns `{ id, label, Icon }`, where `label` is a locale key or `null`.
      */
