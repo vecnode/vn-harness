@@ -1284,6 +1284,13 @@ check('engine fixtures are swept even when the render throws', /finally \{[\s\S]
 // throwing, so no surface has to remember the parse/render order.
 check('the pictures go through the safe renderer', diagSource.includes('renderMermaidSafe(source, dark)'))
 check('exports refuse a diagram that does not render', /async function mermaidSvgNow[\s\S]{0,400}if \(!result\.ok\)/.test(diagSource))
+// A Mermaid source the host already refused is never handed to the engine: it
+// has no picture to make, and asking anyway is exactly what used to produce an
+// engine error diagram.
+check(
+  'a refused Mermaid source is never rendered',
+  /entry\.kind === 'mermaid' && entry\.status === 'error'/.test(diagSource) && diagSource.includes('does not parse, so there is nothing to draw'),
+)
 
 console.log('')
 console.log(failures === 0 ? 'all client-bundle checks passed' : failures + ' check(s) FAILED')

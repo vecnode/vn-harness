@@ -970,6 +970,42 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /**
+     * The picture of one STORED diagram, with the one case the engines cannot
+     * handle on their own taken out of their hands.
+     *
+     * A Mermaid source the host already refused is not rendered at all. It has
+     * no picture to make, and asking the engine anyway is what a broken diagram
+     * costs: a wasted render, and - before alpha.3 - the engine's own "Syntax
+     * error in text" diagram ending up in the page. The `diagnostics` the card
+     * draws right below this say what is wrong.
+     *
+     * TikZ is deliberately NOT short-circuited: a compile that failed but still
+     * produced a PDF is cached and worth showing, flagged as errored, because it
+     * tells the reader what LaTeX did understand.
+     */
+    function StoredPicture(props) {
+      const entry = props.entry
+      if (!entry) return null
+      if (entry.kind === 'mermaid' && entry.status === 'error') {
+        return h(
+          'div',
+          { className: 'dsd-notice', 'data-tone': 'error' },
+          'This diagram does not parse, so there is nothing to draw. The parser\u2019s own words are below - fix them and apply, or ask for it again.',
+        )
+      }
+      return h(Picture, {
+        kind: entry.kind,
+        source: entry.source,
+        sessionId: props.sessionId,
+        diagramId: entry.id,
+        revision: entry.revision,
+        title: entry.title,
+        onEdit: props.onEdit,
+        onOpen: props.onOpen,
+      })
+    }
+
     // ---------------------------------------------------------------------
     // Data helpers shared by the panel and the cards
     // ---------------------------------------------------------------------
@@ -1309,15 +1345,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'dsd-pictureWrap' },
-              h(Picture, {
-                kind: entry.kind,
-                source: entry.source,
-                sessionId,
-                diagramId,
-                revision,
-                title: entry.title,
-                onEdit: () => setDrawer(true),
-              }),
+              h(StoredPicture, { entry, sessionId, onEdit: () => setDrawer(true) }),
               entry.status === 'unavailable'
                 ? h('div', { className: 'dsd-notice' }, 'This diagram was stored but could not be validated on this host.')
                 : null,
@@ -1613,7 +1641,7 @@ window.__ModuleLoader__.load({
           body = h(
             'div',
             { className: 'dsd-cardBody' },
-            h(Picture, { kind: known.kind, source: known.source, sessionId, diagramId: id, revision: known.revision, title: known.title }),
+            h(StoredPicture, { entry: known, sessionId }),
             (known.diagnostics ?? []).length > 0 ? h(Diagnostics, { diagnostics: known.diagnostics }) : null,
             (known.warnings ?? []).length > 0 ? h(Warnings, { warnings: known.warnings }) : null,
           )
@@ -1682,14 +1710,16 @@ window.__ModuleLoader__.load({
               { className: 'dsd-cardBody' },
               running
                 ? h('div', { className: 'dsd-notice' }, 'Writing the diagram...')
-                : h(Picture, {
-                    kind,
-                    source: known ? known.source : stripFence((args && args.source) || ''),
-                    sessionId,
-                    diagramId: id,
-                    revision: known ? known.revision : 0,
-                    title,
-                  }),
+                : known
+                  ? h(StoredPicture, { entry: known, sessionId })
+                  : h(Picture, {
+                      kind,
+                      source: stripFence((args && args.source) || ''),
+                      sessionId,
+                      diagramId: id,
+                      revision: 0,
+                      title,
+                    }),
               known && (known.diagnostics ?? []).length > 0 ? h(Diagnostics, { diagnostics: known.diagnostics }) : null,
             )
           : null,

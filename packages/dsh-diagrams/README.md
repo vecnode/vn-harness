@@ -327,10 +327,26 @@ ambiguous-patch refusal, the create-exclusive export and the vendored-engine
 hash.
 
 The reproduction that found the error pictures is not part of the tracked
-checks, because it needs a real DOM and this pack ships no npm dependency - it
-was run once against the vendored engine with a throwaway `jsdom` install. The
-finding is recorded in §0, and the four properties above are what keep a
-regression from reaching the page.
+checks, because it needs a real DOM and this pack ships no npm dependency. It
+was run three ways, each recorded here so a future change can be compared
+against it:
+
+1. **The vendored engine under `jsdom`** (throwaway install). Three failed
+   renders left **three** `div#d<id>` elements in `document.body`, each holding
+   the engine's error SVG; the parse-first path left **zero** of either.
+2. **The vendored engine in real headless Chrome**, through two pages that
+   differ only in call shape. Measured from the screenshots with a PNG decoder
+   (ink coverage per row, no image library):
+
+   | Page | Ink below the report line | Blocks |
+   |---|---|---|
+   | old call shape (`render(id, source)`, three failures) | 37 039 px over rows 16..409 | **3** stacked engine blocks, ~123 px each |
+   | parse-first path (same three failures) | 0 px below row 52 | **none** |
+
+   That is the user's report, reproduced and then removed: the interface grew a
+   block of engine output per failed render.
+3. **The tracked checks**, which assert the four load-bearing properties so a
+   regression cannot reach the page again.
 
 
 ## 8. Limits and roadmap
