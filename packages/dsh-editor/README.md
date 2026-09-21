@@ -34,7 +34,7 @@ host-side half owns the pack's own HTTP routes. Alpha.
   full empty lines (the "huge spaces" a Markdown document used to show on the
   white page), and the app's UI font on the **Edit** pill (which otherwise
   inherited the mono face, unlike every button around it).
-- **Preview is a toggle.** The editor's Markdown preview now carries the way back:
+- **Preview is a toggle** (alpha.7). The editor's Markdown preview now carries the way back:
   this package registers the rendered Markdown **document body** itself
   (`sidebar.right.tab.document`, keyed by the shipped preview's own Markdown
   implementation id, at a **lower priority** — the slot system's shadowing rule,
@@ -59,7 +59,7 @@ host-side half owns the pack's own HTTP routes. Alpha.
   carries **no viewer menu**: the preview header builds that menu from *every*
   candidate renderer ("Markdown" plus the plain-text fallback), and a Markdown page
   has exactly one — **Edit** is the way back to the text.
-- **The editor follows the app's appearance** (light **or** dark). CodeMirror
+- **The editor follows the app's appearance** (alpha.5) — light **or** dark. CodeMirror
   needs a palette of its own, so the surface configures **oneDark only while the
   app is dark** and a transparent light theme while it is light — the light layer
   leaves the panel's `--dsw-*` tokens visible instead of painting a white canvas

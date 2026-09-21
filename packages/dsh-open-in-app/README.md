@@ -77,7 +77,8 @@ OS-neutral.)
 
 The repo launcher (`install.bat` on Windows, `./install.sh` on macOS/Linux)
 auto-discovers this package - it is a standard `dsh.bundle`. Adding a package
-changes the profile's bundle set, so the first install after this package
-appeared needs `-Force`; after that a plain run is enough. Removing it with the
+changes the profile's bundle set, and a bundle the profile does not list yet is
+added by one plain launcher run (no `-Force` needed); after that a plain run is
+enough. Removing it with the
 uninstaller also removes its patch layer, which brings the shipped client row
 back on the next restart.

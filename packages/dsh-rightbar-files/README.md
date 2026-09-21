@@ -14,7 +14,7 @@ It registers exactly like any other tab type — a definition into
 
 | Piece | Value |
 |---|---|
-| `id` / slot key | `dsh-rightbar-files` |
+| `id` / slot key | `@deepseek-ai/dsh-client-ui-sidebar-files` — the tab type's identity is the **core** one, deliberately: `sync-vendored.ps1` rewrites the module-table id (which is `dsh-rightbar-files`, so the boot graph loads this file) and leaves `FILES_ID` alone, so a tab type keeps its identity across the fork and the shipped document preview keeps resolving the same key |
 | `kind` | `files` |
 | `priority` | `builtin` |
 | `guide` | one entry, `order: 10` — "Files" on the Start page the "+" control opens |

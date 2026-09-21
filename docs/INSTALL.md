@@ -1,9 +1,18 @@
 # Installing vn-harness (Windows, macOS, Linux)
 
-Quickest path: double-click **`install.bat`** on Windows, or run
-**`./install.sh`** on macOS/Linux. Windows runs the PowerShell half
-(`scripts/install-all.ps1`); macOS/Linux run the POSIX shell half
-(`scripts/install-all.sh`) and need **no PowerShell at all**.
+Three launchers, one per job:
+
+| | Windows | macOS / Linux |
+|---|---|---|
+| **Install** | `install.bat` | `./install.sh` |
+| **Run** | `run.ps1` | `./run.sh` |
+| **Remove** | `uninstall.bat` | `./uninstall.sh` |
+
+Double-click the `.bat` files on Windows; run the `.sh` files from the repo root
+on macOS/Linux. Windows runs the PowerShell scripts
+(`scripts/install-all.ps1`, and the root `run.ps1` — a `.ps1` is not
+double-clickable by default, so run it as shown in **Running it**); macOS/Linux
+run the POSIX shell scripts and need **no PowerShell at all**.
 
 ## Requirements
 
@@ -14,8 +23,8 @@ Quickest path: double-click **`install.bat`** on Windows, or run
 - `pnpm` is reused when the system one is new enough for the profile, otherwise
   bootstrapped automatically into `./tools`
 - macOS/Linux only: the launchers need the executable bit, which git preserves
-  (`chmod +x install.sh uninstall.sh scripts/*.sh` if you copied the files by
-  hand)
+  (`chmod +x install.sh uninstall.sh run.sh scripts/*.sh` if you copied the files
+  by hand)
 
 > `scripts/sync-vendored.ps1` (the maintainer fork re-sync) is the one script
 > here that is PowerShell-only; the installers never call it.
@@ -40,18 +49,79 @@ Overrides if the profile lives somewhere else:
 
 ## The launchers
 
-| Platform | Friendly (adds force-re-add) | Console |
+| Platform | Root launchers | Console twins |
 |---|---|---|
-| Windows | `install.bat` / `uninstall.bat` | `scripts\install-all.bat` / `scripts\uninstall-all.bat` |
-| macOS / Linux | `./install.sh` / `./uninstall.sh` | `./scripts/install-all.sh` / `./scripts/uninstall-all.sh` |
-| Windows (direct) | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-all.ps1 -Force` | same with `uninstall-all.ps1` |
-| macOS / Linux (direct) | `sh scripts/install-all.sh -Force` | `sh scripts/uninstall-all.sh` |
+| Windows | `install.bat` / `uninstall.bat` (double-click) and `run.ps1` | `scripts\install-all.bat` / `uninstall-all.bat` |
+| macOS / Linux | `./install.sh` / `./uninstall.sh` / `./run.sh` | `./scripts/install-all.sh` / `uninstall-all.sh` |
+| Windows (direct) | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-all.ps1 -Force` | same with `uninstall-all.ps1`, and `-File run.ps1` for the app |
+| macOS / Linux (direct) | `sh scripts/install-all.sh -Force` | `sh scripts/uninstall-all.sh`, and `sh run.sh` for the app |
 
-The friendly launchers pass the force flag unless you already did, so running
-them again always installs the latest edits. The console launchers behave like
-plain script runs: they skip bundles that are already installed at the same
+The install and uninstall launchers pass the force flag unless you already did,
+so running them again always installs the latest edits. The console twins behave
+like plain script runs: they skip bundles that are already installed at the same
 version. Both halves accept the same flags (`-Force`, `-Plugin`, `-DshHome`,
-`-ProfileName`, `-DshVersion`, `-Target web|cli`), and `--help` prints them.
+`-ProfileName`, `-DshVersion`, `-Target web|cli`), and `--help` prints them. The
+run launcher is a single pair — `run.ps1` + `./run.sh`, no wrapper/worker split
+and no `.bat` — and takes its own flags (see **Running it** below).
+
+## Running it
+
+Once the pack is installed, start the app with the run launcher — it *is* the
+`npx @deepseek-ai/dsh web` command, with the browser hand-off attached. It is two
+files, one per platform: `run.ps1` (Windows) and `run.sh` (macOS/Linux), both at
+the repo root.
+
+```bat
+:: Windows - run it from the repo root (a .ps1 is not double-clickable by default)
+powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -Port 3099
+powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -DefaultBrowser
+powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -NoBrowser
+```
+
+```sh
+# macOS / Linux
+./run.sh                     # start + open the URL in Google Chrome
+./run.sh -Port 3099          # 3080 already taken
+./run.sh -DefaultBrowser     # skip Chrome, use the default browser
+./run.sh -NoBrowser          # start the server only
+```
+
+What it does, in order:
+
+1. runs `npx --yes @deepseek-ai/dsh@<pin> web --no-open` (plus `--port <n>` when
+   you passed `-Port`). `--no-open` stops the app from also starting a browser:
+   the launcher owns the hand-off, so the URL opens exactly once;
+2. streams the app's own output to the terminal — nothing is swallowed — and
+   watches it for the ready line the app prints once the server is listening:
+
+   ```
+   dsh web: http://127.0.0.1:3080/?token=<launch token>
+   ```
+
+3. opens **that** URL, token included, in **Google Chrome** — found on `PATH`,
+   in the standard install folders, or through Windows' `App Paths` registry
+   entry. When Chrome is not installed the platform's default browser is used
+   instead (`open` on macOS, `xdg-open` on Linux, the shell's own handler on
+   Windows);
+4. keeps running in the foreground. The harness lives in that terminal, so
+   **Ctrl+C stops it**; the terminal prints the exit status when it ends.
+
+Two properties worth knowing:
+
+- **The launch token is a live credential.** It is the value the server
+  exchanges for the browser session cookie, so it is read from the app's output
+  **in memory only**: the launchers never write it to a file, never echo it
+  themselves, and never pass it through a shell — it reaches the browser as a
+  single argument. The terminal still shows it, because the app prints it; treat
+  a copy of that pane (a screenshot, a pasted log) the way you would treat the
+  session cookie itself.
+- **Only a loopback URL is opened.** If the ready line ever named anything but
+  `127.0.0.1`, `::1` or `localhost`, the launcher refuses and says so rather
+  than handing the token to a browser pointed at another host.
+
+If the app never prints a ready line (a profile with `printUrl` disabled),
+nothing is opened and the launcher says so; the URL is in the app's own output.
 
 ## Manual path (no script)
 
@@ -71,6 +141,13 @@ npx --yes @deepseek-ai/dsh@0.1.5-rc.1 plugin --profile web add /path/to/vn-harne
 If the profile still lists a retired name, `remove dsh-files` (and
 `remove dsh-focus`) first - the scripts do this automatically.
 
+Start it by hand with the command the run launchers wrap (the app prints its
+`dsh web: http://127.0.0.1:<port>/?token=<token>` URL either way):
+
+```sh
+npx --yes @deepseek-ai/dsh@0.1.5-rc.1 web
+```
+
 ## Uninstall
 
 `uninstall.bat` (Windows) or `./uninstall.sh` (macOS/Linux) — removes the bundles
@@ -78,7 +155,9 @@ from the web profile, plus any retired bundle name (`dsh-files`, `dsh-focus`).
 
 ## After installing
 
-1. Start (or restart) `npx @deepseek-ai/dsh web` and open/select a conversation.
+1. Start (or restart) the app with **`run.ps1`** (Windows) or **`./run.sh`**
+   (macOS/Linux) — or `npx @deepseek-ai/dsh web` by hand — and open/select a
+   conversation.
 2. Open the right Sidebar with the **expand button** in the conversation header
    (top right). It opens on the shipped **Start** page, whose capsules list the
    Files tab, the new **Editor** and **History** — the workspace’s commit
@@ -100,6 +179,29 @@ from the web profile, plus any retired bundle name (`dsh-files`, `dsh-focus`).
 
 ## Troubleshooting
 
+- **The run launcher says the port is already in use** — an app is already
+  listening on 3080 (another terminal, or this one). Use the running one, stop
+  it, or start a second instance on another port:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -Port 3099` /
+  `./run.sh -Port 3099`.
+- **`run.ps1` will not start on Windows** — run it from the repo root with the
+  line above: double-clicking a `.ps1` opens it in an editor instead, and a
+  restrictive execution policy needs the `-ExecutionPolicy Bypass` that line
+  already carries.
+- **No browser opened, but the app is running** — the ready line was never
+  printed (a profile with `printUrl` disabled) or the launcher said why. The URL
+  is in the app's own output; `-NoBrowser` turns the hand-off off on purpose.
+- **The browser opened but Chrome is not installed** — that is the fallback
+  working: the launcher reports "the default browser" instead of Chrome. Pass
+  `-DefaultBrowser` to skip the Chrome lookup entirely.
+- **The launcher refused to open the URL** — the ready line did not name a
+  loopback address, so the token was not handed to a browser. That should never
+  happen with the pinned line; check what prints the `dsh web:` line.
+- **`./run.sh: Permission denied`** — `chmod +x run.sh install.sh uninstall.sh
+  scripts/*.sh`.
+- **The launcher says the profile does not list this pack's bundles** — a
+  friendly warning, not a failure: the app still starts. Run `install.bat` /
+  `./install.sh` if you expected the pack in it.
 - **`dsh` exits non-zero during install** — most often a network hiccup fetching
   the pinned CLI; re-run, and use `-Verbose` on the PowerShell half to see the
   exact command.

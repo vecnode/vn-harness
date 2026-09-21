@@ -77,7 +77,10 @@ lib/client.js      Browser half: the overlay host, the queue, and the `modals` s
 
 The repo launcher (`install.bat` on Windows, `./install.sh` on macOS/Linux)
 auto-discovers this package - it is a standard `dsh.bundle`. Adding a package
-changes the profile's bundle set, so the first install after this package
-appeared needs `-Force`; after that a plain run is enough. The web profile links
+changes the profile's bundle set, and a bundle the profile does not list yet is
+added by one plain launcher run (no `-Force` needed); after that a plain run is
+enough. The web profile links
 it into this repo, so code edits only need a restart of
-`npx @deepseek-ai/dsh web` plus a hard browser refresh.
+`npx @deepseek-ai/dsh web` plus a hard browser refresh. Starting it is
+`run.ps1` / `./run.sh` - the launcher that starts `dsh web` and opens the URL it
+prints in Chrome.

@@ -133,10 +133,10 @@ lifted halfway back to the body (`#b6b4a8`).
 roles that are not the same role — in the dark palette `neutral-bluish-50` is both
 the primary label *and* the brand fill — so recoloring the ramp drags unrelated
 surfaces along with it. The alias layer is the semantic one, and the layer
-ui-theme documents as the third-party surface. Aliases the theme does not name
+ui-theme documents as the third-party surface. Aliases a theme does not name
 keep their shipped dark value: the scrims (`bg-mask-*`), the elevation strokes and
-the shadow scale are scheme-neutral black/white alphas and read correctly on Polar
-Night unchanged.
+the shadow scale are scheme-neutral black/white alphas and read correctly on
+either registered dark theme unchanged.
 
 **The choice is in-process, by the shipped design.** ui-theme's durable preference
 schema accepts `light` / `dark` / `system` only, so `setTheme('nord')` applies at
@@ -590,7 +590,10 @@ lib/client.js      Browser half: the Screenshot button (capture + save), the The
 
 The repo launcher (`install.bat` on Windows, `./install.sh` on macOS/Linux)
 auto-discovers this package — it is a standard `dsh.bundle`. Adding a package
-changes the profile's bundle set, so the first install after this package
-appeared needs `-Force`; after that a plain run is enough. The web profile links
+changes the profile's bundle set, and a bundle the profile does not list yet is
+added by one plain launcher run (no `-Force` needed); after that a plain run is
+enough. The web profile links
 it into this repo, so code edits only need a restart of
-`npx @deepseek-ai/dsh web` plus a hard browser refresh.
+`npx @deepseek-ai/dsh web` plus a hard browser refresh. Starting it is
+`run.ps1` / `./run.sh` — the launcher that starts `dsh web` and opens the URL it
+prints in Chrome.

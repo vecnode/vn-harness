@@ -28,7 +28,7 @@ Alpha. `0.1.0-alpha.6`.
 
 ---
 
-## 0. What changed in this alpha
+## 0. What changed in these alphas
 
 ### alpha.6
 
@@ -69,8 +69,6 @@ verdict failed the registry's lossless-JSON rule, which made every diagram the
 browser had RENDERED unreadable to the model. The tracked check now validates
 every tool result against the schema the tool declares, which is the gap that
 let both through.
-
-### alpha.4
 
 ### alpha.4
 
@@ -199,7 +197,7 @@ link at all).
 
 | Surface | What it is |
 |---|---|
-| `dsh-resource://diagram/session/<session>/<id>` | **one tab per diagram**: the rendered picture laid out at 80% of the pane with a `-` / `+` / `Fit` zoom ladder (25%-400%), drag-to-pan when it overflows, a `Recompile` button for TikZ, `Copy`, and `Export ▾` |
+| `dsh-resource://diagram/session/<session>/<id>` (a library diagram is `dsh-resource://diagram/library/<id>`) | **one tab per diagram**: the rendered picture laid out at 80% of the pane with a `-` / `+` / `Fit` zoom ladder (25%-400%), drag-to-pan when it overflows, a `Recompile` button for TikZ, `Copy`, and `Export ▾` |
 | `sidebar://diagrams` | the **index**: every diagram of the conversation with kind, status and size; `New Mermaid` / `New TikZ`; picking a row opens its tab |
 
 The index type carries the package's one **guide entry** (`order: 40`, after
@@ -234,8 +232,8 @@ a profile whose host row is not mounted.
 
 ## 2. What the model gets
 
-Five tools with raw JSON-Schema parameters (the registry validates both the
-arguments and the returned canonical value), plus `diagram_publish`:
+Six tools with raw JSON-Schema parameters (the registry validates both the
+arguments and the returned canonical value):
 
 | Tool | Purpose |
 |---|---|
@@ -246,7 +244,7 @@ arguments and the returned canonical value), plus `diagram_publish`:
 | `diagram_publish` | copy a conversation diagram into the shared LIBRARY, so every chat can read it and cite its id |
 | `diagram_delete` | remove one diagram from whichever scope holds it |
 
-Two rules make this more than a text box:
+Five rules make this more than a text box:
 
 1. **Every write is validated before it is stored.**
    - *Mermaid*: the source goes to a **child process** that loads the vendored
@@ -295,7 +293,7 @@ bundle was installed.
 ## 3. How it is put together
 
 ```
-lib/index.js          host row: 5 tools, 2 skills, the /api/dsh-diagrams/* routes
+lib/index.js          host row: 6 tools, 2 skills, the /api/dsh-diagrams/* routes
 lib/store.js          per-conversation state (one JSON file, atomic writes)
 lib/cache.js          content-addressed artifact cache (svg/png/pdf/tex + meta)
 lib/latex.js          engine probe, source normalization, compile, convert
@@ -507,8 +505,9 @@ against it:
 
 ## 8. Limits and roadmap
 
-- One diagram per tab: `dsh-resource://diagram/session/<session>/<id>`; the
-  index is the only page.
+- One diagram per tab: `dsh-resource://diagram/session/<session>/<id>` for a
+  conversation diagram and `dsh-resource://diagram/library/<id>` for a shared
+  one; the index is the only page.
 - The source drawer is a textarea by design (alpha.1); reusing `dsh-editor`'s
   vendored CodeMirror when that bundle is installed is the next step.
 - TikZ with multiple files (`\input`) is not supported - the document is one

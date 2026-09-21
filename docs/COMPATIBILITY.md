@@ -10,13 +10,41 @@ The pack targets the harness line DeepSeek ships to the raw web install
 | `@deepseek-ai/dsh` | `0.1.5-rc.1` |
 | Forked from | the same `0.1.5-rc.1` line (`.dsh-version.json`'s `vendoredFrom`) |
 | Install target | the web profile only (`$DSH_HOME/profiles/web`) |
-| Host platforms | Windows (PowerShell 5.1 or 7) and macOS / Linux (POSIX shell + Node.js and npm/npx - no PowerShell); the plugins themselves are plain JS and the only OS-specific code is a launcher choosing the host command: the file-browser launcher (`explorer.exe` / `open` / `xdg-open`) and the terminal's shell resolver (`pwsh.exe` or `powershell.exe` / `$SHELL` or `/bin/zsh` / `$SHELL` or `/bin/bash`) |
+| Host platforms | Windows (PowerShell 5.1 or 7) and macOS / Linux (POSIX shell + Node.js and npm/npx - no PowerShell); the plugins themselves are plain JS and the only OS-specific code is a launcher choosing the host command: the file-browser launcher (`explorer.exe` / `open` / `xdg-open`), the terminal's shell resolver (`pwsh.exe` or `powershell.exe` / `$SHELL` or `/bin/zsh` / `$SHELL` or `/bin/bash`) and the run launchers' browser hand-off (Chrome, else the platform default) |
 | Master | **`dsh-vn-master`**, deliberately blank - the bundle layer plus one no-op `master` row; no client half, no service, no inject edge and no core-row disables |
 | Right bar | **owned by the pack** - `dsh-rightbar` / `dsh-rightbar-files` are forks of `@deepseek-ai/dsh-client-ui-sidebar-right` / `-sidebar-files`, and the core rows `ui-sidebar-right` / `ui-sidebar-files` are disabled |
 | Open In file managers | **owned by the pack** - `dsh-open-in-app` forks `@deepseek-ai/dsh-client-ui-open-in-app` (row `ui-open-in-app` disabled) and launches the OS file browser directly |
 | Session log download | **the seat is the pack's** - `dsh-themes` alpha.9 shadows the shipped header seat (same occupant id, `priority: -10`), so a plain download icon replaces the three-dot button; the shipped `session-log-download` row stays **mounted** for `/api/session.export`, the `/export` command and the `sessionLogDownload` controller the button drives (no row disabled, nothing forked, no new package) |
 | Header icon rings | the header's icon buttons all wear the same `.5px` round outline: the pack's own controls draw it themselves and `dsh-themes` adds one rule for the right bar's toggle in the header corner (keyed on the stable `data-conversation-header-corner` marker) |
 | Window screenshot | **the pack's** - `dsh-themes` alpha.10 adds a Screenshot control (order `-30`, left of Themes): the browser captures the current tab (`getDisplayMedia`, real pixels, so the terminal's xterm canvas and open dialogs are included) and the pack's own host route `POST /api/dsh-themes/screenshot` writes the PNG to the host's Desktop as `vn-harness-<timestamp>.png` (browser download as the fallback); no shipped row is touched |
+
+## Running the app
+
+The pack ships its own launcher next to the installers - one file per platform,
+`run.ps1` (Windows) and `run.sh` (macOS/Linux), both at the repo root - so
+starting the GUI is one command instead of remembering the command line. Both run
+the same pinned invocation the docs use -
+`npx --yes @deepseek-ai/dsh@<pin> web --no-open [--port <n>]` - and then:
+
+- stream the app's own output to the terminal (nothing is filtered), watching for
+  the ready line `dsh web: http://127.0.0.1:<port>/?token=<launch token>`;
+- open **that** URL, token included, in **Google Chrome** - found on `PATH`, in
+  the standard install folders or through Windows' `App Paths` registry entry,
+  `/Applications/Google Chrome.app` on macOS, `google-chrome`/`chromium` on Linux
+  - and fall back to the platform's **default browser** when Chrome is absent;
+- refuse to open anything that is not a loopback address (`127.0.0.1`, `::1`,
+  `localhost`), because the query carries the process's launch token;
+- keep the harness in the foreground: Ctrl+C stops it, and the terminal reports
+  the app's own exit status.
+
+Flags: `-Port <n>`, `-DshHome <dir>`, `-DshVersion <ver>`, `-NoBrowser`
+(start the server only) and `-DefaultBrowser` (skip Chrome). On Windows the
+script is invoked as
+`powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 [flags]` (a `.ps1`
+is not double-clickable by default). The launch token is
+never written to a file: the POSIX half pipes the app's output through an
+anonymous FIFO, both halves keep the token in memory, and it reaches the browser
+as a single argv element - never through a shell string.
 
 ## What this means for the plugin
 
@@ -86,10 +114,12 @@ The pack targets the harness line DeepSeek ships to the raw web install
   - **New package**, so the first install after this change needs a plain
     `install.bat` / `./install.sh` run or `-Force`.
 - **dsh-diagrams** adds **Mermaid and TikZ diagrams** as a surface of their own:
-  four tools (`diagram_write` / `diagram_patch` / `diagram_read` /
-  `diagram_delete`) whose every write is validated before it is stored, two
-  bundled skills, one tab per diagram plus an index page, and a conversation
-  card per tool call.
+  six tools (`diagram_write` / `diagram_patch` / `diagram_read` / `diagram_verify`
+  / `diagram_publish` / `diagram_delete`) whose every write is validated before it
+  is stored, two bundled skills, one tab per diagram plus an index page, and a
+  conversation card per tool call. A diagram belongs to the conversation that drew
+  it, or to a shared **library** (`$DSH_HOME/dsh-diagrams/library.json`) that every
+  conversation reads and cites by id.
   - **Mermaid is validated headlessly** by a child process that loads the same
     vendored engine the browser renders with behind a DOM stub; **TikZ is
     compiled** by the machine's own TeX engine (argv only, `-no-shell-escape`,
@@ -397,6 +427,51 @@ The pack targets the harness line DeepSeek ships to the raw web install
   falls back to an ordinary browser download. Restart `npx @deepseek-ai/dsh web`
   and hard-refresh; the version changed, so a plain install run (or `-Force`)
   re-adds the bundle.
+
+- **diagrams alpha.4 / alpha.6**: `dsh-diagrams` gains a second **scope**. A
+  diagram used to belong to the conversation that drew it and to nothing else;
+  there is now a shared **library** - one file for the whole harness
+  (`$DSH_HOME/dsh-diagrams/library.json`, written by the same store class) - that
+  `diagram_write { scope: 'library' }` writes into and `diagram_publish { id }`
+  copies a conversation diagram into, addressed as
+  `dsh-resource://diagram/library/<id>`. A bare id resolves library-first, the
+  index shows both halves, and a panel edit writes back where the diagram already
+  is. Alpha.4 is the usability pass around it: the diagram tab lays a picture out
+  at 80% of the pane with a **zoom ladder** (25%-400%, remembered per diagram) and
+  drag-to-pan that moves the layout box (never a CSS transform), and **every
+  export saves to the Desktop** of the machine running the harness
+  (`POST /api/dsh-diagrams/export`, create-exclusively, absolute path reported)
+  instead of the conversation folder, with the browser download left as the
+  fallback. Restart and hard-refresh; the version changed, so a plain install run
+  (or `-Force`) re-adds the bundle.
+
+- **themes alpha.12 / alpha.13**: the Themes menu is the **shipped registry's own
+  list** now. `dsh-themes` registers its own palettes through
+  `ctx.theme.register` - ui-theme's documented third-party surface - starting with
+  **Nord** (alpha.12) and adding **Monokai** (alpha.13) in the same 93-token alias
+  shape on the dark base. The header button wears one static appearance mark
+  instead of the active preference's sun/moon, and the choice is in-process: the
+  durable preference schema accepts `light` / `dark` / `system` only, so a reload
+  returns to the durable built-in. Adding another theme is one entry in
+  `THEME_EXTENSIONS` plus its copy in both dictionaries. Restart and hard-refresh.
+
+- **layout parity (rightbar alpha.2, editor alpha.9, gittree alpha.4)**: three
+  changes that are about the same 38px box. The pack's bar lifts the shipped
+  bundle's **two-pane dock cap** to the docking kit's own four (with the top/bottom
+  drop bands re-opened, so a 2x2 is built by dragging a tab into a pane's upper or
+  lower quarter), and the editor's and History's toolbar became the tab's own
+  **top bar**: `38px`, `box-sizing:border-box`, the same box the shipped Files tab
+  and the document preview use, so every column's first hairline lands on the
+  **y=76** line the 38px docking strip, the 76px conversation header and the left
+  column's branding band all end on (the toolbar had been `8 + 26 + 8 = 42.5px`,
+  i.e. ~4.5px low).
+
+- **run launcher (new)**: `run.ps1` / `run.sh` - one file per platform at the repo
+  root - start the pinned `dsh web` and open the URL it prints in Chrome, falling
+  back to the default browser; see **Running the app** above. There is no
+  wrapper/worker split and no `.bat`: for run there is no extra behaviour for a
+  wrapper to add. Nothing in the profile changes and no bundle was added: the
+  launcher is repo tooling, and an installed profile needs nothing to use it.
 
 ## Alpha policy
 

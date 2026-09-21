@@ -4,7 +4,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![DeepSeek Harness 0.1.5-rc.1](https://img.shields.io/badge/dsh-0.1.5--rc.1-4f8cff)
 
-Personal plugin pack for **DeepSeek Harness**.
+Plugin pack for **DeepSeek Harness**.
 
 Everything ships as standard **dsh bundles**. The plugins are
 plain JavaScript, and the launchers run on **Windows, macOS and Linux** — the
@@ -24,7 +24,7 @@ way and what it touches; the table below is the map.
 | [`dsh-rightbar-files`](packages/dsh-rightbar-files/README.md) | [`README.md`](packages/dsh-rightbar-files/README.md) | alpha `0.1.0-alpha.1` |
 | [`dsh-editor`](packages/dsh-editor/README.md) | [`README.md`](packages/dsh-editor/README.md) | alpha `0.1.0-alpha.9` |
 | [`dsh-gittree`](packages/dsh-gittree/README.md) | [`README.md`](packages/dsh-gittree/README.md) | alpha `0.1.0-alpha.4` |
-| [`dsh-diagrams`](packages/dsh-diagrams/README.md) | [`README.md`](packages/dsh-diagrams/README.md) | alpha `0.1.0-alpha.4` |
+| [`dsh-diagrams`](packages/dsh-diagrams/README.md) | [`README.md`](packages/dsh-diagrams/README.md) | alpha `0.1.0-alpha.6` |
 | [`dsh-terminal`](packages/dsh-terminal/README.md) | [`README.md`](packages/dsh-terminal/README.md) | alpha `0.1.0-alpha.3` |
 | [`dsh-themes`](packages/dsh-themes/README.md) | [`README.md`](packages/dsh-themes/README.md) | alpha `0.1.0-alpha.13` |
 | [`dsh-modal`](packages/dsh-modal/README.md) | [`README.md`](packages/dsh-modal/README.md) | alpha `0.1.0-alpha.1` |
@@ -43,38 +43,56 @@ way and what it touches; the table below is the map.
 > responsibilities, and the master — installed last — is where pack-wide patches
 > go.
 
-## Install (Windows, macOS, Linux)
+## Quick start
 
-Two launchers, one behaviour. **Windows** runs the PowerShell installer
-(`install.bat` → `scripts/install-all.ps1`; Windows PowerShell 5.1 or 7).
-**macOS and Linux** run the POSIX shell installer (`install.sh` →
-`scripts/install-all.sh`) and need **Node.js with npm/npx only — no PowerShell**.
+Three launchers, one per job. **Windows** uses the `.bat` files,
+**macOS/Linux** the `.sh` ones — and the Unix side needs **Node.js with
+npm/npx only, never PowerShell**.
+
+| | Windows | macOS / Linux | What it does |
+|---|---|---|---|
+| **1. Install** | `install.bat` | `./install.sh` | adds every bundle under `packages/` to the web profile (`~/.dsh/profiles/web`) and copies the bundled skills into `~/.dsh/skills` |
+| **2. Run** | `run.ps1` | `./run.sh` | starts `npx @deepseek-ai/dsh@<pin> web` and opens the URL it prints — token included — in **Chrome**, falling back to the default browser |
+| **3. Remove** | `uninstall.bat` | `./uninstall.sh` | removes the bundles, their patch layers and the skills the installer copied |
 
 ```bat
-:: Windows - double-click install.bat, or:
-install.bat                  :: the web profile (the only target)
-install.bat -Force           :: re-add bundles even when versions match
+:: Windows - install/uninstall are double-click friendly; run is one PowerShell file
+install.bat                  :: installs into the web profile (the only target)
+powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1
+                             :: starts the harness and opens it in Chrome
+uninstall.bat                :: removes the pack
 ```
 
 ```sh
-# macOS / Linux
+# macOS / Linux - from the repo root
 ./install.sh                 # the web profile (the only target)
-./install.sh -Force          # explicit; this launcher forces a re-add anyway
+./run.sh                     # start the harness and open it in Chrome
+./uninstall.sh               # remove the pack
 ```
 
-Or drive the platform script directly:
+**`run.ps1` / `./run.sh` keep the harness in the foreground of that terminal**:
+the app's own output — including the `dsh web: http://127.0.0.1:3080/?token=…`
+line — stays visible, and **Ctrl+C** stops it. Flags pass straight through:
+`-Port 3099` when 3080 is taken, `-DefaultBrowser` to skip Chrome,
+`-NoBrowser` to only start the server. The URL is opened only when it names a
+loopback address, and the token is never written to a file.
+
+Install flags: `-Force` re-adds bundles even when the versions match, and
+`-Plugin` / `-DshHome` / `-ProfileName` / `-DshVersion` / `-Target web|cli`
+behave as documented in [`docs/INSTALL.md`](docs/INSTALL.md), which also has the
+no-script path:
 
 ```powershell
-:: Windows
+:: Windows (direct)
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-all.ps1 -Force
 ```
 
 ```sh
-# macOS / Linux
+# macOS / Linux (direct)
 sh scripts/install-all.sh -Force
 ```
 
-Both halves do the same work (idempotent — safe to re-run):
+Both installer halves do the same work (idempotent — safe to re-run):
 
 1. pin the dsh version from `.dsh-version.json` and run everything through
    `npx @deepseek-ai/dsh@<pinned>`,
@@ -127,6 +145,13 @@ bundle also removes its patch layer.
   into this repo, so code edits are already "installed" there — you only need to
   **restart** `npx @deepseek-ai/dsh web` and **hard-refresh** the browser
   (Ctrl+F5). The client bundle is read once at app boot.
+- **Running it**: `run.ps1` / `./run.sh` start the pinned `dsh web` with
+  `--no-open`, read the `dsh web: http://127.0.0.1:<port>/?token=<token>` line
+  the app prints once it is listening, and open **that** URL in Chrome (the
+  default browser is the fallback). A URL that does not name a loopback address
+  is refused instead of opened, and the launch token — a live credential for the
+  running process — is only ever held in memory: never written to a file, never
+  passed through a shell.
 - See [`docs/INSTALL.md`](docs/INSTALL.md) for the manual path and
   troubleshooting.
 
@@ -150,11 +175,12 @@ packages/dsh-vn-master/  the one bundle with NO client half - the blank master l
 packages/<bundle>/     one standalone dsh bundle (package.json + cordis.patch.yml + lib/)
   lib/index.js         Node half (may be a no-op row so the client bundle ships)
   lib/client.js        Browser half (module-table bundle; hand-written or GENERATED fork)
-scripts/               install-all.ps1 / uninstall-all.ps1 (Windows PowerShell) and
-                       install-all.sh / uninstall-all.sh (POSIX sh for macOS/Linux),
-                       plus sync-vendored.ps1 (maintainer fork re-sync) and the
-                       .bat / .sh console twins
+scripts/               install-all.ps1 / uninstall-all.ps1 (Windows PowerShell)
+                       and install-all.sh / uninstall-all.sh (POSIX sh for
+                       macOS/Linux), plus sync-vendored.ps1 (maintainer fork
+                       re-sync) and the .bat / .sh console twins
   checks/              standalone verification for the JS halves (see its README)
 .dsh-version.json      the pinned harness line + per-package versions
-install.bat / .sh      double-click installer  |  uninstall.bat / .sh  remover
+install.bat / .sh      installer       |  uninstall.bat / .sh  remover
+run.ps1 / run.sh       starts the app and opens it in a browser
 ```

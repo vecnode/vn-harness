@@ -1036,17 +1036,56 @@ neither half needs the other:
 
 | Host | Script | Runner | Needs |
 |---|---|---|---|
-| Windows | `scripts/install-all.ps1` / `uninstall-all.ps1` | `scripts/*.bat`, root `install.bat` / `uninstall.bat` | Windows PowerShell 5.1 or 7 |
-| macOS / Linux | `scripts/install-all.sh` / `uninstall-all.sh` | `scripts/*.sh`, root `install.sh` / `uninstall.sh` | POSIX sh (dash/bash) + Node.js with npm/npx - **never PowerShell** |
+| Windows | `scripts/install-all.ps1` / `uninstall-all.ps1`, root `run.ps1` | `scripts/*.bat`, root `install.bat` / `uninstall.bat` | Windows PowerShell 5.1 or 7 |
+| macOS / Linux | `scripts/install-all.sh` / `uninstall-all.sh`, root `run.sh` | `scripts/*.sh`, root `install.sh` / `uninstall.sh` | POSIX sh (dash/bash) + Node.js with npm/npx - **never PowerShell** |
 
 Both are ASCII-only; the `.sh` half is POSIX (no bashisms, no `sed`/`grep`
 pipelines - the JSON/YAML parsing is done by `node -e`, which is a prerequisite
 anyway), and both halves accept the same flags (`-Force`, `-Plugin`, `-DshHome`,
 `-ProfileName`, `-DshVersion`, `-Target web|cli`), print the same messages and
-reach the same profile state. The root launchers are the friendly pair: they add
-force-the-re-add semantics unless the caller asked already. `scripts/sync-vendored.ps1`
+reach the same profile state. The root install and uninstall launchers are the
+friendly pair: they add force-the-re-add semantics unless the caller asked
+already. `scripts/sync-vendored.ps1`
 is **maintainer tooling**, not an installer, and is the one script here that wants
 `pwsh` on macOS/Linux.
+
+**The run launcher.** `run.ps1` / `run.sh` are two files - one per host, both at
+the repo root - and are not an install step: they
+start the app the docs would otherwise ask for by hand -
+`npx --yes @deepseek-ai/dsh@<pin> web --no-open [--port <n>]` - and open the URL
+the app prints once it is listening. There is deliberately no third file: unlike
+`install.bat` -> `scripts/install-all.ps1`, a run wrapper would add nothing (no
+flag to inject, no force semantics), so the pair IS the entry point and each half
+reads `.dsh-version.json` from its own folder. On Windows it is invoked as
+`powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 [flags]`; on
+macOS/Linux it is `./run.sh [flags]`. Both halves follow the same four steps and
+accept the same flags (`-Port`, `-DshHome`, `-DshVersion`, `-NoBrowser`,
+`-DefaultBrowser`):
+
+1. **stream** the app's own stdout/stderr to the terminal unchanged, so the
+   session looks exactly like a hand-typed `dsh web` (the PowerShell half leaves
+   stderr unmerged - `2>&1` into the pipeline turns npm warnings into a
+   terminating `NativeCommandError`; the shell half pipes both through a FIFO);
+2. **watch** it for the ready line, `dsh web: http://127.0.0.1:<port>/?token=…`
+   (printed by `dsh-web-app` when `printUrl` is on, which is the default, and
+   kept apart from the optional `(LAN: …)` tail that follows it);
+3. **check it is loopback** (`127.0.0.1`, `::1`, `localhost`) and refuse
+   anything else - the query carries the process's launch token, the value the
+   server exchanges for the browser session cookie, so it must never be handed
+   to a browser pointed at another host;
+4. **open it**, in Chrome (PATH, the standard install folders, or Windows'
+   `App Paths` registry entry; `/Applications/Google Chrome.app` on macOS;
+   `google-chrome`/`chromium` on Linux) and in the platform's default browser
+   when Chrome is not installed.
+
+The token stays **in memory**: neither half writes it to a file (the shell half
+uses an anonymous FIFO rather than a temp log precisely for that), neither echoes
+it itself, and it reaches the browser as a single argv element - never through
+`cmd /c start`, `sh -c` or any other command string. `--no-open` is what keeps
+the hand-off single: the app must not also start a browser. The harness runs in
+the foreground, so Ctrl+C stops it and the terminal reports the app's own exit
+status (the shell half reads the child directly instead of through a pipeline
+subshell, which is what makes `wait` meaningful).
 
 - **Detection**: one target - `DSH_HOME` env, else `~/.dsh`; profile `web`
   (`-DshHome` / `-ProfileName` override both). `-Target` still exists but accepts
@@ -1081,7 +1120,7 @@ is **maintainer tooling**, not an installer, and is the one script here that wan
 - **Live links**: the web profile installs every bundle (`dsh-vn-master` — the
   blank master, so a profile that lists it still gets no client half — plus
   `dsh-rightbar`, `dsh-rightbar-files`, `dsh-editor`, `dsh-gittree`,
-  `dsh-terminal`, `dsh-modal`,
+  `dsh-diagrams`, `dsh-terminal`, `dsh-modal`,
   `dsh-themes`, `dsh-open-in-app`) as `pnpm link:` symlinks straight into this repo (detected by
   `Test-LiveLink` / `is_live_link()`, comparing realpaths case-insensitively on
   Windows). Code edits then already apply - a restart of

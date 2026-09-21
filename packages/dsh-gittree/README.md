@@ -1,12 +1,14 @@
 # dsh-gittree (alpha.4)
 
-**History** is a **tab type for the pack's right bar**, and it is labelled History in the capsule and the chip while the package, the row and the address keep the `dsh-gittree` / `gittree` name (`dsh-rightbar` — the
+**History** is a **tab type for the pack's right bar** (`dsh-rightbar` — the
 right-hand column of the DeepSeek Harness web GUI, beside the shipped **Start**
-page and the **Files** tab, and the pack's **Editor**). It shows the **commit
-history** of the tab's own conversation folder, with the branch and the current
-commit kept in the file bar above it. Picking a commit opens its message and the
-files it touched; any of those files opens through the ordinary file address, so
-the editor (or a shipped preview) claims it. Alpha.
+page, the **Files** tab and the pack's **Editor**), and it is labelled History in
+the capsule and the chip while the package, the row and the address keep the
+`dsh-gittree` / `gittree` name. It shows the **commit history** of the tab's own
+conversation folder, with the branch and the current commit kept in the file bar
+above it. Picking a commit opens its message and the files it touched; any of
+those files opens through the ordinary file address, so the editor (or a shipped
+preview) claims it. Alpha.
 
 **It is read-only.** Nothing in this package can stage, commit, check out, fetch
 or write a config value: the only git subcommands it can reach are `rev-parse`,
