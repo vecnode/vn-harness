@@ -45,11 +45,19 @@ way and what it touches; the table below is the map.
 
 ## Quick start
 
-Three launchers, one per job. **Windows** uses the `.bat` files,
-**macOS/Linux** the `.sh` ones — and the Unix side needs **Node.js with
-npm/npx only, never PowerShell**.
+Three commands take you from a fresh clone to a running app. Everything else in
+this repository is documentation.
 
-| | Windows | macOS / Linux | What it does |
+**What you need:** Node.js 22 or newer, with `npm`/`npx`. That is the whole
+requirement. Chrome is optional — the launcher falls back to your default
+browser. Two features have optional extras: the **History** tab needs `git` on
+`PATH`, and TikZ diagrams need a TeX engine (`pdflatex`, `xelatex` or
+`lualatex`). Without them, the rest of the pack works unchanged.
+
+**Windows** uses the `.bat` files, **macOS/Linux** the `.sh` ones — and the Unix
+side never needs PowerShell.
+
+| Step | Windows | macOS / Linux | What it does |
 |---|---|---|---|
 | **1. Install** | `install.bat` | `./install.sh` | adds every bundle under `packages/` to the web profile (`~/.dsh/profiles/web`) and copies the bundled skills into `~/.dsh/skills` |
 | **2. Run** | `run.ps1` | `./run.sh` | starts `npx @deepseek-ai/dsh@<pin> web` and opens the URL it prints — token included — in **Chrome**, falling back to the default browser |
@@ -70,14 +78,18 @@ uninstall.bat                :: removes the pack
 ./uninstall.sh               # remove the pack
 ```
 
-**`run.ps1` / `./run.sh` keep the harness in the foreground of that terminal**:
-the app's own output — including the `dsh web: http://127.0.0.1:3080/?token=…`
-line — stays visible, and **Ctrl+C** stops it. Flags pass straight through:
-`-Port 3099` when 3080 is taken, `-DefaultBrowser` to skip Chrome,
-`-NoBrowser` to only start the server. The URL is opened only when it names a
-loopback address, and the token is never written to a file.
+The run launcher keeps the harness in the foreground of that terminal, so the
+app's own output — including the `dsh web: http://127.0.0.1:3080/?token=…`
+line — stays visible and **Ctrl+C** stops it. Flags pass straight through:
 
-Install flags: `-Force` re-adds bundles even when the versions match, and
+- `-Port 3099` when port 3080 is already taken,
+- `-DefaultBrowser` to skip Chrome,
+- `-NoBrowser` to start the server without opening a browser at all.
+
+The URL is opened only when it names a loopback address, and the launch token is
+never written to a file — both rules are explained in [SECURITY.md](SECURITY.md).
+
+Install flags: `-Force` re-adds bundles even when the versions match.
 `-Plugin` / `-DshHome` / `-ProfileName` / `-DshVersion` / `-Target web|cli`
 behave as documented in [`docs/INSTALL.md`](docs/INSTALL.md), which also has the
 no-script path:
@@ -92,7 +104,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-all.ps1 -For
 sh scripts/install-all.sh -Force
 ```
 
-Both installer halves do the same work (idempotent — safe to re-run):
+Both installer halves do the same work, and re-running them is safe:
 
 1. pin the dsh version from `.dsh-version.json` and run everything through
    `npx @deepseek-ai/dsh@<pinned>`,
@@ -104,7 +116,7 @@ Both installer halves do the same work (idempotent — safe to re-run):
    Files panel, now shipped by the harness itself) so an upgrade cannot
    double-mount,
 5. run `dsh plugin --profile web add <bundle>` for every package under
-   `packages/` (skips bundles already at the repo version unless `-Force`),
+   `packages/` (bundles already at the repo version are skipped unless `-Force`),
 6. **copy the skills a bundle ships** (`packages/<bundle>/skills/<name>/SKILL.md`)
    into `$DSH_HOME/skills`, where the harness' own filesystem skill provider
    reads them. Every folder the installer creates carries a marker file, so a
@@ -113,47 +125,50 @@ Both installer halves do the same work (idempotent — safe to re-run):
 7. print next steps. Neither half touches API keys — add yours in
    **Settings → Models**.
 
-Remove with **`uninstall.bat`** (Windows) or **`./uninstall.sh`** (macOS/Linux);
-each has the same `-Plugin` / `-DshHome` / `-ProfileName` switches. Removing a
-bundle also removes its patch layer.
+To remove the pack, run **`uninstall.bat`** (Windows) or **`./uninstall.sh`**
+(macOS/Linux); both take the same `-Plugin` / `-DshHome` / `-ProfileName`
+switches. Removing a bundle also removes its patch layer.
 
 ## Notes
 
-- Plugins are **alpha** and are built against the harness line pinned in
-  `.dsh-version.json` (`0.1.5-rc.1`). `dsh-rightbar` / `dsh-rightbar-files` /
-  `dsh-open-in-app` are **forks** of that line's client bundles; after a pin bump
-  run `scripts/sync-vendored.ps1` to move the forks forward (see
+- **Alpha software, on purpose.** Every package ships as `-alpha.N`, and the
+  pack is built and tested against the one harness line pinned in
+  `.dsh-version.json` (`0.1.5-rc.1`) — never against `latest`. `dsh-rightbar`,
+  `dsh-rightbar-files` and `dsh-open-in-app` are **forks** of that line's client
+  bundles, so a pin bump is a deliberate step: bump the pin, run
+  `scripts/sync-vendored.ps1` to move the forks forward, then re-verify (see
   `packages/dsh-rightbar/README.md`). `dsh-open-in-app` is the one fork that is
-  not byte-for-byte: its documented patches live in `sync-vendored.ps1`.
-  `sync-vendored.ps1` is **maintainer tooling** and is the one script in this
-  repo that wants PowerShell 7 (`pwsh`) on macOS/Linux — the installers never do.
-- **Language**: the UI halves are intentionally **plain JavaScript**, no build
-  step — core client packages ship hand-written module-table bundles and the
-  edit→restart loop stays instant. Four files are **generated, never
-  hand-edited**: `dsh-editor`'s vendored **CodeMirror 6** artifact
-  (`lib/vendor/cm6.min.js`), `dsh-diagrams`' vendored **Mermaid** engine
-  (`lib/vendor/mermaid.min.js`, built by `packages/dsh-diagrams/vendor/build.mjs`)
-  and the three forked bundles
+  not byte-for-byte — its documented patches live in `sync-vendored.ps1`.
+  `sync-vendored.ps1` is **maintainer tooling**, and the one script in this repo
+  that wants PowerShell 7 (`pwsh`) on macOS/Linux; the installers never do.
+- **Plain JavaScript, no build step.** The UI halves are hand-written
+  module-table bundles, so the edit → restart loop stays instant. A few files
+  are **generated and never hand-edited**: the three forked bundles
   (`dsh-rightbar/lib/client.js`, `dsh-rightbar-files/lib/client.js`,
-  `dsh-open-in-app/lib/client.js`).
-- **Iterating on a change**: a plain `install.bat` / `./install.sh` **re-syncs
-  every bundle whose version in this repo changed** — bump `package.json` +
-  `.dsh-version.json`, then run the launcher again; `-Force` re-adds regardless
-  (needed once when the package SET changes, e.g. a new bundle). One extra rule
-  for the loop to
-  *look* applied: the web profile installs every bundle as a **live link**
-  into this repo, so code edits are already "installed" there — you only need to
-  **restart** `npx @deepseek-ai/dsh web` and **hard-refresh** the browser
-  (Ctrl+F5). The client bundle is read once at app boot.
-- **Running it**: `run.ps1` / `./run.sh` start the pinned `dsh web` with
+  `dsh-open-in-app/lib/client.js`) and the engines the pack vendors and serves
+  itself — `dsh-editor`'s **CodeMirror 6**, `dsh-diagrams`' **Mermaid** (rebuilt
+  by `packages/dsh-diagrams/vendor/build.mjs`) and `dsh-terminal`'s **xterm.js**
+  with its stylesheet.
+- **Making a change visible.** After editing a `client.js`, restart
+  `npx @deepseek-ai/dsh web` and hard-refresh the browser (Ctrl+F5). The web
+  profile installs every bundle as a **live link** into this repo, so the edit is
+  already "installed" — but the bundle is read once, at app boot. A plain
+  `install.bat` / `./install.sh` re-syncs every bundle whose version in this repo
+  changed (bump `package.json` + `.dsh-version.json` first); `-Force` re-adds
+  regardless, which is what a changed package **set** needs. There is no hot
+  reload unless a `pnpm run dev:web` watcher from the harness repo is running.
+- **Running it.** `run.ps1` / `./run.sh` start the pinned `dsh web` with
   `--no-open`, read the `dsh web: http://127.0.0.1:<port>/?token=<token>` line
   the app prints once it is listening, and open **that** URL in Chrome (the
   default browser is the fallback). A URL that does not name a loopback address
   is refused instead of opened, and the launch token — a live credential for the
   running process — is only ever held in memory: never written to a file, never
-  passed through a shell.
-- See [`docs/INSTALL.md`](docs/INSTALL.md) for the manual path and
-  troubleshooting.
+  passed through a shell. [SECURITY.md](SECURITY.md) describes the whole access
+  model and how to lock the app down.
+- **Where to read more.** [`docs/INSTALL.md`](docs/INSTALL.md) has the manual
+  install path and troubleshooting, [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
+  the supported harness line, and each package's own README the details of that
+  plugin.
 
 ## Security & license
 
