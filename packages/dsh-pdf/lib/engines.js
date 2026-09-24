@@ -33,6 +33,8 @@ import path from 'node:path'
 
 /** How long one engine invocation may take. */
 export const ENGINE_TIMEOUT_MS = 30_000
+/** Recognising one page is slower than rasterizing it, so OCR gets its own. */
+export const OCR_TIMEOUT_MS = 60_000
 /** How much of an engine's own output is kept for diagnostics. */
 const ENGINE_OUTPUT_CAP = 256 * 1024
 /** Raster sizes this plugin will ask an engine for. */
@@ -80,8 +82,32 @@ const RASTERIZERS = [
   },
 ]
 
-/** The OCR engine alpha.2 drives; detected here so the host can report it. */
-const OCR_ENGINES = [{ name: 'tesseract', versionArgs: ['--version'] }]
+/** The OCR engines this plugin can drive, in preference order. */
+const OCR_ENGINES = [
+  {
+    name: 'tesseract',
+    // `stdout` as the output base is tesseract's own "write the text here"
+    // form, so no output file is created and nothing has to be cleaned up.
+    args: ({ image, lang, psm }) => [image, 'stdout', '-l', String(lang), '--psm', String(psm)],
+    listLangsArgs: ['--list-langs'],
+    /**
+     * The languages an engine reports, from its own `--list-langs` output: one
+     * tag per line after a header line, its stderr merged because one
+     * distribution prints the list there. A parse failure degrades to "unknown"
+     * rather than to an exception.
+     */
+    parseLangs: (text) =>
+      [
+        ...new Set(
+          String(text)
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => /^[a-z]{3}(?:_[A-Za-z]+)?(\+[a-z]{3}(?:_[A-Za-z]+)?)*$/.test(line))
+            .map((line) => line.toLowerCase()),
+        ),
+      ].sort(),
+  },
+]
 
 /** Look one executable up on PATH, the way a shell would, without a shell. */
 export function which(name, extraNames = []) {
@@ -146,12 +172,64 @@ export function probeEngines() {
       break
     }
   }
-  let ocr = null
+  let ocrEngine = null
   for (const candidate of OCR_ENGINES) {
     const found = which(candidate.name)
-    if (found) ocr = { name: candidate.name, file: found }
+    if (found) {
+      ocrEngine = {
+        name: candidate.name,
+        file: found,
+        args: candidate.args,
+        listLangsArgs: candidate.listLangsArgs,
+        parseLangs: candidate.parseLangs,
+      }
+    }
   }
-  return { rasterizer, ocr, checkedAt: new Date().toISOString() }
+  return { rasterizer, ocr: ocrEngine, checkedAt: new Date().toISOString() }
+}
+
+/**
+ * The languages an OCR engine has data for, or null when it cannot be asked or
+ * reports nothing. Best-effort by design: the answer is used to REFUSE a
+ * language that cannot work and to name what is available, never to gate a
+ * recognition that the engine itself would have accepted.
+ *
+ * @param engine - an entry from {@link probeEngines}, or null.
+ * @returns a sorted list of language tags, or null.
+ */
+export async function ocrLanguages(engine) {
+  if (!engine || typeof engine.parseLangs !== 'function' || !Array.isArray(engine.listLangsArgs)) return null
+  const result = await run(engine.file, engine.listLangsArgs, { timeoutMs: 15_000 })
+  const parsed = engine.parseLangs(result.stdout + '\n' + result.stderr)
+  return Array.isArray(parsed) && parsed.length > 0 ? parsed : null
+}
+
+/**
+ * Recognize one page image.
+ *
+ * The image is a FILE the caller already owns (the artifact cache's raster for
+ * that page), never a temporary this function would have to clean up: tesseract
+ * takes a path, and the raster is worth keeping anyway.
+ *
+ * @param options - `{ engine, image, lang, psm }`.
+ * @returns `{ ok, text, ms, stderr }` or `{ ok: false, reason, stderr }`.
+ */
+export async function ocr({ engine, image, lang = 'eng', psm = 3 }) {
+  if (!engine) return { ok: false, reason: 'no-ocr', text: '', stderr: '' }
+  if (typeof engine.args !== 'function') return { ok: false, reason: 'no-ocr', text: '', stderr: '' }
+  const started = Date.now()
+  const result = await run(engine.file, engine.args({ image, lang, psm }), { timeoutMs: OCR_TIMEOUT_MS })
+  const text = result.stdout
+  if (!result.ok && text.trim() === '') {
+    return {
+      ok: false,
+      reason: result.killed ? 'timeout' : 'engine-failed',
+      text: '',
+      ms: Date.now() - started,
+      stderr: (result.stderr || result.error || '').slice(0, 600),
+    }
+  }
+  return { ok: true, text, ms: Date.now() - started, stderr: result.stderr.slice(0, 600) }
 }
 
 /** PNG dimensions, straight from the IHDR chunk - no image library needed. */

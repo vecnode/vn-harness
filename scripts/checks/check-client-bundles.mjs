@@ -1535,8 +1535,30 @@ check('pdf chip title is the file name', pdfTypes[0].title('dsh-resource://file/
 check(
   'pdf seats',
   Object.keys(pdfSeats).sort().join(','),
-  'sidebar.right.pane.tab#dsh-pdf,sidebar.right.pane.tab.title#dsh-pdf,tool.call.toolview#pdf_find,tool.call.toolview#pdf_info,tool.call.toolview#pdf_read,tool.call.toolview#pdf_render',
+  'sidebar.right.pane.tab#dsh-pdf,sidebar.right.pane.tab.title#dsh-pdf,tool.call.toolview#pdf_find,tool.call.toolview#pdf_info,tool.call.toolview#pdf_read,tool.call.toolview#pdf_render,tool.call.toolview#pdf_scan',
 )
+// alpha.2, the scanner: a page with no text layer must SAY so and offer the one
+// action that can change it, through the same route the pdf_scan tool drives.
+check(
+  'a scanned page says so and offers a scan',
+  pdfSource.includes('data-pdf-scanned') &&
+    pdfSource.includes('.dpf-scanRow{') &&
+    pdfSource.includes('This page is a scanned image') &&
+    pdfSource.includes("'Scan this page'"),
+)
+check(
+  'the reader scans through the plugin route',
+  pdfSource.includes("API_ROOT + '/scan'") &&
+    pdfSource.includes("method: 'POST'") &&
+    pdfSource.includes('body: JSON.stringify({ ...payload, page: pageNumber, dpi: SCAN_DPI })'),
+)
+check(
+  'recognized text is labelled as recognized',
+  pdfSource.includes('data-pdf-ocr') &&
+    pdfSource.includes('OCR misreads digits, names, accents and punctuation') &&
+    pdfSource.includes('Recognized, not extracted'),
+)
+check('the client is at alpha.2', pdfSource.includes("PLUGIN_VERSION = '0.1.0-alpha.2'"))
 const PdfBody = pdfSeats['sidebar.right.pane.tab#dsh-pdf'].component
 const pdfTab = { id: 'tab7', contentId: 'dsh-resource://file/session/s1/report.pdf', title: 'report.pdf' }
 const pdfMarkup = renderToStaticMarkup(h(PdfBody, { useTabInfo: () => ({ tab: pdfTab }), sessionId: 's1' }))
@@ -1569,6 +1591,32 @@ check('the card previews the answer', cardMarkup.includes('pages 1-5 of 12 (layo
 check('the card offers the tab', cardMarkup.includes('data-pdf-open="dsh-resource://file/session/s1/report.pdf"') && cardMarkup.includes('Open tab'))
 const pdfRunningMarkup = renderToStaticMarkup(h(ToolCard, { toolName: 'pdf_read', block: { argsRaw: '{"path":"report.pdf"}' }, sessionId: 's1' }))
 check('a running call says so', pdfRunningMarkup.includes('working…'))
+// The pdf_scan card: what was recognized, with the engine and the resolution,
+// and the warning that this is a transcription rather than extracted text.
+const ScanCard = pdfSeats['tool.call.toolview#pdf_scan'].component
+const scanCardMarkup = renderToStaticMarkup(
+  h(ScanCard, {
+    toolName: 'pdf_scan',
+    block: {
+      kind: 'tool-result',
+      call: { name: 'pdf_scan', argsRaw: '{"path":"scan.pdf"}' },
+      meta: {
+        file: 'C:/work/scan.pdf',
+        name: 'scan.pdf',
+        address: 'dsh-resource://file/session/s1/scan.pdf',
+        pages: 4,
+        mode: 'ocr',
+        dpi: 200,
+        ocr: { engine: 'tesseract', lang: 'eng', dpi: 200, pages: [1, 2] },
+      },
+      content: [{ type: 'text', text: 'Recognized 2 pages of scan.pdf with tesseract (eng, 200 dpi, psm 3)' }],
+    },
+    sessionId: 's1',
+  }),
+)
+check('the scan card names the engine and pages', scanCardMarkup.includes('recognized 1, 2 with tesseract (eng, 200 dpi)'))
+check('the scan card warns it is a transcription', scanCardMarkup.includes('transcription, not extracted text'))
+check('the scan card opens the tab', scanCardMarkup.includes('data-pdf-open="dsh-resource://file/session/s1/scan.pdf"'))
 
 console.log('')
 console.log(failures === 0 ? 'all client-bundle checks passed' : failures + ' check(s) FAILED')

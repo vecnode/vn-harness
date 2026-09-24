@@ -54,6 +54,7 @@ import { fileURLToPath } from 'node:url'
 import { MAX_CACHE_BYTES, PdfCache, resolveHome } from './cache.js'
 import { DEFAULT_DPI, MAX_DPI, MIN_DPI, clampDpi, probeEngines, rasterize } from './engines.js'
 import { MAX_PAGES_PER_RUN, Reader } from './runner.js'
+import { DEFAULT_LANG, DEFAULT_PSM, MAX_SCAN_PAGES, SCAN_DPI, languagesFor, scanPages, scanReasonText } from './scan.js'
 
 /**
  * The row's identity, and the services activation waits for.
@@ -77,6 +78,7 @@ const API_ROOT = '/api/dsh-pdf'
 const HEALTH_ROUTE = API_ROOT + '/health'
 const STATE_ROUTE = API_ROOT + '/state'
 const FILE_ROUTE = API_ROOT + '/file'
+const SCAN_ROUTE = API_ROOT + '/scan'
 const VENDOR_ROUTE = API_ROOT + '/vendor'
 
 /** Refuse anything larger: a PDF is read into memory to be parsed. */
@@ -97,6 +99,8 @@ const FIND_MAX_HITS = 40
 const FIND_BUDGET_MS = 45_000
 /** `pdf_find` refuses to walk past this many pages. */
 const FIND_MAX_PAGES = 2_000
+/** How many pages `pdf_scan` inspects when no range is given and none is cached. */
+const SCAN_PROBE_PAGES = 20
 
 /** The bundled skill, as a file beside this module. */
 const SKILL_FILES = [{ name: 'pdf-analysis', file: '../skills/pdf-analysis/SKILL.md' }]
@@ -142,6 +146,23 @@ function errorToResponse(err) {
   if (err && typeof err.status === 'number') return fail(err.status, err.code ?? 'ERROR', String(err.message ?? 'request failed'))
   if (err && typeof err.code === 'string' && /^[A-Z][A-Z_]+$/.test(err.code)) return fail(400, err.code, String(err.message ?? 'request failed'))
   return fail(500, 'INTERNAL', err && err.message ? String(err.message) : 'unexpected failure')
+}
+
+/**
+ * Read a JSON request body with a hard cap.
+ *
+ * The only POST this plugin accepts is the reader's scan request, so the cap is
+ * small: a page range and a language tag are not a document.
+ */
+async function readJsonBody(request, maxBytes = 64 * 1024) {
+  const text = await request.text()
+  if (text.length > maxBytes) throw httpError(413, 'TOO_LARGE', 'The request body is too large.')
+  if (text.trim().length === 0) return {}
+  try {
+    return JSON.parse(text)
+  } catch (err) {
+    throw httpError(400, 'BAD_JSON', 'The request body is not valid JSON.')
+  }
 }
 
 /**
@@ -322,18 +343,24 @@ function humanBytes(bytes) {
 }
 
 /** The ability block every answer may quote: what this host can and cannot do. */
-function capabilities(engines) {
+function capabilities(engines, ocrLanguages) {
   return {
     rasterizer: engines.rasterizer ? { available: true, name: engines.rasterizer.name } : { available: false, name: null },
-    ocr: engines.ocr ? { available: true, name: engines.ocr.name } : { available: false, name: null },
+    ocr: {
+      available: Boolean(engines.ocr),
+      name: engines.ocr ? engines.ocr.name : null,
+      languages: Array.isArray(ocrLanguages) ? ocrLanguages : null,
+    },
   }
 }
 
 /** One line naming the optional engines, so a model can stop guessing. */
-function capabilityLine(engines) {
+function capabilityLine(engines, ocrLanguages) {
   const parts = []
-  parts.push(engines.rasterizer ? 'page rasterizer: ' + engines.rasterizer.name : 'page rasterizer: none on PATH (pdf_render cannot write pictures; install poppler, mutool or Ghostscript)')
-  parts.push(engines.ocr ? 'OCR: ' + engines.ocr.name : 'OCR: tesseract not on PATH')
+  parts.push(engines.rasterizer ? 'page rasterizer: ' + engines.rasterizer.name : 'page rasterizer: none on PATH (pdf_render cannot write pictures, and pdf_scan cannot draw a page to recognize; install poppler, mutool or Ghostscript)')
+  if (!engines.ocr) parts.push('OCR: tesseract not on PATH (pdf_scan cannot recognize a scanned page)')
+  else if (Array.isArray(ocrLanguages) && ocrLanguages.length > 0) parts.push('OCR: ' + engines.ocr.name + ' (' + ocrLanguages.slice(0, 12).join(', ') + (ocrLanguages.length > 12 ? ', ...' : '') + ')')
+  else parts.push('OCR: ' + engines.ocr.name)
   return parts.join(' | ')
 }
 
@@ -427,6 +454,16 @@ const VIEW_SCHEMA = {
     images: { type: 'array', items: { type: 'string' } },
     dpi: { type: 'number' },
     cached: { type: 'boolean' },
+    ocr: {
+      type: 'object',
+      properties: {
+        engine: { type: 'string' },
+        lang: { type: 'string' },
+        dpi: { type: 'number' },
+        pages: { type: 'array', items: { type: 'number' } },
+      },
+      required: ['engine'],
+    },
   },
   required: ['file'],
 }
@@ -511,7 +548,8 @@ export function buildTools(deps) {
             })()
           : infoSample(numPages)
       const stats = await ensureStats(reader, target.file, facts.sha, sample.pages, exec)
-      const text = infoText({ target, doc, facts, sample, stats, engines: deps.enginesNow(), version: deps.version })
+      const ocrLanguages = (await languagesFor(deps.enginesNow().ocr)).list
+      const text = infoText({ target, doc, facts, sample, stats, engines: deps.enginesNow(), ocrLanguages, version: deps.version })
       return {
         text,
         view: viewOf(target, { pages: numPages, scanned: scannedPages(stats, sample.pages), sampled: sample.sampled, cached: facts.cached }),
@@ -753,7 +791,191 @@ export function buildTools(deps) {
     },
   }
 
-  return [info, read, find, render]
+  /**
+   * `pdf_scan` - the scanner.
+   *
+   * The default page selection is the whole point: with no `pages` it scans
+   * exactly the pages `pdf_info` found to have NO text layer, because those are
+   * the only pages where recognition is better than reading. A page that already
+   * carries text is never sent to OCR behind the caller's back - recognized text
+   * of a page that already had real text is strictly worse than the real text,
+   * and offering it as a default would tempt a model into quoting the copy.
+   */
+  const scan = {
+    name: 'pdf_scan',
+    description: [
+      'Recognize the text of SCANNED pages - pages that are a picture of text and carry no text layer, so pdf_read can only report that they are empty.',
+      'With no `pages`, it scans exactly the pages that pdf_info found to have no text layer (at most ' + MAX_SCAN_PAGES + ' per call, and the answer names any it left). Pass `pages` to recognize a specific page or range instead - including a page that already has text, when you want to compare.',
+      'It needs TWO engines on the server host: a rasterizer (poppler `pdftoppm`, `mutool` or Ghostscript) to draw the page, and `tesseract` with the language data for the document. If either is missing the answer says so in plain words and names what to install; nothing else in this plugin depends on them.',
+      'Results are cached per page, language, resolution and segmentation mode, so recognizing a page twice costs nothing - but re-reading it at 300 dpi for a table after reading it at 200 dpi for prose is a NEW recognition, which is what `dpi` is for.',
+      'What comes back is a TRANSCRIPTION, not ground truth: OCR misreads digits, names, accents and punctuation, and it invents nothing but can drop a column. Quote it as recognized text, say that it was recognized, and prefer pdf_read on any page that has a real text layer.',
+    ].join('\n'),
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['path'],
+      properties: {
+        path: PATH_SCHEMA,
+        pages: { type: 'string', description: 'Page(s) to recognize: "7", "1-5", or "all". Default: the pages with no text layer, up to ' + MAX_SCAN_PAGES + '.' },
+        dpi: { type: 'number', description: 'Raster resolution the page is drawn at, ' + MIN_DPI + '-' + MAX_DPI + ' (default ' + SCAN_DPI + '). Higher is slower and reads small print better.' },
+        lang: { type: 'string', description: 'OCR language tag, e.g. "eng", "por", or "eng+por". Default ' + DEFAULT_LANG + '. The answer lists what this host has.' },
+        psm: { type: 'number', description: 'tesseract page-segmentation mode 0-13 (default ' + DEFAULT_PSM + ': automatic, no orientation detection). Use 6 for one uniform block, 11 for sparse text.' },
+        password: { type: 'string', description: 'Only for an encrypted document. Never stored.' },
+      },
+    },
+    output: {
+      schema: { type: 'object', properties: { text: { type: 'string' }, view: VIEW_SCHEMA }, required: ['text', 'view'] },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+      presentationMeta: (_args, value) => value.view,
+    },
+    presentCall: (args) => callView(args, 'Scan'),
+    presentResult: resultView,
+    async execute(args, exec) {
+      const resolved = await toolTarget(args, exec)
+      if (!resolved.ok) return { text: resolved.text, view: { file: resolved.file } }
+      const target = resolved.target
+      const engines = deps.enginesNow()
+      const facts = await reader.facts(target.file, { signal: exec.signal, password: args.password })
+      if (!facts.ok) return { text: failureText(target, facts), view: viewOf(target, {}, { pages: 0 }) }
+      const doc = facts.doc
+      const lang = (typeof args.lang === 'string' && args.lang.trim() !== '' ? args.lang : DEFAULT_LANG).toLowerCase()
+      const psm = Number.isInteger(args.psm) ? args.psm : DEFAULT_PSM
+      const dpi = clampDpi(args.dpi ?? SCAN_DPI)
+
+      // Which pages need scanning, and how that was decided - the answer always
+      // says which, because "which pages did you read" is the model's business.
+      let chosen = []
+      let how = ''
+      if (typeof args.pages === 'string' && args.pages.trim() !== '' && args.pages.trim() !== 'auto') {
+        try {
+          const range = parsePages(args.pages, doc.numPages)
+          chosen = rangeOf(range.from, range.to)
+          how = 'the pages you asked for'
+        } catch (err) {
+          return { text: 'Could not read that page range: ' + messageOf(err), view: viewOf(target, { pages: doc.numPages }) }
+        }
+      } else {
+        const stats = await ensureStats(reader, target.file, facts.sha, probePages(doc.numPages), exec)
+        chosen = Object.keys(stats)
+          .map(Number)
+          .filter((n) => (stats[String(n)] ?? {}).chars === 0)
+          .sort((a, b) => a - b)
+        how = 'the inspected pages that carry no text'
+      }
+
+      const capped = chosen.slice(0, MAX_SCAN_PAGES)
+      const left = chosen.slice(MAX_SCAN_PAGES)
+      const result =
+        capped.length === 0
+          ? { ok: false, reason: 'no-pages', pages: [], scanned: 0, fromCache: 0, skipped: [] }
+          : await scanPages({
+              cache,
+              engines,
+              file: target.file,
+              sha: facts.sha,
+              pages: capped,
+              dpi,
+              lang,
+              psm,
+              signal: exec.signal,
+              log: deps.log.warn,
+            })
+      const text = scanText({ target, doc, result, chosen: capped, left, how, lang, dpi, psm, engines, ocrLanguages: (await languagesFor(engines.ocr)).list })
+      return {
+        text,
+        view: viewOf(target, {
+          pages: doc.numPages,
+          dpi,
+          mode: 'ocr',
+          ...(result.ok
+            ? {
+                ocr: {
+                  engine: String(result.engine ?? engines.ocr?.name ?? 'ocr'),
+                  lang: String(result.lang ?? lang),
+                  dpi: Number(result.dpi ?? dpi),
+                  pages: (result.pages ?? []).filter((page) => !page.error).map((page) => page.n),
+                },
+                cached: result.scanned === 0,
+              }
+            : {}),
+        }),
+      }
+    },
+  }
+
+  return [info, read, find, render, scan]
+}
+
+/** The pages `pdf_scan` inspects to find the ones with no text layer. */
+function probePages(numPages) {
+  const pages = []
+  for (let n = 1; n <= Math.min(numPages, SCAN_PROBE_PAGES); n++) pages.push(n)
+  return pages
+}
+
+/** The `pdf_scan` answer. */
+function scanText({ target, doc, result, chosen, left, how, lang, dpi, psm, engines, ocrLanguages }) {
+  const name = path.basename(target.file)
+  const lines = []
+  if (!result.ok) {
+    lines.push(scanReasonText(result.reason, { available: result.available }))
+    if (result.reason === 'no-pages') {
+      lines.push('Every inspected page of ' + name + ' already has a text layer, so there is nothing to recognize: read it with pdf_read. To recognize a page anyway (to compare, or because its text is unusable), pass `pages`, e.g. { "path": ' + JSON.stringify(target.file) + ', "pages": "1" }.')
+      lines.push('This host can: ' + capabilityLine(engines, ocrLanguages))
+      return lines.join('\n')
+    }
+    if (result.reason === 'no-ocr' || result.reason === 'no-rasterizer') {
+      lines.push('Pages of ' + name + ' still readable without OCR: pdf_read gives whatever text layer exists, and the right bar\u2019s reader shows the pages as pictures. pdf_render can write a page as a PNG.')
+      lines.push('This host can: ' + capabilityLine(engines, ocrLanguages))
+    }
+    return lines.join('\n')
+  }
+
+  const recognized = result.pages.filter((page) => typeof page.text === 'string')
+  const failed = result.pages.filter((page) => page.error)
+  const characters = recognized.reduce((sum, page) => sum + (page.chars ?? 0), 0)
+  lines.push(
+    'Recognized ' +
+      recognized.length +
+      ' page' +
+      (recognized.length === 1 ? '' : 's') +
+      ' of ' +
+      name +
+      ' with ' +
+      result.engine +
+      ' (' +
+      result.lang +
+      ', ' +
+      result.dpi +
+      ' dpi, psm ' +
+      result.psm +
+      ') - ' +
+      characters +
+      ' characters from ' +
+      how +
+      '.',
+  )
+  if (result.fromCache > 0) lines.push('(' + result.fromCache + ' page(s) came from the cache; ' + result.scanned + ' were recognized now.)')
+  for (const page of result.pages) {
+    lines.push('')
+    if (page.error) {
+      lines.push('--- page ' + page.n + ': NOT RECOGNIZED --- ' + page.error)
+      continue
+    }
+    lines.push('--- page ' + page.n + ' (recognized text, not extracted) ---')
+    lines.push(page.text === '' ? '(the engine found no text on this page)' : page.text)
+  }
+  if (left.length > 0) {
+    lines.push('')
+    lines.push('(' + left.length + ' more page(s) need scanning (' + left.slice(0, 20).join(', ') + (left.length > 20 ? ', ...' : '') + '): at most ' + MAX_SCAN_PAGES + ' per call. Call pdf_scan again with `pages` for the next batch.)')
+  }
+  if (failed.length > 0) {
+    lines.push('')
+    lines.push('(' + failed.length + ' page(s) could not be recognized: ' + failed.map((page) => page.n).join(', ') + '. A higher `dpi` often helps a page the engine refused; `psm` 6 or 11 helps a page whose layout confused it.)')
+  }
+  lines.push('')
+  lines.push('This is a transcription: OCR misreads digits, names, accents and punctuation, and can drop a column. Say that these pages were recognized rather than extracted when you quote them, and read any page that has a real text layer with pdf_read instead.')
+  return lines.join('\n')
 }
 
 /** The session id one tool call belongs to. */
@@ -826,7 +1048,7 @@ function scannedPages(stats, wanted) {
 }
 
 /** The `pdf_info` answer. */
-function infoText({ target, doc, facts, sample, stats, engines, version }) {
+function infoText({ target, doc, facts, sample, stats, engines, ocrLanguages, version }) {
   const info = doc.info ?? {}
   const numPages = doc.numPages
   const lines = []
@@ -870,7 +1092,7 @@ function infoText({ target, doc, facts, sample, stats, engines, version }) {
       '  No text on page(s): ' +
         empty.slice(0, 40).join(', ') +
         (empty.length > 40 ? ' (+' + (empty.length - 40) + ' more)' : '') +
-        (withImages.length > 0 ? ' - these carry image data, so they are almost certainly SCANS (pdf_render can show them as pictures)' : ''),
+        (withImages.length > 0 ? ' - these carry image data, so they are almost certainly SCANS (pdf_scan can recognize their text where an OCR engine is installed; pdf_render shows them as pictures)' : ''),
     )
   }
   const first = inspected.length > 0 ? stats[String(inspected[0])] : null
@@ -911,7 +1133,7 @@ function infoText({ target, doc, facts, sample, stats, engines, version }) {
     for (const attachment of (doc.attachments ?? []).slice(0, 10)) lines.push('  - ' + attachment.name + (attachment.size ? ' (' + humanBytes(attachment.size) + ')' : ''))
   }
   for (const warning of facts.warnings ?? []) lines.push('Note: ' + warning)
-  lines.push('This host can: ' + capabilityLine(engines))
+  lines.push('This host can: ' + capabilityLine(engines, ocrLanguages))
   lines.push('Tab: ' + addressFor(target, target.session) + ' (opens this PDF in the right bar)')
   return lines.join('\n')
 }
@@ -990,7 +1212,7 @@ function readText({ target, range, mode, maxChars, result }) {
         empty.length +
         ' page(s) here have no text at all: ' +
         empty.map((page) => page.n).slice(0, 20).join(', ') +
-        '. Their content is an image. pdf_render turns a page into a PNG, and the right bar shows it.)',
+        '. Their content is an image. pdf_scan recognizes their text where an OCR engine is installed; pdf_render turns a page into a PNG, and the right bar shows it.)',
     )
   }
   return { text: lines.join('\n'), truncated }
@@ -1064,7 +1286,7 @@ function findText({ target, query, matcher, walked, mode, maxHits, context }) {
     const empty = walked.pages.filter((page) => (page.chars ?? 0) === 0)
     if (empty.length > 0) {
       lines.push(
-        '(' + empty.length + ' of those pages have no text layer at all - page(s) ' + empty.map((page) => page.n).slice(0, 20).join(', ') + '. Their content is an image, so nothing can be found in them; pdf_render can show one as a picture.)',
+        '(' + empty.length + ' of those pages have no text layer at all - page(s) ' + empty.map((page) => page.n).slice(0, 20).join(', ') + '. Their content is an image, so nothing can be found in them; pdf_scan can recognize their text where an OCR engine is installed, and pdf_render can show one as a picture.)',
       )
     }
   } else {
@@ -1220,13 +1442,13 @@ async function serveVendorAsset(request, name) {
 }
 
 /** The capability snapshot both the state and health routes answer with. */
-function snapshot(deps) {
+function snapshot(deps, ocrLanguages) {
   const engines = deps.enginesNow()
   const cache = deps.cache
   return {
     version: deps.version,
     engine: { name: 'pdf.js', version: deps.version, build: 'legacy' },
-    capabilities: capabilities(engines),
+    capabilities: capabilities(engines, ocrLanguages),
     cache: { documents: cache.entries().length, bytes: cache.size(), maxBytes: MAX_CACHE_BYTES },
     caps: {
       maxPdfBytes: MAX_PDF_BYTES,
@@ -1240,8 +1462,12 @@ function snapshot(deps) {
       findMaxPages: FIND_MAX_PAGES,
       infoSamplePages: INFO_SAMPLE_PAGES,
       infoFullPages: MAX_INFO_PAGES,
+      scanMaxPages: MAX_SCAN_PAGES,
+      scanDpi: SCAN_DPI,
+      scanPsm: DEFAULT_PSM,
+      scanLang: DEFAULT_LANG,
     },
-    tools: ['pdf_info', 'pdf_read', 'pdf_find', 'pdf_render'],
+    tools: ['pdf_info', 'pdf_read', 'pdf_find', 'pdf_render', 'pdf_scan'],
   }
 }
 
@@ -1278,8 +1504,8 @@ export function registerRoutes(ctx, deps) {
     )
   }
 
-  register(STATE_ROUTE, ['GET', 'HEAD'], async () => json(200, { ok: true, ...snapshot(deps) }))
-  register(HEALTH_ROUTE, ['GET', 'HEAD'], async () => json(200, { ok: true, ...snapshot(deps) }))
+  register(STATE_ROUTE, ['GET', 'HEAD'], async () => json(200, { ok: true, ...snapshot(deps, (await languagesFor(deps.enginesNow().ocr)).list) }))
+  register(HEALTH_ROUTE, ['GET', 'HEAD'], async () => json(200, { ok: true, ...snapshot(deps, (await languagesFor(deps.enginesNow().ocr)).list) }))
 
   /**
    * One PDF's bytes for the reader tab. The address the tab was opened at is
@@ -1313,6 +1539,68 @@ export function registerRoutes(ctx, deps) {
     headers.etag = '"' + createHash('sha256').update(bytes).digest('hex').slice(0, 32) + '"'
     headers['x-dsh-pdf-sha256'] = createHash('sha256').update(bytes).digest('hex')
     return new Response(bytes, { status: 200, headers })
+  })
+
+  /**
+   * Recognize pages for the READER - the same pipeline the `pdf_scan` tool uses
+   * (one code path, so what the model is told and what a person sees cannot
+   * drift), driven by the tab's own "scan this page" action.
+   *
+   * A missing engine answers 200 with `{ ok: false, reason, message }` rather
+   * than an HTTP error: it is a fact about this host, not a bad request, and the
+   * reader renders the sentence. HTTP errors are kept for an unusable address.
+   */
+  register(SCAN_ROUTE, ['POST'], async (request) => {
+    const body = await readJsonBody(request, 64 * 1024)
+    const session = typeof body.session === 'string' ? body.session : ''
+    const target = await resolveTarget(ctx, { session, path: typeof body.path === 'string' ? body.path : '' })
+    const engines = deps.enginesNow()
+    const facts = await deps.reader.facts(target.file, { password: typeof body.password === 'string' ? body.password : undefined })
+    if (!facts.ok) {
+      return json(200, { ok: false, reason: facts.failure?.kind ?? 'error', message: failureText(target, facts) })
+    }
+    const doc = facts.doc
+    const requested = typeof body.pages === 'string' && body.pages.trim() !== '' ? body.pages : Number.isInteger(body.page) ? String(body.page) : 'all'
+    let range
+    try {
+      range = parsePages(requested, doc.numPages)
+    } catch (err) {
+      throw httpError(400, 'BAD_RANGE', messageOf(err))
+    }
+    const lang = (typeof body.lang === 'string' && body.lang.trim() !== '' ? body.lang : DEFAULT_LANG).toLowerCase()
+    const psm = Number.isInteger(body.psm) ? body.psm : DEFAULT_PSM
+    const dpi = clampDpi(body.dpi ?? SCAN_DPI)
+    const result = await scanPages({
+      cache: deps.cache,
+      engines,
+      file: target.file,
+      sha: facts.sha,
+      pages: rangeOf(range.from, range.to),
+      dpi,
+      lang,
+      psm,
+      log: deps.log.warn,
+    })
+    if (!result.ok) {
+      return json(200, {
+        ok: false,
+        reason: result.reason,
+        message: scanReasonText(result.reason, { available: result.available }),
+        pages: doc.numPages,
+      })
+    }
+    return json(200, {
+      ok: true,
+      engine: result.engine,
+      lang: result.lang,
+      dpi: result.dpi,
+      psm: result.psm,
+      ms: result.ms,
+      scanned: result.scanned,
+      fromCache: result.fromCache,
+      skipped: result.skipped,
+      pages: result.pages,
+    })
   })
 
   // The registry matches EXACT paths only (there is no wildcard), so the

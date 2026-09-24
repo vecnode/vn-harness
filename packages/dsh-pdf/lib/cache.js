@@ -21,8 +21,10 @@
  *                       later `pdf_info` never re-parses a page it has seen
  *   pages/<n>.json      one page's text in both modes, written LAST for that
  *                       page so its presence is what marks the page complete
- *   images/<n>@<dpi>.png  a rasterized page (OCR input, alpha.2)
- *   ocr/<n>.<lang>.txt  one page's recognized text (alpha.2)
+ *   images/<n>@<dpi>dpi.png  a rasterized page (the OCR input, kept because a
+ *                       second recognition at the same resolution is then free)
+ *   ocr/<n>.<lang>@<dpi>dpi.p<psm>.txt  one page's recognized text, named by
+ *                       every input that can change it
  *
  * Writes are atomic (temp file + rename) and every read is defensive: a
  * half-written or hand-edited entry reads as "not cached" and is simply redone,
@@ -169,7 +171,7 @@ export class PdfCache {
   /** The path a rasterized page is (or would be) stored at. */
   imagePath(sha, n, dpi) {
     if (!HASH_PATTERN.test(String(sha)) || !Number.isInteger(n) || n < 1 || !DPI_PATTERN.test(String(dpi))) return null
-    return path.join(this.dirFor(sha), 'images', String(n) + '@' + dpi + '.png')
+    return path.join(this.dirFor(sha), 'images', String(n) + '@' + dpi + 'dpi.png')
   }
 
   /** Store a rasterized page; `bytes` must be a real PNG buffer. */
@@ -195,10 +197,31 @@ export class PdfCache {
     }
   }
 
-  /** One page's recognized text, or null. */
-  ocr(sha, n, lang) {
-    if (!HASH_PATTERN.test(String(sha)) || !Number.isInteger(n) || !LANG_PATTERN.test(String(lang))) return null
-    const file = path.join(this.dirFor(sha), 'ocr', String(n) + '.' + lang + '.txt')
+  /**
+   * The name one page's recognized text is filed under.
+   *
+   * Every input that can change the TEXT is in the name - the page, the
+   * language, the raster resolution and the page-segmentation mode - because a
+   * cached recognition is only evidence about the exact run that produced it.
+   * Recognising the same page at 300 dpi for a table after reading it at 150 dpi
+   * for prose is two results, and reusing the first would silently answer a
+   * question nobody asked. The document's own hash is the directory, so a
+   * changed file can never serve either.
+   */
+  ocrName(n, lang, dpi, psm) {
+    if (!Number.isInteger(n) || n < 1) return null
+    if (!LANG_PATTERN.test(String(lang))) return null
+    if (!DPI_PATTERN.test(String(dpi))) return null
+    if (!Number.isInteger(psm) || psm < 0 || psm > 13) return null
+    return String(n) + '.' + lang + '@' + dpi + 'dpi.p' + psm + '.txt'
+  }
+
+  /** One page's recognized text for one exact run, or null. */
+  ocr(sha, n, lang, dpi, psm) {
+    if (!HASH_PATTERN.test(String(sha))) return null
+    const name = this.ocrName(n, lang, dpi, psm)
+    if (name === null) return null
+    const file = path.join(this.dirFor(sha), 'ocr', name)
     try {
       const stats = statSync(file)
       if (!stats.isFile() || stats.size > MAX_PAGE_BYTES) return null
@@ -208,14 +231,14 @@ export class PdfCache {
     }
   }
 
-  /** Store one page's recognized text. */
-  writeOcr(sha, n, lang, text) {
-    if (!HASH_PATTERN.test(String(sha)) || !Number.isInteger(n) || !LANG_PATTERN.test(String(lang))) {
-      throw new Error('refusing to cache OCR under a malformed key')
-    }
+  /** Store one page's recognized text for one exact run. */
+  writeOcr(sha, n, lang, dpi, psm, text) {
+    if (!HASH_PATTERN.test(String(sha))) throw new Error('refusing to cache OCR under a malformed key')
+    const name = this.ocrName(n, lang, dpi, psm)
+    if (name === null) throw new Error('refusing to cache OCR under a malformed key')
     const bytes = Buffer.from(typeof text === 'string' ? text : String(text), 'utf8')
     if (bytes.byteLength > MAX_PAGE_BYTES) throw new Error('refusing to cache oversized OCR text')
-    writeAtomic(path.join(this.dirFor(sha), 'ocr', String(n) + '.' + lang + '.txt'), bytes)
+    writeAtomic(path.join(this.dirFor(sha), 'ocr', name), bytes)
     return text
   }
 

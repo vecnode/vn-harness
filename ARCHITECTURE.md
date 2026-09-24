@@ -1411,11 +1411,13 @@ Mermaid needs no engine at all.
 
 ## 16. The PDF plugin (dsh-pdf)
 
-**What it is.** One row (`pdf`), four tools (`pdf_info`, `pdf_read`, `pdf_find`,
-`pdf_render`), one tab type (`pdf`, band `extension`, patterns `['*.pdf']`), one
-bundled skill (`pdf-analysis`) and six authenticated routes. It makes a PDF
-readable to the model and openable in the right bar, and it is **read-only** -
-no tool modifies, merges, splits, rotates, fills or signs a document.
+**What it is.** One row (`pdf`), five tools (`pdf_info`, `pdf_read`, `pdf_find`,
+`pdf_render`, `pdf_scan`), one tab type (`pdf`, band `extension`, patterns
+`['*.pdf']`), one bundled skill (`pdf-analysis`) and eight authenticated route
+registrations (state, health, file, scan, and four fixed vendor assets). It makes
+a PDF readable and scannable by the model and openable in the right bar, and it
+is **read-only** - no tool modifies, merges, splits, rotates, fills or signs a
+document.
 
 **It replaces the shipped PDF renderer by RANKING, not by disabling.** The
 harness's own `@deepseek-ai/dsh-client-ui-sidebar-documentpreview` mounts a
@@ -1490,7 +1492,43 @@ character count and the image count, so a page with **0 characters and images**
 is a scan - a picture of text, with nothing to extract - and both `pdf_info` and
 `pdf_read` say so in as many words instead of returning an empty string. That is
 the difference between a tool that reports and one that invents, and it is what
-alpha.2's OCR will consume.
+the scanner consumes.
+
+**The scanner (alpha.2) is one pipeline with two callers.**
+`lib/scan.js` is shared by the `pdf_scan` tool and by the reader's own "scan this
+page" action through `POST /api/dsh-pdf/scan`, so what the model is told and what
+a person sees cannot drift. Four decisions are load-bearing:
+
+- **The default page selection is the whole point.** With no `pages`, it selects
+  exactly the pages `pdf_info` found to have no text layer, because those are the
+  only pages where recognition beats reading. A page that already carries text is
+  never sent to OCR behind the caller's back: recognized text of a page that
+  already had real text is strictly worse than the real text, and offering it as
+  a default would tempt a model into quoting the inferior copy.
+- **Two optional engines, resolved from `PATH`, never installed or bundled:** a
+  rasterizer (poppler `pdftoppm`, then `mutool`, then Ghostscript) because Node
+  has no canvas, and `tesseract` for the recognition. Both are spawned with argv
+  arrays under a pinned environment and killed on a deadline. The engine set is
+  DATA - each entry declares its own `args({image, lang, psm})` and its own
+  `--list-langs` parser - which is what lets a host without tesseract still drive
+  the pipeline in the tracked check through a stub child process.
+- **Every input that can change the text is in the cache key.** A result is filed
+  at `ocr/<n>.<lang>@<dpi>dpi.p<psm>.txt` and the raster it came from is kept at
+  `images/<n>@<dpi>dpi.png`, so a second call is free while re-reading a page at
+  300 dpi for a table after reading it at 200 dpi for prose is a NEW recognition.
+  Reusing the first for the second would silently answer a question nobody asked.
+- **Every absence is a sentence.** No rasterizer, no OCR engine, no data for the
+  requested language (checked against the engine's own list BEFORE a page is
+  drawn), no page that needs scanning: each comes back as a reason the caller
+  words, and the scan route answers 200 with `{ok:false, reason, message}` for a
+  capability refusal, because a missing engine is a fact about this host and not
+  a bad request.
+
+The answer, the conversation card and the reader's text panel all label the
+result a **transcription** rather than extraction, and name the engine, language
+and resolution it came from: OCR misreads digits, names, accents and punctuation,
+and a verification that is not claimed is worth more than a confident number
+that is wrong.
 
 **`layout` mode is its own algorithm.** pdf.js returns positioned text runs with
 no line or column structure, so a naive join turns a two-column paper - or an
@@ -1514,10 +1552,13 @@ and `white-space: pre`, so wrapping moves nothing.
 `pdftoppm`, then `mutool`, then Ghostscript (`gswin64c` / `gswin32c` / `gs`) from
 `PATH` and rasterizes into a PRIVATE temporary directory, reading the produced
 files back in page order so no engine's naming scheme becomes this plugin's
-contract. `tesseract` is detected for alpha.2's OCR. With no rasterizer,
-`pdf_render` says so in a sentence that names what to install - reading,
-searching and the reader tab are unaffected, because they need nothing.
-`GET /api/dsh-pdf/state` reports both.
+contract. `pdf_scan` uses the same rasterizer - into the artifact cache this
+time, because the picture is worth keeping - and adds `tesseract`, whose language
+list is read from the engine itself. With no rasterizer, `pdf_render` says so in
+a sentence that names what to install, and `pdf_scan` adds that OCR needs one
+too; reading, searching and the reader tab are unaffected, because they need
+nothing. `GET /api/dsh-pdf/state` reports both, and `pdf_info` prints both lines
+before a model ever asks.
 
 **The path policy, stated rather than implied.** A session-relative path is
 resolved inside the conversation workspace and both sides go through `realpath`,
@@ -1534,7 +1575,9 @@ buffer), 200 pages per extraction run, 20 pages and 50-400 dpi per `pdf_render`
 call, 40 000 characters of `pdf_read` output by default (200 000 maximum), every
 page inspected by `pdf_info` up to 60 pages and a 20-page sample above that
 (which the answer states), 40 hits and up to 2000 pages with a 45 s budget for
-`pdf_find` (which the answer states).
+`pdf_find` (which the answer states), and 10 pages per `pdf_scan` call at
+50-400 dpi (default 200) with psm 0-13 (default 3) - the answer names the pages
+it left so the next batch can be asked for by range.
 
 **Model experience.** The bundled `pdf-analysis` skill is registered at runtime
 from the package folder AND copied into `$DSH_HOME/skills` by both installers
@@ -1556,7 +1599,11 @@ pdf_* card, or by an address of either shape.
 | Symptom | Cause |
 |---|---|
 | `pdf_render` says "This host has no PDF rasterizer" | none of `pdftoppm`, `mutool`, `gs` is on the **server's** `PATH`; install poppler, MuPDF or Ghostscript, then call `GET /api/dsh-pdf/state` again. Reading and search need no engine |
-| `pdf_read` returns `--- page N: NO TEXT LAYER ---` | the page is an image (a scan). There is no text to extract; `pdf_render` shows it as a picture, and `pdf_info` says which pages are like this before you read them |
+| `pdf_scan` says "No OCR engine is installed" | `tesseract` is not on the **server's** `PATH` (and, if it is installed, the language data for this document may be missing - the refusal lists the languages the engine reports). Install it on the host running `dsh web` |
+| `pdf_scan` refuses the language | the engine reports other tags: use one of those, or install the data pack (`tesseract-ocr-por`, `...-deu`, ...). Nothing is drawn before this check, so a wrong tag costs nothing |
+| `pdf_scan` recognizes a page badly | raise `dpi` (300 for small print or a table), or change `psm` (6 for one uniform block, 11 for sparse text). Both are part of the cache key, so each is a separate, kept result |
+| A scanned page cannot be read at all | that is the honest outcome: OCR of a picture of handwriting, a stamp or a low-resolution fax produces noise. `pdf_render` shows the page; say what the tools cannot read instead of guessing |
+| `pdf_read` returns `--- page N: NO TEXT LAYER ---` | the page is an image (a scan). `pdf_scan` recognizes it where an engine is installed; `pdf_render` shows it as a picture, and `pdf_info` says which pages are like this before you read them |
 | Text looks scrambled / values interleaved | read the same pages with `mode: "layout"` |
 | `pdf_read` says "Truncated at N of M" | the `maxChars` ceiling; ask for a smaller range rather than raising the cap |
 | A PDF does not open in the reader but the old preview shows it | `dsh-pdf` is not mounted (a new package needs one install run, or `-Force`), or the bundle did not activate - check the console for `[dsh-pdf]`; the shipped preview is the fallback and keeps working |

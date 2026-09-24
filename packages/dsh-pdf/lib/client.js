@@ -59,11 +59,12 @@ window.__ModuleLoader__.load({
     /** The tab kind this package owns. */
     const KIND = 'pdf'
     /** Version marker shown in the toolbar, so a loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.1'
+    const PLUGIN_VERSION = '0.1.0-alpha.2'
     /** Keep in sync with lib/index.js. */
     const API_ROOT = '/api/dsh-pdf'
     const FILE_ROUTE = API_ROOT + '/file'
     const STATE_ROUTE = API_ROOT + '/state'
+    const SCAN_ROUTE = API_ROOT + '/scan'
     const VENDOR_ENGINE = API_ROOT + '/vendor/pdf.min.mjs'
     const VENDOR_WORKER = API_ROOT + '/vendor/pdf.worker.min.mjs'
     const VENDOR_CMAPS = API_ROOT + '/vendor/cmaps.json'
@@ -86,8 +87,10 @@ window.__ModuleLoader__.load({
     const MAX_ZOOM = 4
     /** How many page boxes are rendered ahead of the viewport. */
     const RENDER_MARGIN_PX = 1200
+    /** The raster resolution the reader's own "scan this page" action asks for. */
+    const SCAN_DPI = 200
     /** The wire tool names whose calls get a card in the conversation. */
-    const TOOL_NAMES = ['pdf_info', 'pdf_read', 'pdf_find', 'pdf_render']
+    const TOOL_NAMES = ['pdf_info', 'pdf_read', 'pdf_find', 'pdf_render', 'pdf_scan']
 
     // ---------------------------------------------------------------------
     // Styles (the pack's tab dress, under this package's own prefix)
@@ -120,6 +123,16 @@ window.__ModuleLoader__.load({
    --total-scale-factor (and the two round() steps) from here rather than from
    the document, which is what keeps selection aligned at every zoom. */
 .dpf-page{position:relative;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.10);--total-scale-factor:1;--scale-round-x:1px;--scale-round-y:1px}
+.dpf-pageWrap{display:flex;flex-direction:column;gap:8px;align-items:center}
+/* The scanned-page affordance, under the page it is about. */
+.dpf-scanRow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:min(680px,100%);padding:6px 10px;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.22));border-radius:8px;background:var(--dsw-alias-bg-l1,rgba(127,127,127,.06));font-size:11.5px;color:var(--dsw-alias-label-secondary,#666)}
+.dpf-scanNote{flex:1 1 auto;min-width:0}
+.dpf-scanErr{flex:1 1 100%;color:var(--dsw-alias-state-error-primary,#d3382c)}
+.dpf-ocrPanel{align-self:center;width:min(900px,100%);box-sizing:border-box;display:flex;flex-direction:column;gap:6px;padding:8px 10px 10px 10px;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.26));border-radius:8px;background:var(--dsw-alias-bg-l1,rgba(127,127,127,.06))}
+.dpf-ocrHead{display:flex;align-items:center;gap:8px;min-width:0}
+.dpf-ocrTitle{font-weight:500;font-size:12px}
+.dpf-ocrMeta{font-size:10.5px}
+.dpf-ocrText{margin:0;max-height:320px;overflow:auto;padding:8px 10px;border-radius:6px;background:var(--dsw-alias-bg-l2,#fff);border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18));font-family:ui-monospace,'Cascadia Code',Consolas,monospace;font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;color:#111}
 .dpf-canvas{display:block}
 .dpf-placeholder{display:flex;align-items:center;justify-content:center;color:#9aa0a6;font-size:12px}
 .dpf-textLayer{position:absolute;inset:0;overflow:hidden;line-height:1;text-align:initial;forced-color-adjust:none;transform-origin:0 0;caret-color:transparent;z-index:1}
@@ -613,29 +626,105 @@ window.__ModuleLoader__.load({
         return undefined
       }, [pageNumber, registerBox])
 
+      // Whether this page has a text layer at all. A page with none is a picture
+      // of text: pdf.js reports zero runs because there are none, and the only
+      // way to read its words is to draw it and recognize it. That is the one
+      // thing this tab offers beyond rendering, so it is offered right here,
+      // on the page that needs it.
+      const noTextLayer =
+        textContent !== null &&
+        Array.isArray(textContent.content?.items) &&
+        textContent.content.items.every((item) => typeof item.str !== 'string' || item.str.trim() === '')
+
+      const [scan, setScan] = useState({ phase: 'idle', text: '', message: '', engine: '', lang: '', dpi: 0, cached: false })
+      const scanNow = useCallback(async () => {
+        if (typeof props.onScan !== 'function') return
+        setScan((current) => ({ ...current, phase: 'busy', message: '' }))
+        const answer = await props.onScan(pageNumber)
+        if (answer && answer.ok) {
+          setScan({
+            phase: 'done',
+            text: answer.text ?? '',
+            message: '',
+            engine: answer.engine ?? '',
+            lang: answer.lang ?? '',
+            dpi: answer.dpi ?? 0,
+            cached: answer.cached === true,
+          })
+        } else {
+          setScan((current) => ({ ...current, phase: 'error', message: (answer && answer.message) || 'The page could not be recognized.' }))
+        }
+      }, [pageNumber, props.onScan])
+
+      const copyScanned = useCallback(() => {
+        try {
+          if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            navigator.clipboard.writeText(scan.text)
+          }
+        } catch (err) {
+          /* the text is selectable anyway */
+        }
+      }, [scan.text])
+
       const width = size ? Math.floor(size.width) : null
       const height = size ? Math.floor(size.height) : null
       return h(
         'div',
-        {
-          className: 'dpf-page',
-          ref: boxRef,
-          'data-pdf-page': String(pageNumber),
-          'data-pdf-status': status,
-          style: {
-            width: width ? width + 'px' : undefined,
-            height: height ? height + 'px' : undefined,
-            minHeight: width ? undefined : '60vh',
-            minWidth: width ? undefined : '45vw',
-            // pdf.js reads the scale from here, not from the document.
-            '--total-scale-factor': String(scale),
+        { className: 'dpf-pageWrap', ref: boxRef, 'data-pdf-page-wrap': String(pageNumber) },
+        h(
+          'div',
+          {
+            className: 'dpf-page',
+            'data-pdf-page': String(pageNumber),
+            'data-pdf-status': status,
+            'data-pdf-text-layer': noTextLayer ? 'none' : 'present',
+            style: {
+              width: width ? width + 'px' : undefined,
+              height: height ? height + 'px' : undefined,
+              minHeight: width ? undefined : '60vh',
+              minWidth: width ? undefined : '45vw',
+              // pdf.js reads the scale from here, not from the document.
+              '--total-scale-factor': String(scale),
+            },
           },
-        },
-        visible
-          ? h('canvas', { className: 'dpf-canvas', ref: canvasRef, 'aria-label': 'Page ' + pageNumber })
-          : h('div', { className: 'dpf-placeholder', style: { width: '100%', height: '100%' } }, String(pageNumber)),
-        visible && textContent ? h('div', { className: 'dpf-textLayer', ref: layerRef, 'data-pdf-text-layer': String(pageNumber) }) : null,
-        status === 'error' ? h('div', { className: 'dpf-placeholder', style: { position: 'absolute', inset: 0 } }, failure) : null,
+          visible
+            ? h('canvas', { className: 'dpf-canvas', ref: canvasRef, 'aria-label': 'Page ' + pageNumber })
+            : h('div', { className: 'dpf-placeholder', style: { width: '100%', height: '100%' } }, String(pageNumber)),
+          visible && textContent ? h('div', { className: 'dpf-textLayer', ref: layerRef, 'data-pdf-text-layer-content': String(pageNumber) }) : null,
+          status === 'error' ? h('div', { className: 'dpf-placeholder', style: { position: 'absolute', inset: 0 } }, failure) : null,
+        ),
+        // The scanned-page affordance: this page carries a picture and no words,
+        // so say exactly that and offer the one thing that can change it.
+        noTextLayer && scan.phase !== 'done'
+          ? h(
+              'div',
+              { className: 'dpf-scanRow', 'data-pdf-scanned': String(pageNumber) },
+              h('span', { className: 'dpf-scanNote' }, 'This page is a scanned image: it has no text layer, so its words cannot be extracted.'),
+              h(
+                ToolButton,
+                { action: 'scan-page', disabled: scan.phase === 'busy', onClick: scanNow, title: 'Draw this page and recognize its text (needs tesseract on the host)' },
+                scan.phase === 'busy' ? 'Scanning…' : scan.phase === 'error' ? 'Retry scan' : 'Scan this page',
+              ),
+              scan.phase === 'error' ? h('span', { className: 'dpf-scanErr' }, scan.message) : null,
+            )
+          : null,
+        scan.phase === 'done'
+          ? h(
+              'div',
+              { className: 'dpf-ocrPanel', 'data-pdf-ocr': String(pageNumber) },
+              h(
+                'div',
+                { className: 'dpf-ocrHead' },
+                h('span', { className: 'dpf-ocrTitle' }, 'Recognized text (page ' + pageNumber + ')'),
+                h('span', { className: 'dpf-chip dpf-ocrMeta' }, (scan.engine || 'OCR') + (scan.lang ? ' · ' + scan.lang : '') + (scan.dpi ? ' · ' + scan.dpi + ' dpi' : '') + (scan.cached ? ' · cached' : '')),
+                h('span', { className: 'dpf-spacer' }),
+                h(ToolButton, { action: 'scan-copy', onClick: copyScanned, title: 'Copy the recognized text' }, 'Copy'),
+                h(ToolButton, { action: 'scan-hide', onClick: () => setScan((current) => ({ ...current, phase: 'idle' })), title: 'Hide the recognized text' }, 'Hide'),
+              ),
+              h('pre', { className: 'dpf-ocrText' }, scan.text === '' ? '(the engine found no text on this page)' : scan.text),
+              h('div', { className: 'dpf-note' }, 'Recognized, not extracted: OCR misreads digits, names, accents and punctuation. Treat it as a transcription.'),
+            )
+          : null,
       )
     }
 
@@ -651,7 +740,7 @@ window.__ModuleLoader__.load({
      * overflow, and a drag pans them while a zoom is above fit.
      */
     function Reader(props) {
-      const { pdfjs, doc, name, scopeLabel, address } = props
+      const { pdfjs, doc, name, scopeLabel, address, onScan } = props
       const scrollRef = useRef(null)
       const boxes = useRef(new Map())
       const [scale, setScale] = useState(1)
@@ -933,6 +1022,7 @@ window.__ModuleLoader__.load({
             rotation,
             registerBox,
             searchRevision,
+            onScan,
           }),
         )
       }
@@ -1123,6 +1213,38 @@ window.__ModuleLoader__.load({
       const [password, setPassword] = useState('')
       const scopeLabel = parsed ? (parsed.absolute ? parsed.absolute : parsed.sessionId + '/' + parsed.path) : address
 
+      /**
+       * Recognize one page through this plugin's own route - the same pipeline
+       * the `pdf_scan` tool drives, so what the model is told and what the
+       * reader shows cannot drift. A missing engine comes back as a sentence
+       * (the route answers 200 with `ok: false`), never as a thrown error.
+       */
+      const scanPage = useCallback(
+        async (pageNumber) => {
+          if (!parsed) return { ok: false, message: 'This tab does not name a readable document.' }
+          const payload = parsed.absolute ? { path: parsed.absolute } : { session: parsed.sessionId, path: parsed.path }
+          let response
+          try {
+            response = await fetch(SCAN_ROUTE, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ ...payload, page: pageNumber, dpi: SCAN_DPI }),
+            })
+          } catch (err) {
+            return { ok: false, message: 'The scan request could not be sent: ' + (err && err.message ? err.message : String(err)) }
+          }
+          const answer = await response.json().catch(() => null)
+          if (!answer) return { ok: false, message: 'The scan request failed (HTTP ' + response.status + ').' }
+          if (answer.ok !== true) return { ok: false, message: answer.message || 'The scan could not run.', reason: answer.reason }
+          const page = (answer.pages ?? []).find((entry) => entry.n === pageNumber) ?? (answer.pages ?? [])[0]
+          if (!page) return { ok: false, message: 'No text came back for that page.' }
+          if (page.error) return { ok: false, message: page.error }
+          return { ok: true, text: page.text ?? '', engine: answer.engine, lang: answer.lang, dpi: answer.dpi, cached: page.cached === true }
+        },
+        [parsed],
+      )
+
       if (phase === 'error') {
         return h(
           StateBox,
@@ -1165,6 +1287,7 @@ window.__ModuleLoader__.load({
         name: baseNameOf(address),
         scopeLabel,
         address,
+        onScan: scanPage,
       })
     }
 
@@ -1249,6 +1372,18 @@ window.__ModuleLoader__.load({
       if (view && Array.isArray(view.images) && view.images.length > 0) facts.push({ label: view.images.length + ' picture(s) written' })
       if (view && Number.isFinite(view.dpi)) facts.push({ label: view.dpi + ' dpi' })
       if (view && view.cached === true) facts.push({ label: 'from cache' })
+      if (view && view.ocr && typeof view.ocr.engine === 'string') {
+        const recognized = Array.isArray(view.ocr.pages) ? view.ocr.pages : []
+        facts.push({
+          label:
+            'recognized ' +
+            (recognized.length > 0 ? recognized.slice(0, 6).join(', ') : 'no page') +
+            ' with ' +
+            view.ocr.engine +
+            (view.ocr.lang ? ' (' + view.ocr.lang + (Number.isFinite(view.ocr.dpi) ? ', ' + view.ocr.dpi + ' dpi' : '') + ')' : ''),
+        })
+        facts.push({ label: 'transcription, not extracted text' })
+      }
       if (view && Array.isArray(view.scanned) && Array.isArray(view.images) === false && view.scanned.length > 0) {
         facts.push({ label: 'scanned pages: ' + view.scanned.slice(0, 8).join(', ') })
       }

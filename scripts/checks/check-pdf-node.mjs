@@ -93,6 +93,28 @@ function scannedPdf() {
   return assemble(objects)
 }
 
+/** A document with `count` text pages, for the per-call page caps. */
+function manyPagePdf(count) {
+  const pageObjStart = 3
+  const fontObj = pageObjStart + count
+  const contentObjStart = fontObj + 1
+  const objects = []
+  objects[0] = '<< /Type /Catalog /Pages 2 0 R >>'
+  const kids = []
+  for (let index = 0; index < count; index += 1) kids.push(String(pageObjStart + index) + ' 0 R')
+  objects[1] = '<< /Type /Pages /Kids [' + kids.join(' ') + '] /Count ' + String(count) + ' >>'
+  for (let index = 0; index < count; index += 1) {
+    objects[pageObjStart - 1 + index] =
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ' + String(fontObj) + ' 0 R >> >> /Contents ' + String(contentObjStart + index) + ' 0 R >>'
+  }
+  objects[fontObj - 1] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  for (let index = 0; index < count; index += 1) {
+    const body = textStream(['Page ' + String(index + 1) + ' of the batch'])
+    objects[contentObjStart - 1 + index] = '<< /Length ' + String(body.length) + ' >>\nstream\n' + body + '\nendstream'
+  }
+  return assemble(objects)
+}
+
 // ---------------------------------------------------------------------------
 // A hermetic home + workspace
 // ---------------------------------------------------------------------------
@@ -107,12 +129,14 @@ process.env.DSH_HOME = path.join(root, 'dsh-home')
 
 const textFile = path.join(workspace, 'report.pdf')
 const scanFile = path.join(workspace, 'scan.pdf')
+const manyFile = path.join(workspace, 'batch.pdf')
 const passwordFile = path.join(workspace, 'locked.pdf')
 const notesFile = path.join(workspace, 'notes.txt')
 const outsideFile = path.join(elsewhere, 'outside.pdf')
 const corruptFile = path.join(workspace, 'corrupt.pdf')
 await fsp.writeFile(textFile, textPdf())
 await fsp.writeFile(scanFile, scannedPdf())
+await fsp.writeFile(manyFile, manyPagePdf(12))
 await fsp.writeFile(outsideFile, textPdf())
 await fsp.writeFile(notesFile, 'not a pdf\n')
 await fsp.writeFile(corruptFile, textPdf().subarray(0, 400))
@@ -188,7 +212,7 @@ check('the row injects tools and connection', Array.isArray(plugin.inject) && pl
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
-check('four tools registered', [...tools.keys()].sort().join(','), 'pdf_find,pdf_info,pdf_read,pdf_render')
+check('four tools registered', [...tools.keys()].sort().join(','), 'pdf_find,pdf_info,pdf_read,pdf_render,pdf_scan')
 check('the skill registers', skills.length === 1 && skills[0].name, 'pdf-analysis')
 check('the skill has content', (skills[0]?.content ?? '').length > 500)
 check('routes registered', [...routes.keys()].filter((route) => route.startsWith('/api/dsh-pdf')).length >= 6)
@@ -272,6 +296,29 @@ const corrupt = await call('pdf_info', { path: 'corrupt.pdf' })
 check('a truncated PDF is a readable failure', /not a readable PDF/.test(corrupt.text))
 
 // ---------------------------------------------------------------------------
+// The optional engines this host has, probed once
+// ---------------------------------------------------------------------------
+const enginesModule = await import(pathToFileURL(path.join(repo, 'packages/dsh-pdf/lib/engines.js')).href)
+const engines = enginesModule.probeEngines()
+
+// ---------------------------------------------------------------------------
+// The scanner tool, as the agent calls it
+// ---------------------------------------------------------------------------
+// (Driven here, before the schema block, because these two answers are part of
+// the schema assertions below. The PIPELINE itself is exercised further down.)
+const toolScan = await call('pdf_scan', { path: 'scan.pdf' })
+if (!engines.ocr) {
+  check('scan says OCR is missing, in words', /No OCR engine is installed/.test(toolScan.text) && /tesseract/.test(toolScan.text))
+  check('scan still names what can be done', /pdf_read/.test(toolScan.text) && /pdf_render/.test(toolScan.text))
+} else {
+  check('scan recognizes the scanned page', /Recognized 1 page/.test(toolScan.text) && /psm 3/.test(toolScan.text))
+  check('scan marks the text as recognized', /transcription/.test(toolScan.text))
+}
+const textScan = await call('pdf_scan', { path: 'report.pdf' })
+check('scan refuses to OCR pages that already have text', /already has a text layer/.test(textScan.text) && /pdf_read/.test(textScan.text))
+check('a scan of a text document names no OCR result', textScan.view.ocr === undefined)
+
+// ---------------------------------------------------------------------------
 // Schema conformance of every answer
 // ---------------------------------------------------------------------------
 function schemaErrors(schema, value, label = 'value') {
@@ -322,6 +369,8 @@ const answers = [
   ['pdf_find', 'pdf_find', found],
   ['pdf_find none', 'pdf_find', missing],
   ['pdf_render', 'pdf_render', await call('pdf_render', { path: 'report.pdf', pages: '1', dpi: 100 })],
+  ['pdf_scan', 'pdf_scan', toolScan],
+  ['pdf_scan text doc', 'pdf_scan', textScan],
   ['refused path', 'pdf_info', wrongType],
 ]
 const schemaProblems = []
@@ -334,8 +383,6 @@ check('every answer satisfies its own output schema', schemaProblems.slice(0, 3)
 // ---------------------------------------------------------------------------
 // pdf_render: real when this host can, honest when it cannot
 // ---------------------------------------------------------------------------
-const enginesModule = await import(pathToFileURL(path.join(repo, 'packages/dsh-pdf/lib/engines.js')).href)
-const engines = enginesModule.probeEngines()
 const render = await call('pdf_render', { path: 'report.pdf', pages: '2', dpi: 120 })
 if (engines.rasterizer) {
   check('render writes a page picture (' + engines.rasterizer.name + ')', /Rendered 1 page/.test(render.text))
@@ -358,14 +405,122 @@ if (engines.rasterizer) {
 }
 
 // ---------------------------------------------------------------------------
+// The scanner
+// ---------------------------------------------------------------------------
+// Two halves. The TOOL is driven as the agent drives it (and on a host without
+// tesseract that means its refusal, which is the behaviour to pin). The
+// PIPELINE is driven directly with a stub OCR engine, because the orchestration
+// - which pages, what is cached under which key, what happens when a language
+// is missing - is exactly the part a host with no OCR engine could otherwise
+// never exercise. The stub is a real child process (this same Node binary), so
+// the spawn, the argv shape, the timeout plumbing and the parse are the real
+// ones; only the recognition itself is replaced.
+const scanModule = await import(pathToFileURL(path.join(repo, 'packages/dsh-pdf/lib/scan.js')).href)
+const cacheModule = await import(pathToFileURL(path.join(repo, 'packages/dsh-pdf/lib/cache.js')).href)
+
+const stubLanguages = "List of available languages in \"stub\" (2):\neng\npor\n"
+const stubEngine = {
+  name: 'stub-ocr',
+  file: process.execPath,
+  // The image path and the language arrive as argv, exactly as tesseract takes
+  // them, and the "recognition" is the image's own name - which proves the
+  // pipeline handed the engine the raster it drew for THAT page.
+  args: ({ image, lang, psm }) => ['-e', 'process.stdout.write("RECOGNIZED:" + process.argv[1] + ":" + process.argv[2] + ":psm" + process.argv[3])', image, lang, String(psm)],
+  listLangsArgs: ['-e', 'process.stdout.write(' + JSON.stringify(stubLanguages) + ')'],
+  parseLangs: (text) => text.split('\n').map((line) => line.trim()).filter((line) => /^[a-z]{3}$/.test(line)),
+}
+
+if (engines.rasterizer) {
+  const cache = new cacheModule.PdfCache({ root: path.join(root, 'dsh-home', 'dsh-pdf', 'artifacts') })
+  const identity = await new (await import(pathToFileURL(path.join(repo, 'packages/dsh-pdf/lib/runner.js')).href)).Reader({ cache }).identity(scanFile)
+  const withStub = { rasterizer: engines.rasterizer, ocr: stubEngine }
+  const first = await scanModule.scanPages({ cache, engines: withStub, file: scanFile, sha: identity.sha256, pages: [1], dpi: 200, lang: 'eng', psm: 3 })
+  check('the pipeline draws the page and recognizes it', first.ok === true && first.scanned === 1 && first.fromCache === 0)
+  check('the recognized text comes from the page raster', first.pages[0].text.startsWith('RECOGNIZED:') && /1@200dpi\.png:eng:psm3$/.test(first.pages[0].text))
+  check('the raster is kept as an artifact', Boolean(cache.image(identity.sha256, 1, 200)))
+  check('the recognized text is cached', typeof cache.ocr(identity.sha256, 1, 'eng', 200, 3) === 'string')
+
+  const second = await scanModule.scanPages({ cache, engines: withStub, file: scanFile, sha: identity.sha256, pages: [1], dpi: 200, lang: 'eng', psm: 3 })
+  check('a second scan is served from the cache', second.fromCache === 1 && second.scanned === 0)
+
+  const otherDpi = await scanModule.scanPages({ cache, engines: withStub, file: scanFile, sha: identity.sha256, pages: [1], dpi: 300, lang: 'eng', psm: 3 })
+  check('another resolution is a new recognition', otherDpi.fromCache === 0 && otherDpi.scanned === 1 && otherDpi.dpi === 300)
+
+  const otherPsm = await scanModule.scanPages({ cache, engines: withStub, file: scanFile, sha: identity.sha256, pages: [1], dpi: 200, lang: 'eng', psm: 6 })
+  check('another segmentation mode is a new recognition', otherPsm.fromCache === 0 && otherPsm.scanned === 1)
+
+  const otherLang = await scanModule.scanPages({ cache, engines: withStub, file: scanFile, sha: identity.sha256, pages: [1], dpi: 200, lang: 'por', psm: 3 })
+  check('another language is a new recognition', otherLang.fromCache === 0 && otherLang.scanned === 1)
+
+  const unknownLang = await scanModule.scanPages({ cache, engines: withStub, file: scanFile, sha: identity.sha256, pages: [1], dpi: 200, lang: 'deu', psm: 3 })
+  check('a language the engine lacks is refused', unknownLang.ok === false && unknownLang.reason === 'no-language')
+  check('the refusal names what is available', JSON.stringify(unknownLang.available), '["eng","por"]')
+  const badLang = await scanModule.scanPages({ cache, engines: withStub, file: scanFile, sha: identity.sha256, pages: [1], lang: 'english', psm: 3 })
+  check('a malformed language tag is refused', badLang.ok === false && badLang.reason === 'bad-language')
+
+  const many = await new (await import(pathToFileURL(path.join(repo, 'packages/dsh-pdf/lib/runner.js')).href)).Reader({ cache }).identity(manyFile)
+  const capped = await scanModule.scanPages({
+    cache,
+    engines: withStub,
+    file: manyFile,
+    sha: many.sha256,
+    pages: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    dpi: 150,
+    lang: 'eng',
+    psm: 3,
+  })
+  check('a scan is capped per call', capped.pages.length === scanModule.MAX_SCAN_PAGES && scanModule.MAX_SCAN_PAGES === 10)
+  check('the cap names the pages it left', JSON.stringify(capped.skipped), '[11,12]')
+} else {
+  console.log('skip the stubbed scan pipeline                      (no rasterizer on this host)')
+}
+const noOcr = await scanModule.scanPages({ cache: { ocr: () => null }, engines: { rasterizer: { name: 'x' }, ocr: null }, file: scanFile, sha: 'a'.repeat(64), pages: [1] })
+check('the pipeline refuses without an OCR engine', noOcr.ok === false && noOcr.reason === 'no-ocr')
+const noRaster = await scanModule.scanPages({ cache: { ocr: () => null }, engines: { rasterizer: null, ocr: stubEngine }, file: scanFile, sha: 'a'.repeat(64), pages: [1] })
+check('the pipeline refuses without a rasterizer', noRaster.ok === false && noRaster.reason === 'no-rasterizer')
+check('every refusal has a sentence', [scanModule.scanReasonText('no-ocr'), scanModule.scanReasonText('no-rasterizer'), scanModule.scanReasonText('no-language', { available: ['eng'] }), scanModule.scanReasonText('bad-language')].every((line) => typeof line === 'string' && line.length > 40))
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 const stateResponse = await routes.get('/api/dsh-pdf/state').fetch(new Request('http://127.0.0.1/api/dsh-pdf/state'))
 const state = await stateResponse.json()
 check('state route answers ok', stateResponse.status === 200 && state.ok === true)
 check('state names the vendored engine', state.engine.version, '6.3.289')
-check('state lists the tools', state.tools.join(','), 'pdf_info,pdf_read,pdf_find,pdf_render')
+check('state lists the tools', state.tools.join(','), 'pdf_info,pdf_read,pdf_find,pdf_render,pdf_scan')
 check('state reports the cache ceiling', state.cache.maxBytes > 0)
+check('state carries the scan caps', state.caps.scanMaxPages === 10 && state.caps.scanDpi === 200 && state.caps.scanLang === 'eng')
+check('state reports the OCR capability honestly', typeof state.capabilities.ocr.available === 'boolean' && (state.capabilities.ocr.available ? typeof state.capabilities.ocr.name === 'string' : state.capabilities.ocr.name === null))
+
+/**
+ * One POST to the scan route: the reader's own "scan this page" call.
+ */
+async function postScan(body) {
+  const handler = routes.get('/api/dsh-pdf/scan')
+  return await handler.fetch(
+    new Request('http://127.0.0.1/api/dsh-pdf/scan', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  )
+}
+
+const scanResponse = await postScan({ session: 's1', path: 'scan.pdf', page: 1 })
+const scanAnswer = await scanResponse.json()
+check('the scan route answers the reader', scanResponse.status === 200 && typeof scanAnswer.ok === 'boolean')
+if (!engines.ocr) {
+  check('the scan route explains the missing engine', scanAnswer.ok === false && scanAnswer.reason === 'no-ocr' && /tesseract/.test(scanAnswer.message))
+} else {
+  check('the scan route returns recognized text', scanAnswer.ok === true && Array.isArray(scanAnswer.pages) && typeof scanAnswer.pages[0].text === 'string')
+}
+check('the scan route refuses a non-PDF', (await postScan({ session: 's1', path: 'notes.txt' })).status, 415)
+check('the scan route refuses a workspace escape', (await postScan({ session: 's1', path: '../elsewhere/outside.pdf' })).status, 403)
+check('the scan route refuses a malformed range', (await postScan({ session: 's1', path: 'scan.pdf', pages: 'nonsense' })).status, 400)
+check('the scan route refuses a bad body', (await (async () => {
+  const handler = routes.get('/api/dsh-pdf/scan')
+  return await handler.fetch(new Request('http://127.0.0.1/api/dsh-pdf/scan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{not json' }))
+})()).status, 400)
 
 const fileResponse = await routes.get('/api/dsh-pdf/file').fetch(new Request('http://127.0.0.1/api/dsh-pdf/file?session=s1&path=report.pdf'))
 const fileBytes = Buffer.from(await fileResponse.arrayBuffer())
