@@ -6,11 +6,13 @@
 .DESCRIPTION
     This is the WINDOWS half of the launcher; macOS and Linux run `run.sh`
     instead (plain POSIX shell - Node.js with npm/npx and no PowerShell at all).
-    The two files are the whole launcher - there is no wrapper/worker split, and
-    no `run.bat`: this script IS the entry point, so it sits at the repository
-    root beside install.sh / uninstall.sh and reads .dsh-version.json from the
-    same folder. Both halves do the same work with the same flags, print the
-    same messages and put the same tab on screen, so keep them in step.
+    This script IS the entry point and holds ALL the work: it sits at the
+    repository root beside install.sh / uninstall.sh and reads .dsh-version.json
+    from the same folder. The root `run.bat` is a double-click convenience only -
+    it forwards its flags to this file verbatim and does nothing else, because a
+    .bat is double-clickable where a .ps1 is not - so there is no wrapper/worker
+    split to keep in step. Both halves do the same work with the same flags,
+    print the same messages and put the same tab on screen, so keep them in step.
 
     It runs the pinned CLI exactly the way the installer does:
 

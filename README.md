@@ -64,14 +64,14 @@ side never needs PowerShell.
 | Step | Windows | macOS / Linux | What it does |
 |---|---|---|---|
 | **1. Install** | `install.bat` | `./install.sh` | adds every bundle under `packages/` to the web profile (`~/.dsh/profiles/web`) and copies the bundled skills into `~/.dsh/skills` |
-| **2. Run** | `run.ps1` | `./run.sh` | starts `npx @deepseek-ai/dsh@<pin> web` and opens the URL it prints — token included — in **Chrome**, falling back to the default browser |
+| **2. Run** | `run.bat` (double-click) / `run.ps1` | `./run.sh` | starts `npx @deepseek-ai/dsh@<pin> web` and opens the URL it prints — token included — in **Chrome**, falling back to the default browser |
 | **3. Remove** | `uninstall.bat` | `./uninstall.sh` | removes the bundles, their patch layers and the skills the installer copied |
 
 ```bat
-:: Windows - install/uninstall are double-click friendly; run is one PowerShell file
+:: Windows - install/uninstall/run are all double-click friendly
 install.bat                  :: installs into the web profile (the only target)
-powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1
-                             :: starts the harness and opens it in Chrome
+run.bat                      :: starts the harness and opens it in Chrome
+                             :: (a wrapper around run.ps1 - same flags, same behaviour)
 uninstall.bat                :: removes the pack
 ```
 

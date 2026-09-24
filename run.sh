@@ -23,8 +23,9 @@
 #  handed to a browser after the URL has been checked to be a loopback address.
 #
 #  POSIX shell only: this script needs Node.js (>= 22) with npm/npx - never
-#  PowerShell. The Windows half is `run.ps1` in this same folder; the two files
-#  are the whole launcher, with no wrapper/worker split and no run.bat.
+#  PowerShell. The Windows half is `run.ps1` in this same folder and it holds all
+#  the work; the root `run.bat` there is a double-click convenience that only
+#  forwards its flags to run.ps1, so there is nothing to mirror in this file.
 #
 #  Usage:
 #    ./run.sh [-Port <n>] [-DshHome <dir>] [-DshVersion <version>]

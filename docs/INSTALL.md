@@ -51,7 +51,7 @@ Overrides if the profile lives somewhere else:
 
 | Platform | Root launchers | Console twins |
 |---|---|---|
-| Windows | `install.bat` / `uninstall.bat` (double-click) and `run.ps1` | `scripts\install-all.bat` / `uninstall-all.bat` |
+| Windows | `install.bat` / `uninstall.bat` (double-click) and `run.ps1` (`run.bat` is its double-click wrapper) | `scripts\install-all.bat` / `uninstall-all.bat` |
 | macOS / Linux | `./install.sh` / `./uninstall.sh` / `./run.sh` | `./scripts/install-all.sh` / `uninstall-all.sh` |
 | Windows (direct) | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-all.ps1 -Force` | same with `uninstall-all.ps1`, and `-File run.ps1` for the app |
 | macOS / Linux (direct) | `sh scripts/install-all.sh -Force` | `sh scripts/uninstall-all.sh`, and `sh run.sh` for the app |
@@ -61,8 +61,9 @@ so running them again always installs the latest edits. The console twins behave
 like plain script runs: they skip bundles that are already installed at the same
 version. Both halves accept the same flags (`-Force`, `-Plugin`, `-DshHome`,
 `-ProfileName`, `-DshVersion`, `-Target web|cli`), and `--help` prints them. The
-run launcher is a single pair — `run.ps1` + `./run.sh`, no wrapper/worker split
-and no `.bat` — and takes its own flags (see **Running it** below).
+run launcher is `run.ps1` + `./run.sh`, one file per host; on Windows the root
+`run.bat` is a double-click wrapper that forwards its flags to `run.ps1` and does
+nothing else. Both take their own flags (see **Running it** below).
 
 ## Running it
 
@@ -72,7 +73,8 @@ files, one per platform: `run.ps1` (Windows) and `run.sh` (macOS/Linux), both at
 the repo root.
 
 ```bat
-:: Windows - run it from the repo root (a .ps1 is not double-clickable by default)
+:: Windows - double-click run.bat, or run it from the repo root
+run.bat                       :: same launcher, same flags (a .ps1 is not double-clickable)
 powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -Port 3099
 powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -DefaultBrowser

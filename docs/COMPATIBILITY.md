@@ -468,10 +468,11 @@ as a single argv element - never through a shell string.
 
 - **run launcher (new)**: `run.ps1` / `run.sh` - one file per platform at the repo
   root - start the pinned `dsh web` and open the URL it prints in Chrome, falling
-  back to the default browser; see **Running the app** above. There is no
-  wrapper/worker split and no `.bat`: for run there is no extra behaviour for a
-  wrapper to add. Nothing in the profile changes and no bundle was added: the
-  launcher is repo tooling, and an installed profile needs nothing to use it.
+  back to the default browser; see **Running the app** above. Each half holds all
+  the work; the root `run.bat` is a double-click wrapper that forwards its flags
+  to `run.ps1` and adds no behaviour of its own. Nothing in the profile changes
+  and no bundle was added: the launcher is repo tooling, and an installed profile
+  needs nothing to use it.
 
 ## Alpha policy
 

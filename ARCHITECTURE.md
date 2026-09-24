@@ -1049,14 +1049,17 @@ already. `scripts/sync-vendored.ps1`
 is **maintainer tooling**, not an installer, and is the one script here that wants
 `pwsh` on macOS/Linux.
 
-**The run launcher.** `run.ps1` / `run.sh` are two files - one per host, both at
-the repo root - and are not an install step: they
+**The run launcher.** `run.ps1` / `run.sh` are the launcher - one file per host,
+both at the repo root - and are not an install step: they
 start the app the docs would otherwise ask for by hand -
 `npx --yes @deepseek-ai/dsh@<pin> web --no-open [--port <n>]` - and open the URL
-the app prints once it is listening. There is deliberately no third file: unlike
-`install.bat` -> `scripts/install-all.ps1`, a run wrapper would add nothing (no
-flag to inject, no force semantics), so the pair IS the entry point and each half
-reads `.dsh-version.json` from its own folder. On Windows it is invoked as
+the app prints once it is listening. They hold ALL the work, so each half IS the
+entry point, and each half reads `.dsh-version.json` from its own folder. The root
+`run.bat` is a **double-click convenience only**: unlike
+`install.bat` -> `scripts/install-all.ps1` it injects no flag and owns no
+behaviour, it just forwards its flags to `run.ps1` verbatim (a `.bat` is
+double-clickable where a `.ps1` is not), so deleting it leaves the launcher
+unchanged. On Windows it is invoked as
 `powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 [flags]`; on
 macOS/Linux it is `./run.sh [flags]`. Both halves follow the same four steps and
 accept the same flags (`-Port`, `-DshHome`, `-DshVersion`, `-NoBrowser`,

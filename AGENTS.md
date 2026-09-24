@@ -30,9 +30,12 @@ Node.js with npm/npx and nothing else. Both halves do the same work with the sam
 flags, and entry points come in pairs: `install.bat` / `install.sh`,
 `uninstall.bat` / `uninstall.sh`, plus the console twins `scripts/*.bat` /
 `scripts/*.sh`. The run launcher is the one pair that is NOT split that way: it is
-exactly two files, `run.ps1` + `run.sh`, both at the repo root (there is no
-`run.bat` and no `scripts/run-all.*` - for run there is no wrapper-only behaviour
-to add, which is the whole reason the install pair has a wrapper).
+`run.ps1` + `run.sh`, one per host, both at the repo root, and each half IS the
+entry point (there is no `scripts/run-all.*` - for run there is no wrapper-only
+behaviour to add, which is the whole reason the install pair has a wrapper). The
+root `run.bat` is a **double-click convenience only**: it injects no flag and owns
+no behaviour, it forwards everything to `run.ps1` verbatim, because a `.bat` is
+double-clickable where a `.ps1` is not.
 `scripts/sync-vendored.ps1` is the one exception:
 maintainer tooling for moving the forks forward, and it wants `pwsh` on
 macOS/Linux.
@@ -76,6 +79,10 @@ root, and a move into `scripts/` means `repoRoot = $PSScriptRoot` and
   plain POSIX sh (dash/bash), Node.js + npm/npx only, **no PowerShell**, driven
   by `scripts/*.sh` and the root `install.sh` / `uninstall.sh`. Same flags, same
   messages and same behaviour as the PowerShell half
+- `run.bat` - the double-click wrapper for the run launcher: it forwards its flags
+  to `run.ps1` and does nothing else (no injected flag, no extra behaviour), so
+  the launcher is still `run.ps1` + `run.sh` and this file can be deleted without
+  changing what a run does
 - `run.ps1` / `run.sh` - the run launcher, one file per host, both at the repo
   root (see **The run launcher** above). It pipes the app's output through a FIFO
   on the POSIX side (never a file, so the launch token stays off the disk) and
@@ -155,6 +162,7 @@ root, and a move into `scripts/` means `repoRoot = $PSScriptRoot` and
 :: Windows
 install.bat                   :: installs into the web profile (the only target)
 install.bat -Force            :: re-add bundles even when versions match
+run.bat                       :: double-click friendly wrapper around run.ps1 (same flags)
 powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1
                               :: start the app + open it in Chrome (foreground; Ctrl+C stops it)
 uninstall.bat
