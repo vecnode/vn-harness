@@ -389,7 +389,24 @@ own workspace.
 (`window.DSHEditorCM`) and fetched over the plugin's own route on the first
 file open, so an idle GUI never pays for the editor. `lib/client.js` is
 hand-written module-table code with **no build step**; only the CM6 artifact is
-generated (when the version set changes).
+generated (when the version set changes). The route reads the file once and
+serves it from memory with an ETag, so a rebuilt bundle is picked up on the next
+harness start.
+
+**Languages.** The map from file extension to a CodeMirror language lives in
+`languageExtensionFor` and has two kinds of entry. The Lezer parsers vendored as
+`@codemirror/lang-*` cover js/ts/jsx/tsx, json, markdown, python, html, css and
+yaml. The languages with **no Lezer parser in the vendored set** ride on
+`StreamLanguage` instead, over CM5-style stream modes: `shell` (sh/bash/zsh/ksh/
+dash) and `powerShell` (ps1/psm1/psd1) from `@codemirror/legacy-modes`, `batch`
+(bat/cmd) from the hand-written `vendor/batch-mode.js` (CM5 and CM6 never shipped
+one), and - since alpha.11 - `rust` (rs) and `toml` (toml), which legacy-modes
+also carries and which CM6 has no parser for either. StreamLanguage translates a
+mode's CM5 token names onto Lezer highlight tags, so `defaultHighlightStyle`
+(light) and oneDark (dark) colour all five exactly as they colour a `.js`; the
+only build step a new one needs is re-exporting it from `vendor/entry.js` and
+rebuilding `lib/vendor/cm6.min.js`, which the tracked client check verifies by
+loading the bundle and wrapping each name (a stale artifact fails there).
 
 **Color scheme.** The editor is the one surface that cannot simply read the
 `--dsw-*` tokens: CodeMirror wants a palette of its own, and oneDark paints an

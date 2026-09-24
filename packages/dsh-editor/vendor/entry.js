@@ -79,3 +79,13 @@ export { oneDark } from '@codemirror/theme-one-dark'
 export { shell } from '@codemirror/legacy-modes/mode/shell'
 export { powerShell } from '@codemirror/legacy-modes/mode/powershell'
 export { batch } from './batch-mode.js'
+
+// Rust and TOML are the same shape of language and the same decision: neither
+// has a Lezer parser among the packages vendored here (@codemirror/lang-rust is
+// a separate package and no official TOML grammar exists for CM6 at all), and
+// legacy-modes carries a ported CM5 mode for both. Rust is a `simpleMode` and
+// TOML is a hand-written stream parser, but both are StreamParser objects, so
+// the client wraps them with StreamLanguage.define() exactly like shell and
+// powerShell and the same highlight styles colour them.
+export { rust } from '@codemirror/legacy-modes/mode/rust'
+export { toml } from '@codemirror/legacy-modes/mode/toml'

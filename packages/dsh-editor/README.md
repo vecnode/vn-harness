@@ -1,4 +1,4 @@
-# dsh-editor (alpha.10)
+# dsh-editor (alpha.11)
 
 **Editor** is a **tab type for the pack's right bar** (`dsh-rightbar` — the
 right-hand column of the DeepSeek Harness web GUI, beside the **Start** page and
@@ -9,7 +9,25 @@ names and creates new files through the shared **`dsh-modal`** dialog, and saves
 them back to disk. It is a **sub-plugin**: it holds no bar code, and its
 host-side half owns the pack's own HTTP routes. Alpha.
 
-## What it does (through alpha.10)
+## What it does (through alpha.11)
+
+- **Rust and TOML are highlighted too** (alpha.11). `.rs` and `.toml` files used
+  to open with **no language at all**, exactly like the shell scripts before
+  alpha.10, and for the same reason: CM6 has no Lezer parser for either one
+  (`@codemirror/lang-rust` is a separate package and no official TOML grammar
+  exists for CM6 at all), while the **already-vendored**
+  `@codemirror/legacy-modes` carries a ported CM5 mode for **both**. So nothing
+  new is installed: `vendor/entry.js` re-exports `rust` and `toml`, the bundle is
+  rebuilt, and the map wraps them with the same `StreamLanguage.define()` call
+  the shell languages use — which means the same `defaultHighlightStyle` (light)
+  and oneDark (dark) colour them. The **`rust`** mode is a `simpleMode`: keywords,
+  the name a `fn` / `struct` / `enum` / `type` / `union` / `let` declares,
+  primitive types, `true` / `false` / `Some` / `None` / `Ok` / `Err`, char and
+  byte literals, all four string spellings, numeric literals with their bases and
+  suffixes, `#[attributes]`, `//` and `/* */` comments and macro names. The
+  **`toml`** mode is a hand-written stream parser: `[table]` and
+  `[[array of tables]]` headers, the key on the left of an `=`, strings in all
+  four quote spellings, `#` comments, dates, booleans, arrays and numbers.
 
 - **Shell scripts are highlighted too** (alpha.10). `.sh` / `.bash` / `.zsh` /
   `.ksh` / `.dash`, `.ps1` / `.psm1` / `.psd1` and `.bat` / `.cmd` files used to
@@ -127,8 +145,9 @@ host-side half owns the pack's own HTTP routes. Alpha.
   Without `dsh-modal` mounted the dialog falls back to the browser's own prompt.
 - **Edit**: CodeMirror 6 with line numbers, history/undo, bracket matching,
   autocomplete, find-in-file, and syntax highlighting for js/ts/jsx/tsx, json,
-  markdown, python, html, css, yaml, and — since alpha.10 — the shell languages
-  sh/bash/zsh/ksh/dash, ps1/psm1/psd1 and bat/cmd. Line-wrapping for prose-ish
+  markdown, python, html, css, yaml, the shell languages sh/bash/zsh/ksh/dash,
+  ps1/psm1/psd1 and bat/cmd (alpha.10), and Rust (`rs`) and TOML (`toml`)
+  (alpha.11). Line-wrapping for prose-ish
   files. The
   palette follows the **app's own light/dark theme** (oneDark while the app is
   dark, a token-driven transparent theme while it is light; see alpha.5 above).

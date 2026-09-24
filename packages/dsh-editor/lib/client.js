@@ -109,7 +109,7 @@ window.__ModuleLoader__.load({
     const FILE_PREFIX = 'dsh-resource://file/'
     const SESSION_SEGMENT = 'session/'
     /** Version marker shown on the toolbar so a freshly loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.9'
+    const PLUGIN_VERSION = '0.1.0-alpha.11'
     /** The client service dsh-modal provides; resolved lazily, never required. */
     const MODAL_SERVICE = 'modals'
     /** The client service @deepseek-ai/dsh-client-ui-theme provides; resolved lazily too. */
@@ -551,12 +551,13 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     // Language mapping (syntax highlighting by file extension) - the vendored
     // bundle carries javascript/typescript, json, markdown, python, html, css
-    // and yaml, plus three CM5-style stream languages: `shell` (sh/bash/zsh/...)
-    // and `powerShell` (ps1/psm1/psd1) from legacy-modes, and the batch mode
-    // written in vendor/batch-mode.js. CodeMirror has no Lezer parser for any of
-    // them, so all three ride on StreamLanguage; without a mapping a shell
-    // script drew as one flat colour in the light theme - the whole point of
-    // alpha.10.
+    // and yaml, plus five CM5-style stream languages: `shell` (sh/bash/zsh/...)
+    // and `powerShell` (ps1/psm1/psd1) from legacy-modes, the batch mode written
+    // in vendor/batch-mode.js, and - since alpha.11 - `rust` (rs) and `toml`
+    // (toml) from the same legacy-modes package. CodeMirror has no Lezer parser
+    // for any of them, so all five ride on StreamLanguage; without a mapping a
+    // shell script drew as one flat colour in the light theme - the whole point
+    // of alpha.10 - and a .rs or a .toml drew the same way until alpha.11.
     // ---------------------------------------------------------------------
     function languageExtensionFor(CM, fileName) {
       const ext = extensionOf(fileName)
@@ -603,6 +604,10 @@ window.__ModuleLoader__.load({
         case 'bat':
         case 'cmd':
           return CM.StreamLanguage.define(CM.batch)
+        case 'rs':
+          return CM.StreamLanguage.define(CM.rust)
+        case 'toml':
+          return CM.StreamLanguage.define(CM.toml)
         default:
           return null
       }
