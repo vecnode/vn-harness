@@ -28,7 +28,10 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
   - `dsh-editor` - the tab type, `canOpen` (Markdown claimed, previews vetoed),
     the guide contract, the **Preview** hand-off naming the registry's kind (and
     the fallback when the preview type is absent), the blank-document save path,
-    and the theme-compartment source invariants;
+    the theme-compartment source invariants, and the shell languages (alpha.10:
+    the extension map in the client source, and the built `cm6.min.js` actually
+    carrying `StreamLanguage` + `shell` + `powerShell` + `batch` - a bundle that
+    was not rebuilt after entry.js changed fails there);
   - `dsh-open-in-app` - the route split (file managers to the pack route,
     everything else to the shipped one);
   - `dsh-themes` - the header seats and their orders, the theme registry

@@ -1,4 +1,4 @@
-# dsh-editor (alpha.9)
+# dsh-editor (alpha.10)
 
 **Editor** is a **tab type for the pack's right bar** (`dsh-rightbar` — the
 right-hand column of the DeepSeek Harness web GUI, beside the **Start** page and
@@ -9,7 +9,20 @@ names and creates new files through the shared **`dsh-modal`** dialog, and saves
 them back to disk. It is a **sub-plugin**: it holds no bar code, and its
 host-side half owns the pack's own HTTP routes. Alpha.
 
-## What it does (through alpha.9)
+## What it does (through alpha.10)
+
+- **Shell scripts are highlighted too** (alpha.10). `.sh` / `.bash` / `.zsh` /
+  `.ksh` / `.dash`, `.ps1` / `.psm1` / `.psd1` and `.bat` / `.cmd` files used to
+  open with **no language at all** — one flat colour in the light theme. CM6 has
+  no Lezer parser for any of the three, so all three ride on **`StreamLanguage`**:
+  the vendored bundle now carries `shell` and `powerShell` from
+  `@codemirror/legacy-modes`, plus a **hand-written batch mode**
+  (`vendor/batch-mode.js` — CodeMirror never shipped one, in 5 or 6). Their token
+  names are CM5's, which is the vocabulary StreamLanguage maps onto highlight
+  tags, so the same `defaultHighlightStyle` (light) and oneDark (dark) that colour
+  a `.js` file colour these; the batch mode knows `@echo off`, `rem` / `::`
+  comments, labels, `%VAR%` / `%~dp0` expansions, `/switches`, and the variable a
+  `set` names. The append-only language map lives in `languageExtensionFor`.
 
 - **The toolbar is the tab's own top bar, on the same line as the other two
   columns** (alpha.9). Every column opens with a band that ends in one hairline at
@@ -65,7 +78,7 @@ host-side half owns the pack's own HTTP routes. Alpha.
   leaves the panel's `--dsw-*` tokens visible instead of painting a white canvas
   of its own. The document text colour is the `--dsw-alias-label-primary` token
   in both modes, which is what keeps a file with **no syntax language**
-  (`.ps1`, `.gitignore`, `.txt`, …) readable: in the light theme that token is
+  (`.gitignore`, `.txt`, `.log`, …) readable: in the light theme that token is
   near-black, so on oneDark's opaque dark canvas it used to paint black text on a
   dark background.
 - **The switch is live.** The surface re-configures the moment the appearance
@@ -114,7 +127,9 @@ host-side half owns the pack's own HTTP routes. Alpha.
   Without `dsh-modal` mounted the dialog falls back to the browser's own prompt.
 - **Edit**: CodeMirror 6 with line numbers, history/undo, bracket matching,
   autocomplete, find-in-file, and syntax highlighting for js/ts/jsx/tsx, json,
-  markdown, python, html, css, yaml. Line-wrapping for prose-ish files. The
+  markdown, python, html, css, yaml, and — since alpha.10 — the shell languages
+  sh/bash/zsh/ksh/dash, ps1/psm1/psd1 and bat/cmd. Line-wrapping for prose-ish
+  files. The
   palette follows the **app's own light/dark theme** (oneDark while the app is
   dark, a token-driven transparent theme while it is light; see alpha.5 above).
   The engine is **lazy**: the vendored classic bundle is

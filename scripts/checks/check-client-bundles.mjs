@@ -248,6 +248,41 @@ check(
 )
 check('editor bundle id', editor.id, 'dsh-editor')
 check('editor inject', JSON.stringify(editor.exports.inject), '["locale","slots","sidebarRightTabs"]')
+// The language map is internal (the tab builds the extension when a file opens),
+// so it is asserted from the source: alpha.10 added the three shell languages,
+// which have no Lezer parser and therefore ride on StreamLanguage. Without a map
+// entry a .bat/.sh/.ps1 drew as ONE flat colour in the light theme.
+const editorSource = readFileSync(path.join(repo, 'packages/dsh-editor/lib/client.js'), 'utf8')
+check(
+  'editor maps the shell extensions',
+  ['sh', 'bash', 'zsh', 'ksh', 'dash', 'ps1', 'psm1', 'psd1', 'bat', 'cmd'].every((ext) => editorSource.includes("case '" + ext + "':")) &&
+    editorSource.includes('CM.StreamLanguage.define(CM.shell)') &&
+    editorSource.includes('CM.StreamLanguage.define(CM.powerShell)') &&
+    editorSource.includes('CM.StreamLanguage.define(CM.batch)'),
+)
+// ...and the generated bundle must actually CARRY those four names, which is the
+// half a source-only assertion cannot see: a stale cm6.min.js whose entry.js was
+// updated but never rebuilt fails here. `window`/`document` are passed as
+// UNDEFINED on purpose - the bundle probes for them (`typeof document`) and falls
+// back to inert stubs, while handing it a half-built object makes that probe
+// succeed and the load throw on a missing `.documentElement.style`.
+const cmVendor = new Function(
+  'window',
+  'document',
+  'console',
+  readFileSync(path.join(repo, 'packages/dsh-editor/lib/vendor/cm6.min.js'), 'utf8') + '\nreturn DSHEditorCM',
+)(undefined, undefined, console)
+check(
+  'editor engine carries the shell languages',
+  cmVendor &&
+    typeof cmVendor.StreamLanguage === 'function' &&
+    typeof cmVendor.StreamLanguage.define === 'function' &&
+    // The exact call the client makes for each of the three extensions: a mode
+    // the bundle names but StreamLanguage cannot wrap is still a broken file.
+    ['shell', 'powerShell', 'batch'].every(
+      (name) => cmVendor[name] && typeof cmVendor[name].token === 'function' && Boolean(cmVendor.StreamLanguage.define(cmVendor[name])),
+    ),
+)
 const registered = {}
 const types = []
 const previewCalls = []

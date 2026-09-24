@@ -69,7 +69,7 @@
  * and re-configures live when the theme changes (the `theme` service's
  * `theme/change` event, or the `body[data-ds-dark-theme]` marker ui-layout
  * writes). The text colour is the `--dsw-alias-label-primary` token in both
- * modes, so a file with no language of its own (a .ps1, .gitignore or .txt
+ * modes, so a file with no language of its own (a .txt, .gitignore or .log
  * file) stays readable instead of painting light-theme text on oneDark's dark
  * canvas.
  *
@@ -551,7 +551,12 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     // Language mapping (syntax highlighting by file extension) - the vendored
     // bundle carries javascript/typescript, json, markdown, python, html, css
-    // and yaml.
+    // and yaml, plus three CM5-style stream languages: `shell` (sh/bash/zsh/...)
+    // and `powerShell` (ps1/psm1/psd1) from legacy-modes, and the batch mode
+    // written in vendor/batch-mode.js. CodeMirror has no Lezer parser for any of
+    // them, so all three ride on StreamLanguage; without a mapping a shell
+    // script drew as one flat colour in the light theme - the whole point of
+    // alpha.10.
     // ---------------------------------------------------------------------
     function languageExtensionFor(CM, fileName) {
       const ext = extensionOf(fileName)
@@ -585,6 +590,19 @@ window.__ModuleLoader__.load({
         case 'yaml':
         case 'yml':
           return CM.yaml()
+        case 'sh':
+        case 'bash':
+        case 'zsh':
+        case 'ksh':
+        case 'dash':
+          return CM.StreamLanguage.define(CM.shell)
+        case 'ps1':
+        case 'psm1':
+        case 'psd1':
+          return CM.StreamLanguage.define(CM.powerShell)
+        case 'bat':
+        case 'cmd':
+          return CM.StreamLanguage.define(CM.batch)
         default:
           return null
       }

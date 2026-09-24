@@ -7,7 +7,7 @@
     "darwin",
     "linux"
   ],
-  "comment_platforms": "The plugins are plain JavaScript and platform-neutral; the only OS-specific code is a launcher choosing the right command for the host: dsh-open-in-app's file-browser launcher (explorer.exe / open / xdg-open, WSL-aware), dsh-terminal's shell resolver (pwsh.exe or powershell.exe / $SHELL or /bin/zsh / $SHELL or /bin/bash) and the run launcher's browser hand-off (Chrome on PATH / the standard install folders / the App Paths registry entry, 'open -a Google Chrome', google-chrome or chromium, else the platform default). The launchers run on Windows (install.bat / uninstall.bat, PowerShell 5.1 or 7, and the PowerShell run.ps1) and on macOS/Linux (install.sh / uninstall.sh / run.sh, POSIX sh - never PowerShell). The run launcher is two files only, run.ps1 + run.sh at the repo root: no wrapper/worker split and no .bat.",
+  "comment_platforms": "The plugins are plain JavaScript and platform-neutral; the only OS-specific code is a launcher choosing the right command for the host: dsh-open-in-app's file-browser launcher (explorer.exe / open / xdg-open, WSL-aware), dsh-terminal's shell resolver (pwsh.exe or powershell.exe / $SHELL or /bin/zsh / $SHELL or /bin/bash) and the run launcher's browser hand-off (Chrome on PATH / the standard install folders / the App Paths registry entry, 'open -a Google Chrome', google-chrome or chromium, else the platform default). The launchers run on Windows (install.bat / uninstall.bat, PowerShell 5.1 or 7, and the PowerShell run.ps1) and on macOS/Linux (install.sh / uninstall.sh / run.sh, POSIX sh - never PowerShell). The run launcher is run.ps1 + run.sh at the repo root, one file per host, and each half holds all the work; the root run.bat is a double-click convenience for Windows that forwards its flags to run.ps1 verbatim and adds no behaviour of its own.",
   "packages": {
     "dsh-vn-master": {
       "version": "0.1.0-alpha.1",
@@ -42,12 +42,12 @@
       ]
     },
     "dsh-editor": {
-      "version": "0.1.0-alpha.9",
+      "version": "0.1.0-alpha.10",
       "rows": [
         "editor"
       ],
       "rowOverrides": [],
-      "role": "the editable text/code tab type (kind `editor`): CodeMirror 6 in the right bar's pane, Markdown included, blank documents created through the + control, and a Preview hand-off to the shipped rendered view. Its toolbar is the tab's own TOP BAR (alpha.9): 38px with box-sizing:border-box, the same box the shipped Files tab and the document preview use, so the pane's first hairline lands on the y=76 line the 38px docking strip, the conversation header (min-height:76px) and the left column's branding band all end on - it was 42.5px (8px padding around a 26px control) and sat ~4.5px low",
+      "role": "the editable text/code tab type (kind `editor`): CodeMirror 6 in the right bar's pane, Markdown included, blank documents created through the + control, and a Preview hand-off to the shipped rendered view. Its toolbar is the tab's own TOP BAR (alpha.9): 38px with box-sizing:border-box, the same box the shipped Files tab and the document preview use, so the pane's first hairline lands on the y=76 line the 38px docking strip, the conversation header (min-height:76px) and the left column's branding band all end on - it was 42.5px (8px padding around a 26px control) and sat ~4.5px low. ALPHA.10 adds the SHELL LANGUAGES: .sh/.bash/.zsh/.ksh/.dash, .ps1/.psm1/.psd1 and .bat/.cmd opened with NO language at all - one flat colour, and in the light theme the same colour as everything else - because the map stopped at yaml and CodeMirror has no Lezer parser for any of the three. They ride on StreamLanguage: the vendored bundle (rebuilt) now carries `shell` and `powerShell` from @codemirror/legacy-modes, and because CM5 and CM6 both never shipped a batch mode this pack supplies one as a vendor build input (vendor/batch-mode.js, CM5-style token names - the vocabulary StreamLanguage maps onto the highlight tags defaultHighlightStyle and oneDark already colour) that knows @echo off, rem/:: comments, labels, %VAR% and %~dp0 expansions, /switches and the variable a `set` names",
       "uses": [
         "dsh-modal",
         "@deepseek-ai/dsh-client-ui-theme",

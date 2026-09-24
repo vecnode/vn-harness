@@ -35,6 +35,7 @@ export {
   defaultHighlightStyle,
   foldGutter,
   indentOnInput,
+  StreamLanguage,
   syntaxHighlighting,
 } from '@codemirror/language'
 
@@ -69,3 +70,12 @@ export { markdown } from '@codemirror/lang-markdown'
 export { python } from '@codemirror/lang-python'
 export { yaml } from '@codemirror/lang-yaml'
 export { oneDark } from '@codemirror/theme-one-dark'
+
+// Shell languages ride on StreamLanguage: CodeMirror 6 has no Lezer parser for
+// either, and legacy-modes carries the two ported CM5 modes this needs.
+// `shell` covers sh/bash/zsh/dash; `powerShell` covers ps1/psm1/psd1. There is
+// no batch mode anywhere (CM5 never shipped one), so the batch tokenizer lives
+// in the client and is wrapped by the same StreamLanguage.define().
+export { shell } from '@codemirror/legacy-modes/mode/shell'
+export { powerShell } from '@codemirror/legacy-modes/mode/powershell'
+export { batch } from './batch-mode.js'
