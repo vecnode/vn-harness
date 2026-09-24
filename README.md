@@ -25,6 +25,7 @@ way and what it touches; the table below is the map.
 | [`dsh-editor`](packages/dsh-editor/README.md) | [`README.md`](packages/dsh-editor/README.md) | alpha `0.1.0-alpha.9` |
 | [`dsh-gittree`](packages/dsh-gittree/README.md) | [`README.md`](packages/dsh-gittree/README.md) | alpha `0.1.0-alpha.4` |
 | [`dsh-diagrams`](packages/dsh-diagrams/README.md) | [`README.md`](packages/dsh-diagrams/README.md) | alpha `0.1.0-alpha.6` |
+| [`dsh-pdf`](packages/dsh-pdf/README.md) | [`README.md`](packages/dsh-pdf/README.md) | alpha `0.1.0-alpha.1` |
 | [`dsh-terminal`](packages/dsh-terminal/README.md) | [`README.md`](packages/dsh-terminal/README.md) | alpha `0.1.0-alpha.3` |
 | [`dsh-themes`](packages/dsh-themes/README.md) | [`README.md`](packages/dsh-themes/README.md) | alpha `0.1.0-alpha.13` |
 | [`dsh-modal`](packages/dsh-modal/README.md) | [`README.md`](packages/dsh-modal/README.md) | alpha `0.1.0-alpha.1` |
@@ -50,9 +51,12 @@ this repository is documentation.
 
 **What you need:** Node.js 22 or newer, with `npm`/`npx`. That is the whole
 requirement. Chrome is optional — the launcher falls back to your default
-browser. Two features have optional extras: the **History** tab needs `git` on
-`PATH`, and TikZ diagrams need a TeX engine (`pdflatex`, `xelatex` or
-`lualatex`). Without them, the rest of the pack works unchanged.
+browser. Three features have optional extras: the **History** tab needs `git` on
+`PATH`, TikZ diagrams need a TeX engine (`pdflatex`, `xelatex` or `lualatex`),
+and **PDF page pictures** (`pdf_render`) need a rasterizer (`pdftoppm` from
+poppler, `mutool`, or Ghostscript). Without them, the rest of the pack works
+unchanged — reading and searching a PDF needs nothing at all, because the pdf.js
+engine is vendored inside `dsh-pdf`.
 
 **Windows** uses the `.bat` files, **macOS/Linux** the `.sh` ones — and the Unix
 side never needs PowerShell.
@@ -147,7 +151,9 @@ switches. Removing a bundle also removes its patch layer.
   (`dsh-rightbar/lib/client.js`, `dsh-rightbar-files/lib/client.js`,
   `dsh-open-in-app/lib/client.js`) and the engines the pack vendors and serves
   itself — `dsh-editor`'s **CodeMirror 6**, `dsh-diagrams`' **Mermaid** (rebuilt
-  by `packages/dsh-diagrams/vendor/build.mjs`) and `dsh-terminal`'s **xterm.js**
+  by `packages/dsh-diagrams/vendor/build.mjs`), `dsh-pdf`'s **pdf.js** (engine,
+  worker, cMaps and standard fonts, rebuilt by
+  `packages/dsh-pdf/vendor/build.mjs`) and `dsh-terminal`'s **xterm.js**
   with its stylesheet.
 - **Making a change visible.** After editing a `client.js`, restart
   `npx @deepseek-ai/dsh web` and hard-refresh the browser (Ctrl+F5). The web
@@ -168,7 +174,8 @@ switches. Removing a bundle also removes its patch layer.
 - **Where to read more.** [`docs/INSTALL.md`](docs/INSTALL.md) has the manual
   install path and troubleshooting, [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
   the supported harness line, and each package's own README the details of that
-  plugin.
+  plugin — [`ARCHITECTURE.md`](ARCHITECTURE.md) has a section per plugin,
+  including [§16 the PDF plugin](ARCHITECTURE.md#16-the-pdf-plugin-dsh-pdf).
 
 ## Security & license
 

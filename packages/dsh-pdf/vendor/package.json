@@ -1,0 +1,9 @@
+{
+  "name": "dsh-pdf-vendor",
+  "private": true,
+  "description": "Build root for the vendored pdf.js engine. Run `node build.mjs` from this folder (see packages/dsh-pdf/README.md).",
+  "type": "module",
+  "dependencies": {
+    "pdfjs-dist": "6.3.289"
+  }
+}

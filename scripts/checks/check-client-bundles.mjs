@@ -1465,6 +1465,111 @@ check(
     diagSource.includes('scope: entry.scope'),
 )
 
+// ------------------------------------------------------------------ dsh-pdf
+const pdf = loadBundle('packages/dsh-pdf/lib/client.js', {})
+const pdfCssTag = pdf.document.head.children.filter((tag) => tag.dataset && tag.dataset.pluginCss === 'dsh-pdf/pdf.css').pop()
+const pdfCss = pdfCssTag ? pdfCssTag.textContent : ''
+const pdfSource = readFileSync(path.join(repo, 'packages/dsh-pdf/lib/client.js'), 'utf8')
+check('pdf bundle id', pdf.id, 'dsh-pdf')
+check('pdf inject', JSON.stringify(pdf.exports.inject), '["slots","sidebarRightTabs"]')
+check('pdf stylesheet injected', pdfCss.includes('.dpf-root{') && pdfCss.includes('.dpf-tools{'))
+// The toolbar is this tab's top bar: the same 38px border-box pane header the
+// Files tab, the document preview, the editor and History use, so every
+// column's first hairline lands on the same y=76 line.
+check(
+  'pdf top bar is the 38px pane header',
+  pdfCss.includes('.dpf-tools{flex:none;display:flex;align-items:center;gap:6px;box-sizing:border-box;height:38px;'),
+)
+// The reader is a real reader, and these are the parts that make it one: a text
+// layer pdf.js can position, the scale variable pdf.js reads (v6 uses
+// --total-scale-factor, not v3's --scale-factor), and hit highlighting.
+check(
+  'the text layer keeps pdf.js contracts',
+  pdfCss.includes('.dpf-textLayer span,.dpf-textLayer br{position:absolute;white-space:pre;') &&
+    pdfCss.includes('--total-scale-factor:1;--scale-round-x:1px;--scale-round-y:1px') &&
+    pdfCss.includes('.dpf-textLayer mark{'),
+)
+// The engine is never inlined: the harness reads every client bundle at boot,
+// so pdf.js (1.8 MB) is fetched from this plugin's own routes on first use.
+check('the engine is not inlined', pdfSource.length < 220000 && pdfSource.includes('pdfjsVersion') === false)
+check('the engine comes from a route', pdfSource.includes("API_ROOT + '/vendor/pdf.min.mjs'") && pdfSource.includes("API_ROOT + '/vendor/pdf.worker.min.mjs'"))
+check('the worker is handed over as a blob URL', pdfSource.includes('pdfjs.GlobalWorkerOptions.workerSrc = workerUrl'))
+check('the engine is imported as a module blob', pdfSource.includes('await import(/* webpackIgnore: true */ engineUrl)'))
+// The route registry matches EXACT paths only, so the cMap and standard-font
+// trees cannot be fetched file by file: one map per kind is decoded on demand.
+check(
+  'assets arrive as one map per kind',
+  pdfSource.includes("API_ROOT + '/vendor/cmaps.json'") &&
+    pdfSource.includes("API_ROOT + '/vendor/standard-fonts.json'") &&
+    pdfSource.includes('BinaryDataFactory: MapBinaryDataFactory'),
+)
+check('the reader uses pdf.js own TextLayer', pdfSource.includes('new engine.TextLayer({'))
+check('the reader is page-navigable by keyboard', pdfSource.includes("event.key === 'PageDown'") && pdfSource.includes('dpf-pageInput') && pdfSource.includes('goToPage'))
+check('a PDF is claimed as an extension type', pdfSource.includes("patterns: ['*.pdf']") && pdfSource.includes("priority: 'extension'"))
+
+const pdfTypes = []
+const pdfSeats = {}
+const pdfTabTypes = { register: (definition) => (pdfTypes.push(definition), () => {}), entries: () => [] }
+pdf.exports.apply({
+  slots: {
+    inject: (name, fn) => fn(),
+    register(spec, component) {
+      pdfSeats[spec.name + (spec.key ? '#' + spec.key : '')] = { spec, component }
+      return () => {}
+    },
+  },
+  sidebarRightTabs: pdfTabTypes,
+  effect: (fn) => fn(),
+  logger: { debug() {}, warn() {} },
+})
+check('pdf type registered', pdfTypes.length === 1 && pdfTypes[0].id + '/' + pdfTypes[0].kind, 'dsh-pdf/pdf')
+check('pdf claims only *.pdf', JSON.stringify(pdfTypes[0].patterns), '["*.pdf"]')
+check('pdf outranks the shipped preview band', pdfTypes[0].priority, 'extension')
+check(
+  'pdf canOpen accepts both address shapes',
+  pdfTypes[0].canOpen('dsh-resource://file/session/s1/docs/report.pdf') === true &&
+    pdfTypes[0].canOpen('dsh-resource://pdf/absolute/' + encodeURIComponent('C:\\tmp\\scan.PDF')) === true &&
+    pdfTypes[0].canOpen('dsh-resource://file/session/s1/notes.txt') === false,
+)
+check('pdf chip title is the file name', pdfTypes[0].title('dsh-resource://file/session/s1/docs/report.pdf'), 'report.pdf')
+check(
+  'pdf seats',
+  Object.keys(pdfSeats).sort().join(','),
+  'sidebar.right.pane.tab#dsh-pdf,sidebar.right.pane.tab.title#dsh-pdf,tool.call.toolview#pdf_find,tool.call.toolview#pdf_info,tool.call.toolview#pdf_read,tool.call.toolview#pdf_render',
+)
+const PdfBody = pdfSeats['sidebar.right.pane.tab#dsh-pdf'].component
+const pdfTab = { id: 'tab7', contentId: 'dsh-resource://file/session/s1/report.pdf', title: 'report.pdf' }
+const pdfMarkup = renderToStaticMarkup(h(PdfBody, { useTabInfo: () => ({ tab: pdfTab }), sessionId: 's1' }))
+check('pdf body renders its opening state', pdfMarkup.includes('data-pdf-state="loading"') && pdfMarkup.includes('Opening the PDF'))
+check(
+  'pdf title seat draws the chip',
+  renderToStaticMarkup(h(pdfSeats['sidebar.right.pane.tab.title#dsh-pdf'].component, { useTabInfo: () => ({ tab: pdfTab }) })),
+  '<span class="dpf-title">report.pdf</span>',
+)
+const ToolCard = pdfSeats['tool.call.toolview#pdf_read'].component
+const settledBlock = {
+  kind: 'tool-result',
+  call: { name: 'pdf_read', argsRaw: '{"path":"report.pdf","pages":"1-5","mode":"layout"}' },
+  meta: {
+    file: 'C:/work/report.pdf',
+    name: 'report.pdf',
+    address: 'dsh-resource://file/session/s1/report.pdf',
+    pages: 12,
+    mode: 'layout',
+    scanned: [7, 8],
+    cached: true,
+  },
+  content: [{ type: 'text', text: 'report.pdf — pages 1-5 of 12 (layout mode)' }],
+}
+const cardMarkup = renderToStaticMarkup(h(ToolCard, { toolName: 'pdf_read', block: settledBlock, sessionId: 's1' }))
+check('the card names the document', cardMarkup.includes('data-pdf-card="pdf_read"') && cardMarkup.includes('report.pdf'))
+check('the card shows what the host reported', cardMarkup.includes('12 pages') && cardMarkup.includes('layout text') && cardMarkup.includes('from cache'))
+check('the card flags pages with no text layer', cardMarkup.includes('2 page(s) without text') && cardMarkup.includes('data-warn="true"'))
+check('the card previews the answer', cardMarkup.includes('pages 1-5 of 12 (layout mode)'))
+check('the card offers the tab', cardMarkup.includes('data-pdf-open="dsh-resource://file/session/s1/report.pdf"') && cardMarkup.includes('Open tab'))
+const pdfRunningMarkup = renderToStaticMarkup(h(ToolCard, { toolName: 'pdf_read', block: { argsRaw: '{"path":"report.pdf"}' }, sessionId: 's1' }))
+check('a running call says so', pdfRunningMarkup.includes('working…'))
+
 console.log('')
 console.log(failures === 0 ? 'all client-bundle checks passed' : failures + ' check(s) FAILED')
 process.exitCode = failures === 0 ? 0 : 1
