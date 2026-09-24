@@ -166,7 +166,11 @@ window.__ModuleLoader__.load({
    rather than sitting still under a moving pane. */
 .dsi-box{flex:none;margin:auto;position:relative;box-sizing:border-box;background-color:var(--dsw-alias-bg-layer-1,#fff);background-image:linear-gradient(45deg,rgba(127,127,127,.22) 25%,transparent 25%,transparent 75%,rgba(127,127,127,.22) 75%),linear-gradient(45deg,rgba(127,127,127,.22) 25%,transparent 25%,transparent 75%,rgba(127,127,127,.22) 75%);background-size:16px 16px;background-position:0 0,8px 8px;box-shadow:0 0 0 .5px rgba(0,0,0,.18),0 1px 3px rgba(0,0,0,.14)}
 .dsi-img{display:block;width:100%;height:100%}
-.dsi-img[data-free="true"]{width:auto;height:auto;max-width:none}
+/* Before the browser has decoded the picture there is no size to fit, so the
+   image would paint at its intrinsic size for a frame and then jump to the fit
+   zoom. Hidden-until-measured is what keeps the open clean; the state it hides
+   in is the one where the picture is not on screen yet anyway. */
+.dsi-img[data-free="true"]{width:auto;height:auto;max-width:none;visibility:hidden}
 .dsi-box[data-pixelated="true"] .dsi-img{image-rendering:pixelated;image-rendering:crisp-edges}
 /* The zoom ladder floats over the picture: it belongs to the picture, while the
    top bar carries the file's own facts. */
