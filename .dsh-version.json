@@ -74,6 +74,18 @@
         "git on PATH"
       ]
     },
+    "dsh-image": {
+      "version": "0.1.0-alpha.1",
+      "rows": [
+        "image"
+      ],
+      "rowOverrides": [],
+      "role": "images as a surface (row `image`, tab kind `image`): PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG and TIFF open in a viewer that FITS the pane, zooms on a ladder (5%-800%) with fit-to-pane and 100%-actual-pixels, wheel-zooms at the pointer with Ctrl/Cmd, and is dragged to pan with a grab cursor MEASURED from real overflow. The zoom moves the LAYOUT (a box sized naturalPixels*zoom inside a scrollable pane), never a CSS transform, so a zoomed picture stays scrollable to its edge; a zoom keeps the point the reader was looking at, restored on the next animation frame after React commits the new box; the wheel listener is attached NATIVELY with {passive:false} because React's own wheel listener is passive and a preventDefault inside it does nothing, which would let the browser's own Ctrl+wheel page zoom fire on top; a checkerboard shows PNG transparency; past 300% the picture is drawn pixelated; and the status line names the true dimensions, the size on disk, the format and the SOURCE PIXEL under the pointer with its colour, sampled through a 1x1 canvas so inspecting a large photograph never copies the picture into a second buffer. Client-only by design: bytes come from the harness's own remote.workspaceFiles.readAll (the same call the shipped preview makes for a bytes-complete document, which already resolves the path inside the conversation workspace, refuses a symlink out, requires a regular file and enforces the 32 MiB single-file cap on the HOST side), so this package ships NO route, NO host state and NO path policy of its own - its Node half is one no-op row whose only job is to put the browser bundle in the boot graph. It REPLACES the shipped preview's bare intrinsic-size image only for image addresses, by RANKING and never by disabling a row: the type registers in the `extension` band with the image suffixes while the shipped preview claims dsh-resource://file/** at `fallback`, and canOpen refuses anything that is not an image address, so every other file type keeps exactly the surface it had, the shipped preview stays mounted as the fallback, and the editor (which vetoes images outright) is untouched. No guide entry on purpose: a blank image is not a document the + control should offer. Nothing for sync-vendored.ps1 to track",
+      "uses": [
+        "dsh-rightbar",
+        "@deepseek-ai/dsh-api-workspace-files (the workspaceFiles remote)"
+      ]
+    },
     "dsh-diagrams": {
       "version": "0.1.0-alpha.6",
       "rows": [

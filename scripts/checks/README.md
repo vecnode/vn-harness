@@ -51,7 +51,21 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
     four load-bearing properties of the render path (parse-before-render,
     `suppressErrorRendering`, the plugin's own container, the `finally` sweep),
     plus the zoom ladder moving the layout box rather than a transform, the
-    Desktop-export wording and the four verdict labels.
+    Desktop-export wording and the four verdict labels;
+  - `dsh-pdf` - the reader type and the `pdfs` index page, every tool card, the
+    scanner's own route call, and the parts of the reader that are contracts
+    (the text layer's scale variables, the lazily drawn thumbnail rail, the
+    outline resolved through pdf.js, the engine fetched from the package's own
+    routes rather than inlined);
+  - `dsh-image` - the image type and its seat, the extension band and the
+    `canOpen` refusals, the chip title and the deliberate absence of a guide
+    entry, the tab body and the title seat rendered as markup, and the viewer's
+    load-bearing rules by name: the layout-sized zoom (never a transform), the
+    measured overflow behind the grab cursor, the non-passive wheel listener
+    anchored at the pointer, the 1x1 pixel sampler, the checkerboard, the
+    pixelated threshold, the base64 decode, and the fact that the bundle has no
+    `fetch` and no route of its own because bytes come from the shipped
+    `workspaceFiles` remote.
 - `check-node-routes.mjs` imports each Node half, captures the handlers it
   registers on the `connection` service, and drives them with real `Request`s
   against temp workspaces and a temp `DSH_HOME`:
