@@ -29,7 +29,7 @@
  *     disk, its format, and the source pixel under the pointer with its colour.
  *
  * Bytes come from the harness's own `workspaceFiles` remote
- * (`ctx.remote.workspaceFiles.readAll`), the same call the shipped preview
+ * (`ctx.get('remote.workspaceFiles').readAll`), the same call the shipped preview
  * makes for a "bytes-complete" document. That call already enforces the
  * workspace path policy and the single-file byte cap on the HOST side, so this
  * package needs no route of its own, no policy of its own to get wrong, and a
@@ -194,10 +194,21 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     // The Remote face, captured at activation
     //
-    // `inject` waits for `remote.workspaceFiles`, so this is the generated
-    // Remote's own namespace: `readAll(scopeId, path, signal)` resolves to
-    // `{ ok: true, value }` or `{ ok: false, error }`, and rejects only for an
-    // assembly fault.
+    // Read through `ctx.get(REMOTE_NAMESPACE)`, NOT `ctx.remote.workspaceFiles`:
+    // cordis only exposes a service as a property when the plugin's `inject`
+    // names that service, and this plugin injects the NAMESPACE
+    // (`remote.workspaceFiles`), never its carrier (`remote`). Touching
+    // `ctx.remote` here threw `cannot get property "remote" without inject`,
+    // which the guard below swallowed into `workspaceFiles = null`, so EVERY
+    // image reported "no workspaceFiles remote" on every reload. The shipped
+    // preview and dsh-rightbar-files may write `ctx.remote.workspaceFiles` only
+    // because they list `remote` in their own `inject`.
+    //
+    // `inject` waits for `remote.workspaceFiles`, and the Gateway installs a
+    // namespace's whole method group synchronously inside its fiber's apply, so
+    // a plugin parked on the namespace never observes it without `readAll`:
+    // `readAll(scopeId, path, signal)` resolves to `{ ok: true, value }` or
+    // `{ ok: false, error }`, and rejects only for an assembly fault.
     // ---------------------------------------------------------------------
     let workspaceFiles = null
 
@@ -1035,7 +1046,7 @@ window.__ModuleLoader__.load({
      */
     function apply(ctx) {
       try {
-        workspaceFiles = ctx && ctx.remote ? ctx.remote.workspaceFiles : null
+        workspaceFiles = ctx && typeof ctx.get === 'function' ? ctx.get(REMOTE_NAMESPACE) : null
       } catch (err) {
         workspaceFiles = null
       }
