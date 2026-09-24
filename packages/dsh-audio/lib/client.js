@@ -15,7 +15,7 @@
  *
  * What the viewer adds, and why each part is here:
  *
- *   - a WAVEFORM: one lane per channel, an adaptive time ruler whose labels are
+ *   - a WAVEFORM: one row per track, an adaptive time ruler whose labels are
  *     MEASURED so they never collide, a min/max envelope with the RMS drawn
  *     inside it as a lighter band, and a linear or dBFS amplitude scale;
  *   - ZOOM THAT MOVES THE LAYOUT: the scrollable width is the file's real
@@ -145,11 +145,21 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     // Geometry and the zoom ladder
     // ---------------------------------------------------------------------
-    /** The channel-label gutter, the time ruler, and one lane's box. */
+    /** The channel-label gutter, the time ruler, and one TRACK's row. */
     const GUTTER = 48
     const RULER_H = 24
-    const LANE_H = 76
-    const LANE_GAP = 6
+    const TRACK_H = 76
+    const TRACK_GAP = 6
+    /**
+     * The track height belongs to the READER: the bottom edge of any track is a
+     * handle, and dragging it resizes EVERY track at once. One shared height on
+     * purpose - a waveform is read across tracks, and a file whose tracks were
+     * separately sized would no longer line up vertically.
+     */
+    const MIN_TRACK_H = 24
+    const MAX_TRACK_H = 420
+    /** How near a track's bottom edge a press counts as its resize handle. */
+    const HANDLE_GRAB = 5
     /** Pixels per second: the ladder the +/- buttons walk. */
     const PPS_STEPS = [
       1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000,
@@ -1487,9 +1497,13 @@ window.__ModuleLoader__.load({
       return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GiB'
     }
 
-    /** The channel's name in the gutter: L/R for a stereo pair, then numbers. */
+    /**
+     * The track's name in the gutter: L/R for a stereo pair, the track's number
+     * past that, and NOTHING for a mono file - a lone "M" is a letter the reader
+     * has to decode, and one track has nothing to tell apart from.
+     */
     function channelLabel(index, channels) {
-      if (channels === 1) return 'M'
+      if (channels <= 1) return ''
       if (channels === 2) return index === 0 ? 'L' : 'R'
       return String(index + 1)
     }
@@ -1757,7 +1771,7 @@ window.__ModuleLoader__.load({
      * not define). Chosen to read on a light AND a dark page.
      */
     const FALLBACK_PALETTE = {
-      lane: 'rgba(127,127,127,.05)',
+      track: 'rgba(127,127,127,.05)',
       hairline: 'rgba(127,127,127,.22)',
       text: '#8a8a8a',
       textStrong: '#5a5a5a',
@@ -1780,7 +1794,7 @@ window.__ModuleLoader__.load({
         }
         const accent = value('--dsw-alias-state-accent', '#4f8cff')
         return {
-          lane: value('--dsw-alias-bg-layer-1', fallback.lane),
+          track: value('--dsw-alias-bg-layer-1', fallback.track),
           hairline: value('--dsw-alias-border-l3', fallback.hairline),
           text: value('--dsw-alias-label-tertiary', fallback.text),
           textStrong: value('--dsw-alias-label-secondary', fallback.textStrong),
@@ -1827,7 +1841,8 @@ window.__ModuleLoader__.load({
       const [fit, setFit] = useState(true)
       const [dbMode, setDbMode] = useState(false)
       const [gain, setGain] = useState(1)
-      const [lanes, setLanes] = useState(facts.channels)
+      const [shownTracks, setShownTracks] = useState(facts.channels)
+      const [trackHeight, setTrackHeight] = useState(TRACK_H)
       const [selection, setSelection] = useState(null)
       const [pointer, setPointer] = useState(null)
       const [playhead, setPlayhead] = useState(0)
@@ -1837,9 +1852,10 @@ window.__ModuleLoader__.load({
 
       const duration = facts.duration > 0 ? facts.duration : 0
       const channels = facts.channels
-      const laneCount = Math.max(1, Math.min(lanes, channels))
-      const laneStride = LANE_H + LANE_GAP
-      const contentHeight = RULER_H + laneCount * laneStride
+      /** How many TRACKS are drawn: one row per channel, all of them by default. */
+      const trackRows = Math.max(1, Math.min(shownTracks, channels))
+      const trackStride = trackHeight + TRACK_GAP
+      const contentHeight = RULER_H + trackRows * trackStride
       /**
        * The zoom's own ceiling is the FILE's: a browser will not lay out an
        * element wider than ~33.5 M px, so the top rung is whatever keeps the
@@ -1909,12 +1925,14 @@ window.__ModuleLoader__.load({
         const scrollLeft = scroller.scrollLeft
         context.setTransform(dpr, 0, 0, dpr, 0, 0)
         context.clearRect(0, 0, cssWidth, cssHeight)
-        // The lane beds, so an empty stretch reads as a lane and not as a hole.
-        context.fillStyle = palette.lane
-        for (let lane = 0; lane < laneCount; lane += 1) {
-          context.fillRect(GUTTER, RULER_H + lane * laneStride, cssWidth - GUTTER, LANE_H)
+        // The track beds, so an empty stretch reads as a track and not as a
+        // hole. Every track is a ROW of its own, all the way across: a file
+        // with eight channels shows eight rows, not eight overlays.
+        context.fillStyle = palette.track
+        for (let track = 0; track < trackRows; track += 1) {
+          context.fillRect(GUTTER, RULER_H + track * trackStride, cssWidth - GUTTER, trackHeight)
         }
-        context.fillStyle = palette.lane
+        context.fillStyle = palette.track
         context.fillRect(0, 0, cssWidth, RULER_H)
 
         const samplesPerPixel = pxPerSecond > 0 ? facts.sampleRate / pxPerSecond : 1
@@ -1922,8 +1940,8 @@ window.__ModuleLoader__.load({
         const pxPerSample = pxPerSecond / Math.max(1, facts.sampleRate)
         const stems = samples !== null && samples !== undefined && pxPerSample >= STEM_PX_PER_SAMPLE
 
-        /** The lane box for a channel. */
-        const laneTop = (channel) => RULER_H + channel * laneStride
+        /** The top of one track's row. */
+        const trackTop = (track) => RULER_H + track * trackStride
         /** Content x for a time, and back. */
         const xOf = (time) => GUTTER + time * pxPerSecond
         const timeOf = (canvasX) => (canvasX + scrollLeft - GUTTER) / pxPerSecond
@@ -1952,10 +1970,10 @@ window.__ModuleLoader__.load({
         // dpr 1 and half of one at dpr 2, so the envelope is as fine as the
         // screen rather than as fine as the CSS layout.
         const columnStep = 1 / dpr
-        for (let lane = 0; lane < laneCount; lane += 1) {
-          const top = laneTop(lane)
-          const centre = top + LANE_H / 2
-          const halfHeight = (LANE_H / 2) * 0.94
+        for (let track = 0; track < trackRows; track += 1) {
+          const top = trackTop(track)
+          const centre = top + trackHeight / 2
+          const halfHeight = (trackHeight / 2) * 0.94
           // Zero line.
           context.fillStyle = palette.hairline
           context.fillRect(GUTTER, Math.round(centre), cssWidth - GUTTER, 1)
@@ -1966,7 +1984,7 @@ window.__ModuleLoader__.load({
             const fromTime = Math.max(0, timeOf(GUTTER))
             const toTime = Math.min(duration, timeOf(cssWidth))
             const firstFrame = Math.max(0, Math.floor(fromTime * facts.sampleRate))
-            const lastFrame = Math.min(samples[lane].length - 1, Math.ceil(toTime * facts.sampleRate))
+            const lastFrame = Math.min(samples[track].length - 1, Math.ceil(toTime * facts.sampleRate))
             const amplitudeY = (value) => {
               const scaled = Math.max(-1, Math.min(1, value * gain))
               return centre - (dbMode ? Math.sign(scaled) * Math.min(1, dbMagnitude(scaled)) : scaled) * halfHeight
@@ -1978,7 +1996,7 @@ window.__ModuleLoader__.load({
               const x = xOf(frame / facts.sampleRate) - scrollLeft
               if (x < GUTTER - 1) continue
               if (x > cssWidth + 1) break
-              const value = samples[lane][frame]
+              const value = samples[track][frame]
               const y = amplitudeY(value)
               context.moveTo(Math.round(x) + 0.5, centre)
               context.lineTo(Math.round(x) + 0.5, y)
@@ -1989,7 +2007,7 @@ window.__ModuleLoader__.load({
               const x = xOf(frame / facts.sampleRate) - scrollLeft
               if (x < GUTTER - 1) continue
               if (x > cssWidth + 1) break
-              const y = amplitudeY(samples[lane][frame])
+              const y = amplitudeY(samples[track][frame])
               if (frame === firstFrame) context.moveTo(x, y)
               else context.lineTo(x, y)
             }
@@ -1999,7 +2017,7 @@ window.__ModuleLoader__.load({
           for (let x = GUTTER; x < cssWidth; x += columnStep) {
             const fromFrame = Math.max(0, timeOf(x) * facts.sampleRate)
             const toFrame = Math.max(fromFrame + 1e-6, timeOf(x + columnStep) * facts.sampleRate)
-            const envelope = columnEnvelope(level, Math.min(lane, level.mins.length - 1), fromFrame, toFrame)
+            const envelope = columnEnvelope(level, Math.min(track, level.mins.length - 1), fromFrame, toFrame)
             if (envelope === null) continue
             const topY = amplitudeToY(envelope.max, centre, halfHeight, dbMode, gain)
             const bottomY = amplitudeToY(envelope.min, centre, halfHeight, dbMode, gain)
@@ -2037,18 +2055,30 @@ window.__ModuleLoader__.load({
         context.fillStyle = palette.hairline
         context.fillRect(0, RULER_H - 0.5, cssWidth, 1)
 
-        // The gutter: the channel's name, and the amplitude reading beside it.
-        context.fillStyle = palette.lane
-        context.fillRect(0, RULER_H, GUTTER, cssHeight - RULER_H)
-        for (let lane = 0; lane < laneCount; lane += 1) {
-          const top = laneTop(lane)
-          context.fillStyle = palette.textStrong
+        // The gutter: one cell per TRACK, each exactly as tall as its own row,
+        // so the left part of the picture reads as the SAME track as the
+        // waveform beside it. The name and the amplitude reading sit together in
+        // the middle of the cell, which is what keeps them paired when the
+        // reader drags the track height.
+        for (let track = 0; track < trackRows; track += 1) {
+          const top = trackTop(track)
+          const centre = top + trackHeight / 2
+          const name = channelLabel(track, channels)
+          const reading = pointer !== null && pointer.track === track ? pointer.label : dbMode ? 'dBFS' : 'linear'
+          const twoLines = trackHeight >= 42
+          context.fillStyle = palette.track
+          context.fillRect(0, top, GUTTER, trackHeight)
           context.font = '11px ui-monospace, Consolas, monospace'
-          context.fillText(channelLabel(lane, channels), 8, top + 14)
-          context.fillStyle = palette.text
+          context.fillStyle = palette.textStrong
+          if (name !== '' && (twoLines || reading === '')) context.fillText(name, 8, twoLines ? centre - 6 : centre)
           context.font = '9.5px ui-monospace, Consolas, monospace'
-          const reading = pointer !== null && pointer.channel === lane ? pointer.label : dbMode ? 'dBFS' : 'linear'
-          context.fillText(reading, 8, top + LANE_H - 10)
+          context.fillStyle = palette.text
+          context.fillText(reading, 8, twoLines ? centre + 8 : centre)
+          // The resize handle IS this edge: a hairline at the bottom of every
+          // track, drawn hotter while the pointer is on it, and the pointer
+          // handlers below treat a press near it as the resize.
+          context.fillStyle = pointer !== null && pointer.handle === track ? palette.envelope : palette.hairline
+          context.fillRect(0, top + trackHeight - 0.5, GUTTER, 1)
         }
         context.fillStyle = palette.hairline
         context.fillRect(GUTTER - 0.5, 0, 1, cssHeight)
@@ -2066,8 +2096,6 @@ window.__ModuleLoader__.load({
         duration,
         facts.sampleRate,
         gain,
-        laneCount,
-        laneStride,
         palette,
         peaks,
         playhead,
@@ -2075,6 +2103,9 @@ window.__ModuleLoader__.load({
         pxPerSecond,
         samples,
         selection,
+        trackHeight,
+        trackRows,
+        trackStride,
       ])
       drawRef.current = draw
 
@@ -2316,7 +2347,10 @@ window.__ModuleLoader__.load({
       }, [playhead, playing, pxPerSecond])
 
       // ------------------------------------------------------------- pointers
-      /** The time and lane under one client point, for the readout and drags. */
+      /**
+       * What is under one client point: the time, the TRACK, and whether the
+       * press would land on a track's resize handle.
+       */
       const pointAt = useCallback(
         (clientX, clientY) => {
           const canvas = canvasRef.current
@@ -2327,25 +2361,34 @@ window.__ModuleLoader__.load({
           const canvasY = clientY - rect.top
           const contentX = canvasX + scroller.scrollLeft
           const time = Math.max(0, Math.min(duration, (contentX - GUTTER) / pxPerSecond))
-          const lane = Math.floor((canvasY - RULER_H) / laneStride)
+          const row = canvasY - RULER_H
+          const track = Math.floor(row / trackStride)
+          const inside = track >= 0 && track < trackRows
+          // A handle is the last few pixels of a track's own row (and the first
+          // of the gap under it): near enough to the bottom edge to mean "this
+          // edge", far enough from the middle that a selection still starts
+          // where a reader expects it to.
+          const offset = row - track * trackStride
+          const handle = inside && offset >= trackHeight - HANDLE_GRAB ? track : -1
           return {
             time: time,
-            lane: lane >= 0 && lane < laneCount ? lane : null,
+            track: inside ? track : null,
+            handle: handle,
             inGutter: canvasX < GUTTER,
             inRuler: canvasY < RULER_H,
           }
         },
-        [duration, laneCount, laneStride, pxPerSecond],
+        [duration, pxPerSecond, trackHeight, trackRows, trackStride],
       )
 
-      /** The amplitude at a time in one lane, read from the finest pyramid level. */
+      /** The amplitude at a time in one track, read from the finest pyramid level. */
       const amplitudeAt = useCallback(
-        (time, lane) => {
+        (time, track) => {
           const frame = Math.round(time * facts.sampleRate)
-          if (samples !== null && samples !== undefined && samples[lane] !== undefined && frame < samples[lane].length) {
-            return samples[lane][frame]
+          if (samples !== null && samples !== undefined && samples[track] !== undefined && frame < samples[track].length) {
+            return samples[track][frame]
           }
-          const envelope = columnEnvelope(peaks.levels[0], Math.min(lane, peaks.levels[0].mins.length - 1), frame, frame + 1)
+          const envelope = columnEnvelope(peaks.levels[0], Math.min(track, peaks.levels[0].mins.length - 1), frame, frame + 1)
           return envelope === null ? 0 : envelope.rms
         },
         [facts.sampleRate, peaks, samples],
@@ -2358,9 +2401,13 @@ window.__ModuleLoader__.load({
           const scroller = scrollRef.current
           const canvas = canvasRef.current
           if (!scroller) return
-          // The ruler is the pan handle (a waveform drag is a selection, which
-          // is the gesture the surface is for); anything in the gutter too.
-          if (point.inRuler || point.inGutter || event.altKey) {
+          if (point.handle >= 0) {
+            // Any track's bottom edge resizes EVERY track: one shared height.
+            dragRef.current = { kind: 'resize', y: event.clientY, height: trackHeight }
+            if (canvas) canvas.style.cursor = 'ns-resize'
+          } else if (point.inRuler || point.inGutter || event.altKey) {
+            // The ruler is the pan handle (a waveform drag is a selection, which
+            // is the gesture the surface is for); the gutter too.
             dragRef.current = { kind: 'pan', x: event.clientX, y: event.clientY, left: scroller.scrollLeft, top: scroller.scrollTop }
             if (canvas) canvas.style.cursor = 'grabbing'
           } else {
@@ -2374,7 +2421,7 @@ window.__ModuleLoader__.load({
             /* an old browser: the move events still arrive over the canvas */
           }
         },
-        [pointAt],
+        [pointAt, trackHeight],
       )
 
       const onPointerMove = useCallback(
@@ -2390,17 +2437,22 @@ window.__ModuleLoader__.load({
             drag.to = point.time
             drag.moved = true
             setSelection({ from: drag.from, to: point.time })
+          } else if (drag && drag.kind === 'resize') {
+            const next = Math.max(MIN_TRACK_H, Math.min(MAX_TRACK_H, drag.height + (event.clientY - drag.y)))
+            setTrackHeight(Math.round(next))
           } else if (canvas) {
-            // The cursor says what a press will do HERE: the ruler pans, a lane
-            // selects. A static `cursor: grab` over a waveform that selects is a
+            // The cursor says what a press will do HERE: a track's bottom edge
+            // resizes, the ruler pans, a track selects. A static cursor is a
             // promise the surface does not keep.
-            canvas.style.cursor = point && (point.inRuler || point.inGutter) ? 'grab' : 'crosshair'
+            canvas.style.cursor =
+              point && point.handle >= 0 ? 'ns-resize' : point && (point.inRuler || point.inGutter) ? 'grab' : 'crosshair'
           }
           if (point) {
-            const value = point.lane === null ? null : amplitudeAt(point.time, point.lane)
+            const value = point.track === null ? null : amplitudeAt(point.time, point.track)
             setPointer({
               time: point.time,
-              lane: point.lane,
+              track: point.track,
+              handle: point.handle,
               label: value === null ? formatTime(point.time) : formatDb(value),
             })
           }
@@ -2628,17 +2680,6 @@ window.__ModuleLoader__.load({
             {
               type: 'button',
               className: 'dsa-btn',
-              'data-audio-action': 'gain',
-              title: 'Amplitude gain (Shift+wheel): ' + gain + 'x',
-              onClick: () => stepGain(1),
-            },
-            gain + 'x',
-          ),
-          h(
-            'button',
-            {
-              type: 'button',
-              className: 'dsa-btn',
               'data-audio-action': 'clear',
               title: 'Clear the selection',
               disabled: selection === null,
@@ -2651,12 +2692,12 @@ window.__ModuleLoader__.load({
             {
               type: 'button',
               className: 'dsa-btn',
-              'data-audio-action': 'lanes',
-              title: 'Collapse the lanes to one',
+              'data-audio-action': 'tracks',
+              title: 'Show one track, or every track of the file again',
               disabled: channels < 2,
-              onClick: () => setLanes((current) => (current > 1 ? 1 : channels)),
+              onClick: () => setShownTracks((current) => (current > 1 ? 1 : channels)),
             },
-            laneCount > 1 ? 'lanes ' + laneCount : '1 lane',
+            trackRows > 1 ? trackRows + ' tracks' : '1 track',
           ),
           h('span', { className: 'dsa-spacer' }),
           h(
@@ -2710,7 +2751,7 @@ window.__ModuleLoader__.load({
               // since it must equal the PANE's width while the layout around it
               // is the file's. Declaring `100%` here would fight it, and the
               // CURSOR is owned by the pointer handlers, which know whether a
-              // press would pan (the ruler) or select (a lane).
+              // press would pan (the ruler) or select (a track).
               style: { height: contentHeight + 'px' },
               onPointerDown,
               onPointerMove,
@@ -2745,15 +2786,21 @@ window.__ModuleLoader__.load({
                   selectionInfo.method,
               )
             : null,
-          pointer !== null && pointer.lane !== null ? h('span', null, channelLabel(pointer.lane, channels) + ' ' + pointer.label) : null,
-          h('span', { className: 'dsa-statusHint' }, 'Space plays \u00b7 drag selects \u00b7 click seeks \u00b7 Ctrl+wheel zooms \u00b7 wheel scrolls'),
+          pointer !== null && pointer.track !== null
+            ? h(
+                'span',
+                null,
+                (channelLabel(pointer.track, channels) === '' ? '' : channelLabel(pointer.track, channels) + ' ') + pointer.label,
+              )
+            : null,
+          h('span', { className: 'dsa-statusHint' }, 'Space plays \u00b7 drag selects \u00b7 click seeks \u00b7 Ctrl+wheel zooms \u00b7 wheel scrolls \u00b7 drag a track edge to resize'),
         ),
         showInfo ? h(InfoPanel, { facts: facts, size: size, source: source, levels: describeLevels(peaks) }) : null,
       )
     }
 
     /**
-     * Amplitude to a lane's y. In dBFS the envelope is drawn as MAGNITUDE
+     * Amplitude to a track's y. In dBFS the envelope is drawn as MAGNITUDE
      * mirrored around the centre line (a dB scale cannot sign a zero crossing),
      * which is what the label in the gutter says.
      */

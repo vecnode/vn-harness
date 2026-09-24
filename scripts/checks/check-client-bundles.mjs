@@ -2075,14 +2075,43 @@ check(
     audioSource.includes('ppsRef.current = clamped') &&
     audioSource.includes('const current = ppsRef.current'),
 )
-// The cursor says what a press would do where it is: the ruler pans, a lane
-// selects. A static grab cursor over a waveform that selects is a promise the
-// surface does not keep.
+// The cursor says what a press would do where it is: a track's bottom edge
+// resizes, the ruler pans, a track selects. A static grab cursor over a
+// waveform that selects is a promise the surface does not keep.
 check(
   'the cursor follows what a press would do there',
   audioSource.includes("canvas.style.cursor = 'grabbing'") &&
     audioSource.includes("canvas.style.cursor = 'ew-resize'") &&
-    audioSource.includes("? 'grab' : 'crosshair'"),
+    audioSource.includes("canvas.style.cursor = 'ns-resize'") &&
+    audioSource.includes("point && point.handle >= 0 ? 'ns-resize'"),
+)
+// THE TRACKS ARE ROWS, and the height is ONE number the reader drags: any
+// track's bottom edge resizes every track at once, because a waveform is read
+// across tracks and separately sized tracks would no longer line up.
+check(
+  'a track edge drags a height that every track shares',
+  audioSource.includes('const MIN_TRACK_H = 24') &&
+    audioSource.includes('const MAX_TRACK_H = 420') &&
+    audioSource.includes('const HANDLE_GRAB = 5') &&
+    audioSource.includes("dragRef.current = { kind: 'resize', y: event.clientY, height: trackHeight }") &&
+    audioSource.includes('setTrackHeight(Math.round(next))') &&
+    audioSource.includes('const [trackHeight, setTrackHeight] = useState(TRACK_H)'),
+)
+// Each track is ONE row all the way across, and the gutter cell beside it is
+// exactly as tall: the left part of the picture is the same track as the
+// waveform next to it, and the name and the reading stay together in it.
+check(
+  'a track is one row, gutter cell and all',
+  audioSource.includes('context.fillRect(GUTTER, RULER_H + track * trackStride, cssWidth - GUTTER, trackHeight)') &&
+    audioSource.includes('context.fillRect(0, top, GUTTER, trackHeight)') &&
+    audioSource.includes('const twoLines = trackHeight >= 42'),
+)
+check('there is no amplitude-gain button any more', audioSource.includes("'data-audio-action': 'gain'") === false)
+check(
+  'the toolbar counts tracks, and one track is a row',
+  audioSource.includes("'data-audio-action': 'tracks'") &&
+    audioSource.includes("trackRows > 1 ? trackRows + ' tracks' : '1 track'") &&
+    audioSource.includes("'lanes'") === false,
 )
 // A re-read is a new viewer: a stale playback buffer is the bug this key stops.
 check('a re-read resets the viewer', audioSource.includes("key: 'dsh-audio-load-' + reload"))
@@ -2338,8 +2367,8 @@ check(
   A.formatDb(1) === '0.0 dBFS' && A.formatDb(0.5) === '-6.0 dBFS' && A.formatDb(0) === 'silent' && Math.abs(A.amplitudeToDb(0.25) + 12.0412) < 0.001,
 )
 check(
-  'channels are named L/R for a stereo pair, M for mono, numbers past that',
-  A.channelLabel(0, 2) === 'L' && A.channelLabel(1, 2) === 'R' && A.channelLabel(0, 1) === 'M' && A.channelLabel(3, 6) === '4',
+  'tracks are named L/R for a stereo pair, numbered past that, and a mono file has no letter to decode',
+  A.channelLabel(0, 2) === 'L' && A.channelLabel(1, 2) === 'R' && A.channelLabel(0, 1) === '' && A.channelLabel(2, 4) === '3',
 )
 check(
   'audio canOpen takes the three families and refuses everything else',

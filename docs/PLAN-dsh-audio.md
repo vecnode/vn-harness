@@ -19,12 +19,17 @@ departs from this document, in one place:
   the browser's `decodeAudioData` needs the whole file. STREAMINFO is parsed here
   first, so such a file still reports its exact facts. T3 (ffmpeg/sox) is not
   built - section 4's tools are what would need it.
-- **Built from section 3**: the lanes, the ruler with measured labels, the
+- **Built from section 3**: the tracks, the ruler with measured labels, the
   min/max envelope with the RMS band, the dB/linear scale, the layout-sized zoom,
   selection with measured peak and RMS, and playback with an audio-clock
-  playhead. **Not yet built**: the spectrum view (alpha.2), the remembered
-  per-file view, and vertical zoom as its own ladder (Shift+wheel scales the
-  drawing today).
+  playhead. **The built surface says TRACK, not lane**: a channel's row is a
+  track, every channel is drawn as its own full-width row (never an overlay), the
+  gutter cell beside a row is exactly that row's height, a mono file carries no
+  channel letter at all, and the track height is the reader's - dragging any
+  row's bottom edge resizes every track at once, from 24 px to 420 px.
+  **Not yet built**: the spectrum view (alpha.2), the remembered per-file view,
+  and vertical zoom as its own ladder (Shift+wheel scales the drawing today, with
+  no toolbar button).
 - **Section 5's routes do not exist and are not needed** for the viewer: the
   `workspaceFiles` remote already resolves the path inside the conversation
   workspace, refuses a symlink out, requires a regular file and enforces its

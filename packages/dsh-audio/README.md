@@ -6,9 +6,10 @@ The shipped preview gives an audio file a browser `<audio>` element and nothing
 else: no waveform, no time ruler, no zoom - and for AIFF, in Chrome, not even
 playback, because Chrome cannot decode it. This package is the right bar's
 `audio` tab type for **WAV/RIFF, AIFF/AIFC and FLAC**, and it draws the thing a
-recording is actually looked at through: **one lane per channel, a time ruler, a
-min/max envelope with the RMS band inside it, zoom down to individual samples,
-drag-to-select, and playback with a playhead that follows the audio clock.**
+recording is actually looked at through: **one track per channel, in rows, a time
+ruler, a min/max envelope with the RMS band inside it, zoom down to individual
+samples, drag-to-select, and playback with a playhead that follows the audio
+clock.**
 
 It is a **client-only** package: bytes come from the harness's own
 `workspaceFiles` remote, so there is no route, no host-side state, and no path
@@ -18,11 +19,12 @@ policy of its own to get wrong.
 
 | | |
 |---|---|
-| **A real waveform** | One lane per channel in a 48 px gutter (L/R, or numbered past a stereo pair, collapsible to one lane), with the **min/max envelope filled** and the **RMS drawn inside it as a brighter band** - the envelope is what you see, the RMS is what you hear, and a professional view shows both. |
+| **A real waveform** | **One TRACK per channel, in a row of its own** - a file with eight channels shows eight rows, never eight overlays - with the **min/max envelope filled** and the **RMS drawn inside it as a brighter band**: the envelope is what you see, the RMS is what you hear, and a professional view shows both. The 48 px gutter beside each row is a cell of **exactly that row's height**, holding the track's name and its amplitude reading together. A stereo pair is `L`/`R`, more tracks are numbered, and a **mono file has no letter at all** (a lone "M" is a letter the reader has to decode, and one track has nothing to tell apart from). The toolbar's `N tracks` / `1 track` button collapses the view to a single row and back. |
+| **Resizable tracks** | **Drag any track's bottom edge** (the hairline in the gutter; the cursor turns into a resize arrow) and the height changes - **for every track at once**, from 24 px to 420 px, because a waveform is read across tracks and separately sized tracks would no longer line up. The envelope, the ruler and the gutter cells all follow. |
 | **Adaptive time ruler** | "Nice" 1-2-5 steps from 0.1 ms to 1 h, chosen from the zoom, with a major/minor tick hierarchy and labels whose width is **measured**, so they never collide. |
 | **Zoom by layout** | 1 px/s (an hour in a pane) to 500000 px/s. `+`/`-` walk the ladder, `Fit` fits the file, `Ctrl`/`Cmd` + wheel zooms **at the pointer**, and a bare wheel scrolls sideways - time is the axis here. Past ~3 px per sample the samples themselves are drawn as stems. |
-| **dBFS or linear** | A toggle, because a linear scale hides everything a compressor did. The dBFS scale draws a 72 dB range, and the gutter says which reading the lane is showing. |
-| **Amplitude gain** | `Shift` + wheel (or the button) scales the drawing 0.25x to 16x, because "-6 dBFS" and "a line at the top" are two readings of the same take. |
+| **dBFS or linear** | A toggle, because a linear scale hides everything a compressor did. The dBFS scale draws a 72 dB range, and the gutter says which reading the track is showing. |
+| **Amplitude gain** | `Shift` + wheel scales the drawing 0.25x to 16x, because "-6 dBFS" and "a line at the top" are two readings of the same take - a gesture, with no button taking up toolbar space. |
 | **Playback** | Play/pause, click to seek, `Space` to toggle, `Home`/`End`, one screen-pixel per arrow press, and a **playhead driven by the AudioContext clock** rather than a CSS animation, so the line cannot drift from the sound. Drag a range and it plays that range **looped**. |
 | **Selection** | Drag on the waveform to select; the status line reports the selection's duration, peak and RMS - and **names where the numbers came from** ("from the samples" or "from 4096-sample buckets"). |
 | **Details panel** | Container, codec, sample rate, channels, bit depth, frame count, duration, size, which decoder drew it, the peak pyramid's levels, and any metadata the file carries: RIFF `LIST/INFO`, BWF `bext` (description, originator, date), AIFF `NAME`/`AUTH`/`ANNO`, FLAC's Vorbis comment. |
@@ -170,9 +172,10 @@ needs only a restart.
 
 - **alpha.1** (this release): the viewer - the hand-written WAV/AIFF/AIFC
   decoder streaming the file in windows, the browser's FLAC path, the peak
-  pyramid, the canvas waveform with ruler, lanes, RMS band and the dBFS scale,
-  zoom that moves the layout, drag-to-select with measured numbers, and playback
-  with an audio-clock playhead.
+  pyramid, the canvas waveform with one row per track, a draggable shared track
+  height, the ruler, the RMS band and the dBFS scale, zoom that moves the
+  layout, drag-to-select with measured numbers, and playback with an
+  audio-clock playhead.
 - **alpha.2, the model surface** (planned): `audio_info` and `audio_measure` as
   real tools, so the agent reads a recording instead of `cat`-ing it - duration,
   channels, level, silence, clipping, DC offset, and a windowed measurement with
