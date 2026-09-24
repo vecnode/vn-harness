@@ -13,6 +13,15 @@ DSH Desktop support was removed on purpose - the desktop app runs its own frozen
 generation snapshot and this pack targets the raw web install alone. Do not add
 desktop detection, a `-Target desktop` switch, or desktop install steps back.
 
+What DOES exist is the `run-desktop.bat` + `app/` pair (see Layout): a small
+Rust/Tauri shell that starts the very same pinned `dsh web` on a FREE loopback
+port and shows THAT url in a native window instead of Chrome. It is a LAUNCHER,
+not a desktop edition: it installs nothing, detects no host, disables no row,
+touches no core or profile file, and loads the same live-linked bundles a
+`run.bat` tab loads. Keep that distinction when editing - the rule above forbids
+the desktop EDITION, not a second way to open the web profile - and do not delete
+`app/` as leftover "removed desktop support".
+
 Everything is a standard dsh **bundle**: an npm package with
 `dsh.bundle` (+ `cordis.patch.yml`) and, for UI plugins, `dsh.client` and an
 `exports["./client"]` browser bundle. Nothing patches DeepSeek core files.
@@ -101,6 +110,30 @@ and `run.bat` itself has to stay at the root beside `run.sh`.
   same messages. It pipes the app's output through a FIFO (never a file, so the
   launch token stays off the disk) and reads it from the main shell, which is what
   lets `wait` report the harness's own exit status
+- `run-desktop.bat` - the SECOND run entry point at the root: the same harness in
+  a native window instead of a Chrome tab. One file, no PowerShell worker, because
+  the watching half is Rust - it runs `cargo build --release` on `app/` (a no-op
+  when cargo's freshness check says the shell is current) and then runs the
+  resulting `.exe` in the FOREGROUND of that console, which is the shell's log.
+  Flags mirror `run.bat` (`-Port`, `-DshHome`, `-DshVersion`, `-Help`); there is no
+  `-NoBrowser` here, because the window IS the app
+- `app/` - the desktop shell, and NOT a plugin: nothing in `packages/` knows it
+  exists and no installer touches it. `app/src-tauri/src/main.rs` is the
+  supervisor (free port -> spawn the pinned `npx @deepseek-ai/dsh web --no-open`
+  -> read the ready line -> navigate the window -> kill the tree on exit),
+  `app/src-tauri/src/readyline.rs` is the PURE half where the launch-token rules
+  are pinned by `cargo test` (ANSI strip, URL extraction, the loopback refusal and
+  the `token=REDACTED` printer), and `app/ui/index.html` is the splash the window
+  shows while `npx` works. On Windows the harness is additionally placed in a Job
+  Object with `KILL_ON_JOB_CLOSE`, so force-killing the shell cannot orphan a
+  `node` holding a port (measured: without it, it does). It carries no TypeScript:
+  it loads the same server a browser tab does. Rust toolchain needed to build;
+  Node.js as usual to run
+- `scripts/make-desktop-icon.mjs` - regenerates `app/src-tauri/icons/` (`.ico` +
+  512px `.png`) FROM `assets/vn-harness.svg`, reading the mark's `cx`/`cy`/`r` and
+  viewBox out of the asset so the two cannot drift. The icons are COMMITTED (a
+  clone must build without running it); the generator has no dependency, writing
+  its own PNG and ICO bytes
 - `scripts/sync-vendored.ps1` - moves the forks forward after a harness-line bump
   (copies the core bundles, rewrites the module ids, applies each fork's patch
   list, stamps the banner; `-Check` reports drift without writing). Maintainer
@@ -176,6 +209,7 @@ and `run.bat` itself has to stay at the root beside `run.sh`.
 install.bat                   :: installs into the web profile (the only target)
 install.bat -Force            :: re-add bundles even when versions match
 run.bat                       :: start the app + open it in Chrome (foreground; Ctrl+C stops it)
+run-desktop.bat               :: start the app in a NATIVE WINDOW instead (builds app/ first)
 uninstall.bat
 ```
 
@@ -196,9 +230,11 @@ directly:
 `sh scripts/install-all.sh -Force` (macOS/Linux).
 
 `-Target cli` is accepted as an alias for the web profile; there is no desktop
-target any more. Everything runs through `npx --yes @deepseek-ai/dsh@<pinned>`;
-pnpm is bootstrapped locally under `tools/pnpm<major>` (the profile's pnpm major
-is read from `node_modules/.modules.yaml`).
+target any more, and `run-desktop.bat` is not one - it is a launcher for the web
+profile (see `app/`), which installs nothing. Everything runs through
+`npx --yes @deepseek-ai/dsh@<pinned>`; pnpm is bootstrapped locally under
+`tools/pnpm<major>` (the profile's pnpm major is read from
+`node_modules/.modules.yaml`).
 
 > Package retirements: the panel was `dsh-focus` (row `focus`) until alpha.10,
 > when it became `dsh-files` (row `files`), and in alpha.2 of the editor the
@@ -223,6 +259,9 @@ $t=$null;$e=$null; [System.Management.Automation.Language.Parser]::ParseFile(
   'scripts/run-web.ps1',[ref]$t,[ref]$e); $e.Count       # expect 0
 cmd /c "run.bat -Help"                                  # entry point: usage, exit 0
 cmd /c "run.bat -BadFlag < nul"                         # ...and a bad flag exits 1
+cargo test --manifest-path app/src-tauri/Cargo.toml     # the desktop shell's
+                                                        # launch-token rules
+cmd /c "run-desktop.bat -Help"                          # desktop entry point, exit 0
 
 # 2. after a harness-line bump, move the forks forward (then review the diff).
 #    sync-vendored.ps1 is maintainer tooling and is the one script that wants
@@ -263,6 +302,10 @@ git add -A; git commit -m "describe the change"; git push
       `dsh-terminal/lib/vendor/xterm.js` + `xterm.css`) -
       re-sync/rebuild instead (`sync-vendored.ps1 -Check` must exit 0)
 - [ ] `.ps1` files still parse and `.sh` files pass `sh -n`; all ASCII-only
+- [ ] when `app/` was touched: `cargo test --manifest-path app/src-tauri/Cargo.toml`
+      passes (it pins the launch-token rules) and `run-desktop.bat -Help` exits 0.
+      The shell is NOT a plugin: no `packages/` file, no installed row and no
+      `.dsh-version.json` package entry changes with it
 - [ ] version bumped (`packages/.../package.json` + `.dsh-version.json`) and
       installed with `-Force` to the web profile when behavior changed
 - [ ] client bundles still activate and render: run the tracked checks
