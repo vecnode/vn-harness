@@ -1751,7 +1751,17 @@ check(
   'wheel zoom is a non-passive listener at the pointer',
   imageSource.includes("canvas.addEventListener('wheel', listener, { passive: false })") &&
     imageSource.includes('if (!event.ctrlKey && !event.metaKey) return') &&
-    imageSource.includes('moveTo(scale * factor, { x: event.clientX, y: event.clientY })'),
+    imageSource.includes('moveTo(scaleRef.current * factor, { x: event.clientX, y: event.clientY })'),
+)
+// A trackpad pinch is a STREAM of wheel events that all land before the next
+// render, so the handler must read a ref written synchronously by every move;
+// reading the `scale` state would compute each step from the same base and the
+// gesture would under-zoom badly.
+check(
+  'a pinch compounds on a synchronous zoom ref',
+  imageSource.includes('const scaleRef = useRef(1)') &&
+    imageSource.includes('scaleRef.current = clamped') &&
+    imageSource.includes("const current = scaleRef.current"),
 )
 check(
   'a zoom keeps the point the reader was looking at',

@@ -469,6 +469,14 @@ window.__ModuleLoader__.load({
       const panState = useRef(null)
       const wheelHandler = useRef(null)
       const sampler = useRef(null)
+      /**
+       * The zoom the LAYOUT is actually at, written synchronously by every
+       * move. A trackpad pinch arrives as a stream of wheel events that can all
+       * land before React re-renders, so a handler reading the `scale` state
+       * would compute every step from the same base and the gesture would
+       * under-zoom badly. The wheel and ladder handlers read this instead.
+       */
+      const scaleRef = useRef(1)
       /** The natural size, once the browser has decoded the picture. */
       const [natural, setNatural] = useState(null)
       /** The zoom in force; while `fit` is true it is derived, not chosen. */
@@ -521,6 +529,7 @@ window.__ModuleLoader__.load({
           }
         }
         setFit(false)
+        scaleRef.current = clamped
         setScale(clamped)
         if (!mark) return
         const restore = () => {
@@ -545,7 +554,9 @@ window.__ModuleLoader__.load({
       // The first layout fits, and a new picture in the same tab fits again.
       useEffect(() => {
         if (natural) {
-          setScale(fitScale())
+          const next = fitScale()
+          scaleRef.current = next
+          setScale(next)
           setFit(true)
         }
       }, [natural, fitScale, url])
@@ -566,7 +577,11 @@ window.__ModuleLoader__.load({
         if (!canvas || typeof ResizeObserver !== 'function') return undefined
         const observer = new ResizeObserver(() => {
           measure()
-          if (fit) setScale(fitScale())
+          if (fit) {
+            const next = fitScale()
+            scaleRef.current = next
+            setScale(next)
+          }
         })
         observer.observe(canvas)
         return () => observer.disconnect()
@@ -575,15 +590,16 @@ window.__ModuleLoader__.load({
       /** One rung on the ladder; the ends clamp rather than wrap around. */
       const stepZoom = useCallback(
         (direction, anchor) => {
+          const current = scaleRef.current
           if (direction > 0) {
-            const next = ZOOM_STEPS.find((step) => step > scale + 1e-6)
-            moveTo(next === undefined ? scale * 2 : next, anchor)
+            const next = ZOOM_STEPS.find((step) => step > current + 1e-6)
+            moveTo(next === undefined ? current * 2 : next, anchor)
           } else {
-            const below = ZOOM_STEPS.filter((step) => step < scale - 1e-6)
-            moveTo(below.length > 0 ? below[below.length - 1] : scale / 2, anchor)
+            const below = ZOOM_STEPS.filter((step) => step < current - 1e-6)
+            moveTo(below.length > 0 ? below[below.length - 1] : current / 2, anchor)
           }
         },
-        [moveTo, scale],
+        [moveTo],
       )
 
       /** Between Fit and 100% on a double-click. */
@@ -725,9 +741,11 @@ window.__ModuleLoader__.load({
           if (event.deltaY === 0) return
           event.preventDefault()
           const factor = event.deltaY < 0 ? WHEEL_FACTOR : 1 / WHEEL_FACTOR
-          moveTo(scale * factor, { x: event.clientX, y: event.clientY })
+          // The ref, not the state: a pinch's events all land before the next
+          // render, and every one of them must compound on the last.
+          moveTo(scaleRef.current * factor, { x: event.clientX, y: event.clientY })
         },
-        [moveTo, scale],
+        [moveTo],
       )
       wheelHandler.current = onWheel
       useEffect(() => {
