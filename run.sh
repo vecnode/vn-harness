@@ -23,10 +23,11 @@
 #  handed to a browser after the URL has been checked to be a loopback address.
 #
 #  POSIX shell only: this script needs Node.js (>= 22) with npm/npx - never
-#  PowerShell. The Windows half is `run.bat` in this same folder - plain cmd, one
-#  self-contained file, no PowerShell in it - and the two halves do the same work
-#  with the same flags, print the same messages and put the same tab on screen,
-#  so keep them in step.
+#  PowerShell. The Windows half is the root `run.bat`, which forwards to
+#  scripts/run-web.ps1 - the entry point there is batch so a double-click works,
+#  while the watching-and-opening half is PowerShell, because cmd reads a child's
+#  output only up to EOF. The two halves do the same work with the same flags,
+#  print the same messages and put the same tab on screen, so keep them in step.
 #
 #  Usage:
 #    ./run.sh [-Port <n>] [-DshHome <dir>] [-DshVersion <version>]

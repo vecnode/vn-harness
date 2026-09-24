@@ -1,0 +1,31 @@
+{
+  "name": "dsh-image",
+  "version": "0.1.0-alpha.1",
+  "description": "Image viewer: a real image tab type for the vn-harness right bar (dsh-rightbar). PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG and TIFF open in a viewer that FITS the pane, zooms on a ladder (5%-800%) with fit-to-pane and 100%-actual-pixels, wheel-zooms at the pointer with Ctrl/Cmd, and is dragged to pan with a real grab cursor - the image is laid out at its true size in a scrollable box, so a zoom moves the layout and never a CSS transform, and a zoomed picture stays scrollable to its edge. A checkerboard shows PNG transparency, pixelated rendering past 300% makes pixel inspection honest, and the status line names the file's dimensions, size, format and the pixel under the pointer with its colour. Bytes are read through the harness's own workspaceFiles remote, so no new host route, no new surface and nothing shipped is disabled: the type registers in the extension band and REPLACES the shipped preview's bare intrinsic-size image only for image addresses. Alpha.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-workspace-files",
+        "@deepseek-ai/dsh-client-ui-session",
+        "dsh-rightbar"
+      ]
+    }
+  },
+  "license": "MIT"
+}

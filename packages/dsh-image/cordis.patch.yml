@@ -1,0 +1,21 @@
+# dsh-image bundle layer (alpha).
+#
+# One row ('image') ships the browser half and nothing else: the image viewer is
+# pure client code over the harness's own `workspaceFiles` remote, so there is
+# no route to register, no tool to expose and no host-side state.
+#
+# Nothing shipped is patched and no core row is disabled. The one surface this
+# package SUPERSEDES it supersedes by REGISTRATION, not by disabling: the bar's
+# tab registry ranks a type in the `extension` band above the shipped document
+# preview's `text` type in the `fallback` band, so for a `*.png` (or any other
+# image) address this package's `image` kind wins while every other file type
+# keeps exactly the surface it had - the same way dsh-pdf sits in front of the
+# preview for `*.pdf` and dsh-editor for text. The shipped preview stays
+# mounted and remains the fallback for a profile without this package.
+#
+# There is therefore no `disabled: true` here and nothing for
+# scripts/sync-vendored.ps1 to keep in sync: this package is hand-written and
+# forks nothing.
+- insert:
+    - id: image
+      name: 'dsh-image'

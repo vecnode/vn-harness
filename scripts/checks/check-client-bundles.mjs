@@ -1698,6 +1698,153 @@ check('the scan card names the engine and pages', scanCardMarkup.includes('recog
 check('the scan card warns it is a transcription', scanCardMarkup.includes('transcription, not extracted text'))
 check('the scan card opens the tab', scanCardMarkup.includes('data-pdf-open="dsh-resource://file/session/s1/scan.pdf"'))
 
+// ---------------------------------------------------------------- dsh-image
+const image = loadBundle('packages/dsh-image/lib/client.js', {})
+const imageCssTag = image.document.head.children.filter((tag) => tag.dataset && tag.dataset.pluginCss === 'dsh-image/image.css').pop()
+const imageCss = imageCssTag ? imageCssTag.textContent : ''
+const imageSource = readFileSync(path.join(repo, 'packages/dsh-image/lib/client.js'), 'utf8')
+check('image bundle id', image.id, 'dsh-image')
+check('image inject', JSON.stringify(image.exports.inject), '["slots","sidebarRightTabs","remote.workspaceFiles"]')
+check('image stylesheet injected', imageCss.includes('.dsi-root{') && imageCss.includes('.dsi-tools{'))
+// The toolbar is this tab's top bar: the same 38px border-box pane header the
+// Files tab, the document preview, the editor, History, Diagrams and the PDF
+// reader use, so every column's first hairline lands on the same y=76 line.
+check(
+  'image top bar is the 38px pane header',
+  imageCss.includes('.dsi-tools{flex:none;display:flex;align-items:center;gap:6px;box-sizing:border-box;height:38px;'),
+)
+// The zoom is a LAYOUT size on a box inside a scrollable pane, never a CSS
+// transform: a transform would scale into a clipped box with no scrollable
+// area, which is the bug the pack's diagram viewer shipped first.
+check(
+  'the zoom moves the layout, never a transform',
+  imageSource.includes("style: natural ? { width: width + 'px', height: height + 'px' } : undefined") &&
+    imageCss.includes('.dsi-box{flex:none;margin:auto;') &&
+    imageCss.includes("transform:") === false,
+)
+check('the picture box is the pane-centred one', imageCss.includes('margin:auto;position:relative;box-sizing:border-box'))
+// Transparency is shown as transparency, and past 300% the picture is drawn
+// with nearest-neighbour sampling so pixel-peeping is honest.
+check(
+  'a checkerboard sits behind the picture',
+  imageCss.includes('.dsi-box{') && imageCss.includes('background-image:linear-gradient(45deg,rgba(127,127,127,.22) 25%'),
+)
+check(
+  'past 300% the picture is pixelated',
+  imageSource.includes('const PIXELATED_AT = 3') &&
+    imageSource.includes("'data-pixelated': pixelated ? 'true' : undefined") &&
+    imageCss.includes('image-rendering:pixelated'),
+)
+// Panning is the pane's own scroll, offered only when it was MEASURED, and the
+// grab cursor follows that measurement rather than an assumption.
+check(
+  'panning is real overflow measured, then scroll',
+  imageSource.includes('canvas.scrollWidth > canvas.clientWidth + 1') &&
+    imageCss.includes('.dsi-canvas[data-pannable="true"]{cursor:grab}') &&
+    imageCss.includes('.dsi-canvas[data-panning="true"]{cursor:grabbing') &&
+    imageSource.includes('canvas.scrollLeft = origin.left - (event.clientX - origin.x)'),
+)
+// Ctrl/Cmd + wheel zooms ANCHORED AT THE POINTER. The listener must be native
+// and non-passive: React's own wheel listener is passive, so a preventDefault
+// inside it does nothing and the browser's Ctrl+wheel page zoom fires too.
+check(
+  'wheel zoom is a non-passive listener at the pointer',
+  imageSource.includes("canvas.addEventListener('wheel', listener, { passive: false })") &&
+    imageSource.includes('if (!event.ctrlKey && !event.metaKey) return') &&
+    imageSource.includes('moveTo(scale * factor, { x: event.clientX, y: event.clientY })'),
+)
+check(
+  'a zoom keeps the point the reader was looking at',
+  imageSource.includes('fx: (canvas.scrollLeft + px) / Math.max(1, canvas.scrollWidth)') &&
+    imageSource.includes('element.scrollLeft = mark.fx * element.scrollWidth - mark.px') &&
+    imageSource.includes('window.requestAnimationFrame(restore)'),
+)
+check(
+  'the zoom ladder runs 5% to 800% with fit and 1:1',
+  imageSource.includes('const ZOOM_STEPS = [0.05, 0.1, 0.17, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 3, 4, 6, 8]') &&
+    imageSource.includes('const FIT_PADDING = 24') &&
+    imageSource.includes("'data-image-action': 'fit'") &&
+    imageSource.includes("'data-image-action': 'actual'"),
+)
+// The pointer readout samples a ONE-PIXEL canvas, so inspecting a large
+// photograph never copies the picture into a second buffer.
+check(
+  'the pixel readout samples through a 1x1 canvas',
+  imageSource.includes('const PIXEL_SAMPLE_PX = 1') &&
+    imageSource.includes('context.drawImage(image, x, y, 1, 1, 0, 0, 1, 1)') &&
+    imageSource.includes("'data-image-pixel': pixel.x + ',' + pixel.y"),
+)
+// Bytes come from the harness's own workspaceFiles remote - the call already
+// enforces the path policy and the byte cap on the HOST side - so this package
+// has no route, no fetch, and no policy of its own to get wrong.
+check(
+  'bytes come from the shipped remote, not a route of its own',
+  imageSource.includes("const REMOTE_NAMESPACE = 'remote.workspaceFiles'") &&
+    imageSource.includes('workspaceFiles\n          .readAll(sessionId, parsed.path, controller.signal)') &&
+    imageSource.includes('fetch(') === false &&
+    imageSource.includes("'/api/") === false,
+)
+check(
+  'the read is aborted and its blob URL revoked',
+  imageSource.includes('const controller = new AbortController()') &&
+    imageSource.includes('controller.abort()') &&
+    imageSource.includes('URL.revokeObjectURL(objectUrl)'),
+)
+check('the base64 decode is one indexed loop', imageSource.includes('bytes[index] = binary.charCodeAt(index)'))
+
+const imageTypes = []
+const imageSeats = {}
+image.exports.apply({
+  slots: {
+    inject: (name, fn) => fn(),
+    register(spec, component) {
+      imageSeats[spec.name + (spec.key ? '#' + spec.key : '')] = { spec, component }
+      return () => {}
+    },
+  },
+  sidebarRightTabs: { register: (definition) => (imageTypes.push(definition), () => {}), entries: () => [] },
+  remote: { workspaceFiles: { readAll: () => Promise.resolve({ ok: false, error: { code: 'workspace-file/not-file' } }) } },
+  effect: (fn) => fn(),
+  logger: { debug() {}, warn() {} },
+})
+check('image type registered', imageTypes.length === 1 && imageTypes[0].id + '/' + imageTypes[0].kind, 'dsh-image/image')
+check('image outranks the shipped preview band', imageTypes[0].priority, 'extension')
+check(
+  'image claims exactly the image suffixes',
+  JSON.stringify(imageTypes[0].patterns),
+  '["*.png","*.apng","*.jpg","*.jpeg","*.jpe","*.jfif","*.gif","*.webp","*.avif","*.bmp","*.ico","*.svg","*.tif","*.tiff"]',
+)
+check(
+  'image canOpen takes images and refuses everything else',
+  imageTypes[0].canOpen('dsh-resource://file/session/s1/docs/shot.PNG') === true &&
+    imageTypes[0].canOpen('dsh-resource://file/session/s1/docs/photo.jpeg') === true &&
+    imageTypes[0].canOpen('dsh-resource://file/session/s1/drawings/plan.svg') === true &&
+    imageTypes[0].canOpen('dsh-resource://file/session/s1/notes.txt') === false &&
+    imageTypes[0].canOpen('dsh-resource://file/absolute/C:/tmp/shot.png') === false &&
+    imageTypes[0].canOpen('dsh-resource://pdf/absolute/x.png') === false,
+)
+check('the image chip title is the file name', imageTypes[0].title('dsh-resource://file/session/s1/docs/shot.png'), 'shot.png')
+// A blank image is not a document anyone opens from the "+" control, so this
+// type adds no guide capsule - it only ever claims a real file address.
+check('the image type adds no guide entry', imageTypes[0].guide === undefined)
+check(
+  'image seats',
+  Object.keys(imageSeats).sort().join(','),
+  'sidebar.right.pane.tab#dsh-image,sidebar.right.pane.tab.title#dsh-image',
+)
+const ImageBody = imageSeats['sidebar.right.pane.tab#dsh-image'].component
+const imageTab = { id: 'tab9', contentId: 'dsh-resource://file/session/s1/shots/hero%20image.png', title: 'hero image.png' }
+const imageMarkup = renderToStaticMarkup(h(ImageBody, { useTabInfo: () => ({ tab: imageTab }), sessionId: 's1' }))
+check('image body renders its opening state', imageMarkup.includes('data-image-state="loading"') && imageMarkup.includes('Opening the image'))
+check('the opening state names the file it is opening', imageMarkup.includes('s1/shots/hero image.png'))
+check(
+  'image title seat draws the chip',
+  renderToStaticMarkup(h(imageSeats['sidebar.right.pane.tab.title#dsh-image'].component, { useTabInfo: () => ({ tab: imageTab }) })),
+  '<span class="dsi-title">hero image.png</span>',
+)
+const imageNoTabMarkup = renderToStaticMarkup(h(ImageBody, { useTabInfo: () => ({ tab: { id: 'tab10', contentId: '' } }), sessionId: 's1' }))
+check('an address-less image tab still renders', imageNoTabMarkup.includes('data-image-state="loading"'))
+
 console.log('')
 console.log(failures === 0 ? 'all client-bundle checks passed' : failures + ' check(s) FAILED')
 process.exitCode = failures === 0 ? 0 : 1

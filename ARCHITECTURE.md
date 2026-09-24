@@ -1036,7 +1036,7 @@ neither half needs the other:
 
 | Host | Script | Runner | Needs |
 |---|---|---|---|
-| Windows | `scripts/install-all.ps1` / `uninstall-all.ps1`, root `run.bat` | `scripts/*.bat`, root `install.bat` / `uninstall.bat` | Windows PowerShell 5.1 or 7 (install/uninstall); plain cmd for `run.bat` |
+| Windows | `scripts/install-all.ps1` / `uninstall-all.ps1`, root `run.bat` + `scripts/run-web.ps1` | `scripts/*.bat`, root `install.bat` / `uninstall.bat` | Windows PowerShell 5.1 or 7 |
 | macOS / Linux | `scripts/install-all.sh` / `uninstall-all.sh`, root `run.sh` | `scripts/*.sh`, root `install.sh` / `uninstall.sh` | POSIX sh (dash/bash) + Node.js with npm/npx - **never PowerShell** |
 
 Both are ASCII-only; the `.sh` half is POSIX (no bashisms, no `sed`/`grep`
@@ -1049,24 +1049,28 @@ already. `scripts/sync-vendored.ps1`
 is **maintainer tooling**, not an installer, and is the one script here that wants
 `pwsh` on macOS/Linux.
 
-**The run launcher.** `run.bat` / `run.sh` are the launcher - one file per host,
-both at the repo root - and are not an install step: they
+**The run launcher.** `run.bat` / `run.sh` are the launcher's two ENTRY POINTS -
+one per host, both at the repo root - and are not an install step: they
 start the app the docs would otherwise ask for by hand -
 `npx --yes @deepseek-ai/dsh@<pin> web --no-open [--port <n>]` - and open the URL
-the app prints once it is listening. Each half holds ALL the work and IS the entry
-point (no wrapper), and each half reads `.dsh-version.json` from its own folder
-(`%~dp0` in the batch half, `$script_dir` in the shell half). On Windows it is
-`run.bat [flags]`, and a double-click is the point of the batch half: it runs on a
-stock machine with no execution-policy question and no PowerShell in the path. On
-macOS/Linux it is `./run.sh [flags]`. Both halves follow the same four steps and
+the app prints once it is listening. On Windows the entry point is `run.bat`, a
+double-click wrapper that forwards its flags to `scripts/run-web.ps1`, the worker
+beside the installer scripts; macOS/Linux have no worker, because POSIX `read`
+already streams the app's output line by line, so `run.sh` does the whole job
+itself. The Windows split is FORCED, not stylistic: cmd's `for /f` reads a child's
+output only up to EOF, so a pure batch launcher cannot see the ready line while the
+harness is still running. Each half reads `.dsh-version.json` from the repo root -
+`$script_dir` for `run.sh` (it lives there) and
+`Split-Path -Parent $PSScriptRoot` for the worker. On Windows the launcher is
+`run.bat [flags]`, and a double-click is the point: batch carries no
+execution-policy question. Both halves follow the same four steps and
 accept the same flags (`-Port`, `-DshHome`, `-DshVersion`, `-NoBrowser`,
 `-DefaultBrowser`):
 
-1. **stream** the app's own stdout to the terminal, so the session looks like a
-   hand-typed `dsh web` (the shell half pipes stdout and stderr through a FIFO;
-   the batch half captures stdout with `for /f` and leaves stderr inherited, which
-   is also why it has one visible difference - `for /f` never yields a blank line,
-   so blank lines in the app's output are dropped);
+1. **stream** the app's own stdout/stderr to the terminal unchanged, so the
+   session looks exactly like a hand-typed `dsh web` (the PowerShell half leaves
+   stderr unmerged - `2>&1` into the pipeline turns npm warnings into a
+   terminating `NativeCommandError`; the shell half pipes both through a FIFO);
 2. **watch** it for the ready line, `dsh web: http://127.0.0.1:<port>/?token=…`
    (printed by `dsh-web-app` when `printUrl` is on, which is the default, and
    kept apart from the optional `(LAN: …)` tail that follows it);
@@ -1080,21 +1084,17 @@ accept the same flags (`-Port`, `-DshHome`, `-DshVersion`, `-NoBrowser`,
    when Chrome is not installed.
 
 The token stays **in memory**: neither half writes it to a file (the shell half
-uses an anonymous FIFO rather than a temp log precisely for that) and neither
-echoes it itself. The hand-off is where the halves differ, deliberately: the shell
-half passes the URL as an argv element of `open` / `xdg-open`, so no shell parses
-it at all, while the batch half must go through cmd's own `start`, because cmd has
-no argv interface - the URL is ONE QUOTED ARGUMENT there, so a token would have to
-contain a double quote to break out of it (launch tokens are hex/base64url). The
-`run.ps1` that used `Start-Process -ArgumentList`, and so never let a shell see the
-URL, was deleted in favour of the single batch file; SECURITY.md states the current
-guarantee rather than the old one. `--no-open` is what keeps the hand-off single:
-the app must not also start a browser. The harness runs in the foreground, so
-Ctrl+C stops it and each half reports the app's own exit status (the shell half
-reads the child directly instead of through a pipeline subshell, which is what
-makes `wait` meaningful; the batch half appends a sentinel line inside the piped
-child, because `ERRORLEVEL` after a `for /f` loop belongs to the loop body and not
-to the app).
+uses an anonymous FIFO rather than a temp log precisely for that), neither echoes
+it itself, and it reaches the browser as a single argv element - never through
+`cmd /c start`, `sh -c` or any other command string. On Windows that element is
+built by `Start-Process -ArgumentList @($Url)` in `scripts/run-web.ps1`; the root
+`run.bat` above it only forwards flags and never sees the URL at all. `--no-open`
+is what keeps the hand-off single: the app must not also start a browser. The
+harness runs in the foreground, so Ctrl+C stops it and each half reports the app's
+own exit status (the shell half reads the child directly instead of through a
+pipeline subshell, which is what makes `wait` meaningful; the PowerShell half gets
+the native command's `$LASTEXITCODE` after its streaming pipeline, and `run.bat`
+passes that through as the batch's own exit code).
 
 - **Detection**: one target - `DSH_HOME` env, else `~/.dsh`; profile `web`
   (`-DshHome` / `-ProfileName` override both). `-Target` still exists but accepts

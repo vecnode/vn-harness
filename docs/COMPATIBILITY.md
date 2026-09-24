@@ -20,10 +20,13 @@ The pack targets the harness line DeepSeek ships to the raw web install
 
 ## Running the app
 
-The pack ships its own launcher next to the installers - one file per platform,
-`run.bat` (Windows, plain cmd - double-click it) and `run.sh` (macOS/Linux), both
+The pack ships its own launcher next to the installers - one entry point per
+platform, `run.bat` (Windows, double-click it) and `run.sh` (macOS/Linux), both
 at the repo root - so starting the GUI is one command instead of remembering the
-command line. Both run the same pinned invocation the docs use -
+command line. On Windows the entry point is a batch wrapper and the work is in
+`scripts/run-web.ps1`, because cmd cannot watch a running child's output (its
+`for /f` reads only up to EOF); `run.sh` does the whole job itself. Both run the
+same pinned invocation the docs use -
 `npx --yes @deepseek-ai/dsh@<pin> web --no-open [--port <n>]` - and then:
 
 - stream the app's own output to the terminal (nothing is filtered), watching for
@@ -38,15 +41,14 @@ command line. Both run the same pinned invocation the docs use -
   the app's own exit status.
 
 Flags: `-Port <n>`, `-DshHome <dir>`, `-DshVersion <ver>`, `-NoBrowser`
-(start the server only) and `-DefaultBrowser` (skip Chrome). On Windows the whole
-launcher is `run.bat [flags]` - a single batch file with no PowerShell in it, so a
-double-click works on a stock machine. The launch token is
+(start the server only) and `-DefaultBrowser` (skip Chrome). On Windows the
+launcher is `run.bat [flags]` (double-click friendly, no execution-policy
+question, because the entry point is batch). The launch token is
 never written to a file: the POSIX half pipes the app's output through an
-anonymous FIFO and both halves keep the token in memory. How it reaches the
-browser differs by half and is described in SECURITY.md: the shell half passes it
-as an argv element of `open`/`xdg-open`, while the batch half has to use cmd's own
-`start` with the URL as one quoted argument - the single guarantee the pack gave
-up when the PowerShell launcher was replaced by the one-file batch launcher.
+anonymous FIFO and both halves keep the token in memory. It reaches the browser as
+a single argv element - `Start-Process -ArgumentList` on Windows, an argument of
+`open`/`xdg-open` on macOS/Linux - never through a command string; SECURITY.md has
+the details.
 
 ## What this means for the plugin
 

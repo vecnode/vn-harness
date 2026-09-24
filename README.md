@@ -71,7 +71,7 @@ side never needs PowerShell.
 :: Windows - install/uninstall/run are all double-click friendly
 install.bat                  :: installs into the web profile (the only target)
 run.bat                      :: starts the harness and opens it in Chrome
-                             :: (the whole launcher: plain batch, no PowerShell)
+                             :: (the entry point; scripts\run-web.ps1 does the work)
 uninstall.bat                :: removes the pack
 ```
 
@@ -168,10 +168,11 @@ switches. Removing a bundle also removes its patch layer.
   the app prints once it is listening, and open **that** URL in Chrome (the
   default browser is the fallback). A URL that does not name a loopback address
   is refused instead of opened, and the launch token — a live credential for the
-  running process — is only ever held in memory and never written to a file.
-  [SECURITY.md](SECURITY.md) describes the whole access model, including exactly
-  how each half hands the URL to the browser (they are not identical on Windows,
-  and the file says so).
+  running process — is only ever held in memory: never written to a file, never
+  passed through a shell. On Windows `run.bat` is the double-clickable entry point
+  and `scripts/run-web.ps1` the worker behind it, because cmd cannot watch a
+  running child's output; [SECURITY.md](SECURITY.md) describes the whole access
+  model and how to lock the app down.
 - **Where to read more.** [`docs/INSTALL.md`](docs/INSTALL.md) has the manual
   install path and troubleshooting, [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
   the supported harness line, and each package's own README the details of that

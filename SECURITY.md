@@ -211,10 +211,9 @@ control.
 **2. Treat the printed URL as a password.**
 It contains the launch token, and anyone who can reach the port can open that URL
 and take a session. Do not paste it into a chat, an issue, a screenshot or a
-recording. The launchers never write it to a file and never echo it, and they
-only ever hand it to a browser on this machine as a single argument — on Windows
-through `start`, which does let cmd's parser see that one quoted argument (see
-**the launch token** below) — but nothing stops a screen recording.
+recording. The launchers never write it to a file, never echo it, and never build
+a command string out of it — it reaches the browser as a single argument — but
+nothing stops a screen recording.
 
 **3. Know what logs out, and what does not.**
 
@@ -347,31 +346,26 @@ That token is the running process's **launch credential**: the server exchanges
 it for the browser session cookie, and every request that follows rides the
 cookie. Treat the line the way you would treat the cookie itself.
 
-How the pack handles it (`run.bat` on Windows, `run.sh` on macOS/Linux — one file
-per host, no wrapper):
+How the pack handles it (`run.bat` on Windows, `run.sh` on macOS/Linux — the two
+entry points; on Windows `run.bat` forwards to `scripts/run-web.ps1`, which holds
+the work):
 
 - it is **read in memory** from the app's own output and never written to a file
   (the POSIX half streams through an anonymous FIFO instead of a temp log for
   exactly this reason);
 - it is **never echoed by the launchers** — they only report the origin they
   opened — and it is never put in a URL logged anywhere else;
-- it is handed to the browser as **one argument**, never concatenated into a
-  command string, and **this is the one place the two halves differ**:
-  - macOS/Linux hand the URL to `open` / `xdg-open` as an argv element, so no
-    shell parses it at all;
-  - Windows hands it to `start` as ONE QUOTED ARGUMENT
-    (`start "" "<chrome>" "<url>"`). `start` is a cmd built-in, so cmd's parser
-    does see that one line: a token would have to contain a double quote to
-    break out of the argument, and launch tokens are hex/base64url. That argv
-    guarantee is exactly what the pack gave up when the PowerShell launcher
-    (`Start-Process -ArgumentList`, which never let a shell see the URL) was
-    replaced by the single-file `run.bat` at the owner's request — every other
-    rule below is unchanged;
+- it reaches the browser as **one argv element**, never through a command string:
+  macOS/Linux hand the URL to `open` / `xdg-open` as an argument, and Windows
+  hands it to `Start-Process -FilePath <chrome> -ArgumentList @($Url)` inside
+  `scripts/run-web.ps1` — no `cmd /c start`, no `sh -c`, so nothing in it can be
+  read as a shell metacharacter. The root `run.bat` never sees the URL: it only
+  forwards flags to the worker;
 - the URL is opened **only when it names a loopback address** (`127.0.0.1`,
-  `::1`, `localhost`; on Windows only a literal `127.x.x.x` address is accepted,
-  so a name that merely starts with `127.` is refused too). Anything else is
-  refused and reported, because the line can also carry a LAN URL when a
-  deployment binds a LAN interface on purpose;
+  `::1`, `localhost`; on Windows only a literal `127.x.x.x` address counts, so a
+  name that merely starts with `127.`, such as `127.evil.com`, is refused too).
+  Anything else is refused and reported, because the line can also carry a LAN
+  URL when a deployment binds a LAN interface on purpose;
 - `--no-open` is passed to the app so the hand-off happens exactly once.
 
 **Lifetimes, precisely.** The *token* is process-scoped: it dies with the app,
