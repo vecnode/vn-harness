@@ -1506,6 +1506,36 @@ check(
 check('the reader uses pdf.js own TextLayer', pdfSource.includes('new engine.TextLayer({'))
 check('the reader is page-navigable by keyboard', pdfSource.includes("event.key === 'PageDown'") && pdfSource.includes('dpf-pageInput') && pdfSource.includes('goToPage'))
 check('a PDF is claimed as an extension type', pdfSource.includes("patterns: ['*.pdf']") && pdfSource.includes("priority: 'extension'"))
+// alpha.3: the side panel (thumbnails + the document's own outline), the wasm
+// decoders, and the workspace index page.
+check(
+  'the reader has a thumbnail rail, drawn lazily',
+  pdfSource.includes('data-pdf-thumb') &&
+    pdfSource.includes('THUMB_MAX = 300') &&
+    pdfSource.includes('root: element.closest(\'.dpf-side\') ?? null') &&
+    pdfSource.includes('Thumbnails stop at '),
+)
+check(
+  'the reader reads the document outline itself',
+  pdfSource.includes('await doc.getOutline()') &&
+    pdfSource.includes('await doc.getDestination(') &&
+    pdfSource.includes('await doc.getPageIndex(') &&
+    pdfSource.includes('This document has no bookmarks'),
+)
+check(
+  'the wasm decoders are wired',
+  pdfSource.includes("API_ROOT + '/vendor/wasm.json'") &&
+    pdfSource.includes("kind === 'wasmUrl' ? VENDOR_WASM") &&
+    pdfSource.includes('wasmUrl: VENDOR_WASM'),
+)
+check(
+  'the index page reads the workspace route',
+  pdfSource.includes("API_ROOT + '/list'") &&
+    pdfSource.includes("data-pdf-index-row") &&
+    pdfSource.includes('Every PDF in this workspace'),
+)
+check('the index is a page type with its own guide entry', pdfSource.includes("priority: 'builtin',") && pdfSource.includes('order: 50'))
+check('the client is at alpha.3', pdfSource.includes("PLUGIN_VERSION = '0.1.0-alpha.3'"))
 
 const pdfTypes = []
 const pdfSeats = {}
@@ -1522,7 +1552,10 @@ pdf.exports.apply({
   effect: (fn) => fn(),
   logger: { debug() {}, warn() {} },
 })
-check('pdf type registered', pdfTypes.length === 1 && pdfTypes[0].id + '/' + pdfTypes[0].kind, 'dsh-pdf/pdf')
+check('pdf type registered', pdfTypes.length === 2 && pdfTypes[0].id + '/' + pdfTypes[0].kind, 'dsh-pdf/pdf')
+check('the index registers as a page type', pdfTypes[1].id + '/' + pdfTypes[1].kind + '/' + pdfTypes[1].priority, 'dsh-pdf-index/pdfs/builtin')
+check('the index claims no file address', pdfTypes[1].patterns === undefined, true)
+check('the index guide entry follows Diagrams', pdfTypes[1].guide.map((entry) => entry.order + ':' + entry.title()).join(','), '50:PDFs')
 check('pdf claims only *.pdf', JSON.stringify(pdfTypes[0].patterns), '["*.pdf"]')
 check('pdf outranks the shipped preview band', pdfTypes[0].priority, 'extension')
 check(
@@ -1535,7 +1568,7 @@ check('pdf chip title is the file name', pdfTypes[0].title('dsh-resource://file/
 check(
   'pdf seats',
   Object.keys(pdfSeats).sort().join(','),
-  'sidebar.right.pane.tab#dsh-pdf,sidebar.right.pane.tab.title#dsh-pdf,tool.call.toolview#pdf_find,tool.call.toolview#pdf_info,tool.call.toolview#pdf_read,tool.call.toolview#pdf_render,tool.call.toolview#pdf_scan',
+  'sidebar.right.pane.tab#dsh-pdf,sidebar.right.pane.tab#dsh-pdf-index,sidebar.right.pane.tab.title#dsh-pdf,sidebar.right.pane.tab.title#dsh-pdf-index,tool.call.toolview#pdf_find,tool.call.toolview#pdf_info,tool.call.toolview#pdf_read,tool.call.toolview#pdf_render,tool.call.toolview#pdf_scan',
 )
 // alpha.2, the scanner: a page with no text layer must SAY so and offer the one
 // action that can change it, through the same route the pdf_scan tool drives.
@@ -1558,7 +1591,7 @@ check(
     pdfSource.includes('OCR misreads digits, names, accents and punctuation') &&
     pdfSource.includes('Recognized, not extracted'),
 )
-check('the client is at alpha.2', pdfSource.includes("PLUGIN_VERSION = '0.1.0-alpha.2'"))
+check('the client is at alpha.3', pdfSource.includes("PLUGIN_VERSION = '0.1.0-alpha.3'"))
 const PdfBody = pdfSeats['sidebar.right.pane.tab#dsh-pdf'].component
 const pdfTab = { id: 'tab7', contentId: 'dsh-resource://file/session/s1/report.pdf', title: 'report.pdf' }
 const pdfMarkup = renderToStaticMarkup(h(PdfBody, { useTabInfo: () => ({ tab: pdfTab }), sessionId: 's1' }))
@@ -1567,6 +1600,18 @@ check(
   'pdf title seat draws the chip',
   renderToStaticMarkup(h(pdfSeats['sidebar.right.pane.tab.title#dsh-pdf'].component, { useTabInfo: () => ({ tab: pdfTab }) })),
   '<span class="dpf-title">report.pdf</span>',
+)
+// The index page: a page tab whose body reads the workspace. The effect cannot
+// run under static rendering, so what is checked here is that it renders its
+// own opening state and carries the address its guide entry opens.
+const PdfIndexBody = pdfSeats['sidebar.right.pane.tab#dsh-pdf-index'].component
+const pdfIndexMarkup = renderToStaticMarkup(h(PdfIndexBody, { sessionId: 's1' }))
+check('the index body renders its opening state', pdfIndexMarkup.includes('data-pdf-index="sidebar://pdfs"') && pdfIndexMarkup.includes('data-pdf-index-state="loading"'))
+check('the index offers a refresh and a page count', pdfIndexMarkup.includes('data-pdf-action="index-reload"') && pdfIndexMarkup.includes('data-pdf-action="index-count"'))
+check(
+  'the index title seat draws the chip',
+  renderToStaticMarkup(h(pdfSeats['sidebar.right.pane.tab.title#dsh-pdf-index'].component, {})),
+  '<span class="dpf-title">PDFs</span>',
 )
 const ToolCard = pdfSeats['tool.call.toolview#pdf_read'].component
 const settledBlock = {

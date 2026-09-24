@@ -1412,12 +1412,13 @@ Mermaid needs no engine at all.
 ## 16. The PDF plugin (dsh-pdf)
 
 **What it is.** One row (`pdf`), five tools (`pdf_info`, `pdf_read`, `pdf_find`,
-`pdf_render`, `pdf_scan`), one tab type (`pdf`, band `extension`, patterns
-`['*.pdf']`), one bundled skill (`pdf-analysis`) and eight authenticated route
-registrations (state, health, file, scan, and four fixed vendor assets). It makes
-a PDF readable and scannable by the model and openable in the right bar, and it
-is **read-only** - no tool modifies, merges, splits, rotates, fills or signs a
-document.
+`pdf_render`, `pdf_scan`), two tab types (`pdf` - the reader, band `extension`,
+patterns `['*.pdf']`; and `pdfs` - the workspace index, a page type at
+`sidebar://pdfs`), one bundled skill (`pdf-analysis`) and ten authenticated
+route registrations (state, health, file, list, scan, and five fixed vendor
+assets). It makes a PDF readable and scannable by the model and openable in the
+right bar, and it is **read-only** - no tool modifies, merges, splits, rotates,
+fills or signs a document.
 
 **It replaces the shipped PDF renderer by RANKING, not by disabling.** The
 harness's own `@deepseek-ai/dsh-client-ui-sidebar-documentpreview` mounts a
@@ -1448,9 +1449,15 @@ inlines - so two renderers in one page can never disagree about a document. The
 vendor tree is the engine, its worker, the 169 CJK cMaps, the 16 standard fonts
 and pdf.js's Apache-2.0 LICENSE, with every file's bytes and sha256 plus a digest
 over each tree recorded in `lib/vendor/VERSION.json`; `build.mjs --check` is part
-of the tracked checks. `wasm/` (JPEG2000/JBIG2) is deliberately absent in
-alpha.1: it would only change how an exotic scanned page is *drawn* in the tab,
-and rasterizing for OCR is the host engine's job.
+of the tracked checks, and `.gitattributes` pins the tree's TEXT files to LF
+because those bytes are hashed and a Windows checkout would otherwise report
+phantom drift (the license files live *inside* the hashed trees). alpha.3 adds
+`wasm/` - pdf.js's own **JBIG2**, **OpenJPEG** and **qcms** decoders, 13 files
+and 1.5 MB. Skipping them was a real choice in alpha.1 and it was the wrong one
+for a reader: without them a fax-style or JPEG2000 scanned page draws blank or
+partially, and a page that renders as nothing looks like a document that says
+nothing. `quickjs-eval.wasm` rides along unused because `isEvalSupported: false`
+is set on both halves.
 
 **The browser never carries the engine.** The harness reads every client bundle
 at boot and pdf.js is 1.8 MB, so `lib/client.js` stays small and fetches
@@ -1486,6 +1493,39 @@ being imported from a blob URL.
    `index.json` (document facts), `stats.json` (per-page numbers, merged as pages
    are extracted) and `pages/<n>.json` (one page's text in both modes), written
    atomically and LRU-pruned at 512 MiB. `pdf_read` after `pdf_find` is free.
+
+**The panel and the index (alpha.3).** Two toolbar buttons open a side panel
+beside the page column, and both halves of it are deliberately NOT the page
+component:
+
+- **The thumbnail rail** draws each page into a 104px canvas *when the rail
+  scrolls it into view*, with the `IntersectionObserver` **rooted on the rail
+  itself** (`element.closest('.dpf-side')`) - a thumbnail two screens down must
+  not draw, and an observer rooted on the viewport would treat the whole rail as
+  visible. It is capped at 300 pages and the rail says so, because a thousand
+  canvases is not a rail, it is a memory leak with a scrollbar. A thumbnail needs
+  no text layer, no zoom and no scroll memory, so sharing `PageView` would only
+  make both slower.
+- **The outline** is resolved in the BROWSER through `getOutline` /
+  `getDestination` / `getPageIndex`, bounded to 200 entries and four levels. A
+  bookmark whose destination cannot be resolved is rendered *disabled* rather
+  than dropped: a bookmark the reader can see but not follow is still
+  information, and the host has no better answer to give it (its own extractor
+  resolves the same tree the same way, so the two agree).
+
+The **`pdfs` index page** is the pack's familiar page-type shape: `id`
+`dsh-pdf-index`, kind `pdfs`, `priority: 'builtin'`, no `patterns` so it never
+competes for a file address, a guide entry at `order: 50` (after Files 10, Editor
+20, History 30, Diagrams 40), and a body whose rows call the ordinary
+`openResource` action - so the registry, not the page, decides what claims a PDF.
+Its data comes from `GET /api/dsh-pdf/list`, whose walk is **timid by design**:
+depth 6, 200 files, `.pdf` only, a skip-list (`node_modules`, `.git`,
+`__pycache__`, `.venv`, ...), symlinks not followed, and page counts only when
+asked and only for 12 documents - a count means parsing a document in a child
+process, which is worth 12 files on a click and never worth doing for a directory
+nobody asked about. The index lists; it never becomes a way to browse the
+machine, and every row it hands out is re-validated by `resolveTarget` when it is
+opened.
 
 **The scanned-page signal is the point of `pdf_info`.** Per page it reports the
 character count and the image count, so a page with **0 characters and images**
@@ -1577,7 +1617,9 @@ page inspected by `pdf_info` up to 60 pages and a 20-page sample above that
 (which the answer states), 40 hits and up to 2000 pages with a 45 s budget for
 `pdf_find` (which the answer states), and 10 pages per `pdf_scan` call at
 50-400 dpi (default 200) with psm 0-13 (default 3) - the answer names the pages
-it left so the next batch can be asked for by range.
+it left so the next batch can be asked for by range. The reader's panel caps
+itself too: 300 thumbnails and 200 outline entries, and the workspace index walks
+6 levels deep over at most 200 files.
 
 **Model experience.** The bundled `pdf-analysis` skill is registered at runtime
 from the package folder AND copied into `$DSH_HOME/skills` by both installers
@@ -1611,3 +1653,9 @@ pdf_* card, or by an address of either shape.
 | The tab says "That path points outside the conversation workspace" | a relative path with `..` that leaves the workspace: open the file by its absolute path instead, or copy it in |
 | `vendor/build.mjs --check` fails | the vendored tree was edited or half-written; re-run `node packages/dsh-pdf/vendor/build.mjs` (never hand-edit `lib/vendor`) |
 | A CJK document extracts as boxes | the cMap map route is missing or the tree is incomplete - run the vendor build and restart |
+| A scanned page draws blank or half | its image is JBIG2 or JPEG2000 and the `wasm.json` route is missing - run the vendor build and restart. A page that renders as nothing looks like a document that says nothing, which is why these decoders are vendored |
+| The Bookmarks panel says the document has none | it genuinely has no outline. Many scans and most word-processor exports have none: the thumbnails, the page field and Find are the way in |
+| Thumbnails stop partway | the 300-page rail cap; the page field and Find still reach the rest, and nothing is broken |
+| The PDFs page lists nothing | the workspace has no `*.pdf` inside 6 levels - or the walk is looking at the wrong folder, which `GET /api/dsh-pdf/list?session=<id>` answers directly (`root` is in the response) |
+| A workspace PDF is missing from the index | it is deeper than 6 levels, past the 200-file cap, inside a skipped directory (`node_modules`, `.git`, ...), or it is a symlink - the walk does not follow those on purpose |
+| "Count pages" reports fewer documents than rows | the count pass is capped at 12 documents per request, and a locked or damaged PDF reports `null` rather than failing the list |

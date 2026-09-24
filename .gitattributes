@@ -17,12 +17,14 @@ packages/*/lib/client.js text eol=lf
 # packages/dsh-pdf/vendor/build.mjs --check (every file's sha256 plus a digest
 # over each tree, recorded in lib/vendor/VERSION.json), so its TEXT files are
 # pinned to LF for exactly the reason the forked bundles above are: a Windows
-# checkout would rewrite them to CRLF and report phantom drift - and the two
-# LICENSE files live INSIDE the hashed cMap and standard-font trees, so
-# converting them would change a tree digest too. The .bcmap and font binaries
+# checkout would rewrite them to CRLF and report phantom drift - and the LICENSE
+# files live INSIDE the hashed cMap, standard-font and wasm trees, so converting
+# them would change a tree digest too. The .bcmap, .pfb/.ttf and .wasm binaries
 # are detected as binary and are never touched.
 packages/dsh-pdf/lib/vendor/*.mjs text eol=lf
 packages/dsh-pdf/lib/vendor/VERSION.json text eol=lf
 packages/dsh-pdf/lib/vendor/LICENSE text eol=lf
 packages/dsh-pdf/lib/vendor/cmaps/LICENSE text eol=lf
 packages/dsh-pdf/lib/vendor/standard_fonts/LICENSE_* text eol=lf
+packages/dsh-pdf/lib/vendor/wasm/LICENSE_* text eol=lf
+packages/dsh-pdf/lib/vendor/wasm/*.js text eol=lf

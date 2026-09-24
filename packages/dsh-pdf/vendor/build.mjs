@@ -32,14 +32,19 @@
  *   - `standard_fonts/**` (16 files) - documents that rely on the base-14
  *     fonts without embedding them. Without these, pages render with substitute
  *     metrics and the text layer drifts.
- *   - `LICENSE` - pdf.js is Apache-2.0 (this pack is MIT); the license travels
- *     with the bytes.
- *
- * `wasm/**` (JPEG2000 / JBIG2 image decoders) is deliberately NOT vendored in
- * alpha.1: it costs 1.5 MB and affects only how an exotic scanned page is
- * DRAWN, while rasterizing for OCR is the host's own engine's job (poppler /
- * mutool / ghostscript). It is the first thing alpha.3 adds if a real document
- * needs it.
+ *   - `wasm/**` (13 files, alpha.3) - pdf.js's own WASM image decoders: JBIG2
+ *     (the encoding faxes and many scanners produce), OpenJPEG (JPEG2000, which
+ *     high-end scanners and archives use) and qcms (ISO colour profiles). Without
+ *     them an exotic scanned page draws as a blank or partial page - which for a
+ *     READER is the worst kind of failure, because it looks like the document.
+ *     `quickjs-eval.wasm` rides along: it is the JavaScript evaluator for a PDF's
+ *     embedded scripts, and this plugin sets `isEvalSupported: false` on BOTH
+ *     halves, so pdf.js never asks for it. It is vendored anyway because a
+ *     partial tree invites "why is this file missing?" the day someone enables
+ *     the option - and the whole tree is 1.5 MB.
+ *   - `LICENSE` (and the licenses inside the trees) - pdf.js is Apache-2.0 and
+ *     the bundled decoders carry their own (JBIG2, OpenJPEG, qcms); the licenses
+ *     travel with the bytes.
  *
  * Usage:
  *   node build.mjs            rebuild the vendored engine from the pinned version
@@ -66,6 +71,7 @@ const FILES = [
 const TREES = [
   ['cmaps', 'cmaps'],
   ['standard_fonts', 'standard_fonts'],
+  ['wasm', 'wasm'],
 ]
 /** Files carried beside the engine for licensing, not for execution. */
 const NOTICES = [['LICENSE', 'LICENSE']]

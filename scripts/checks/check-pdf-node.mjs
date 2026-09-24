@@ -138,6 +138,13 @@ await fsp.writeFile(textFile, textPdf())
 await fsp.writeFile(scanFile, scannedPdf())
 await fsp.writeFile(manyFile, manyPagePdf(12))
 await fsp.writeFile(outsideFile, textPdf())
+// A PDF inside a directory the workspace index must never descend into: the
+// skip-list is what keeps the index a convenience rather than a file crawler.
+await fsp.mkdir(path.join(workspace, 'node_modules'), { recursive: true })
+await fsp.writeFile(path.join(workspace, 'node_modules', 'ignored.pdf'), textPdf())
+// ...and one nested where it SHOULD be found, to prove the walk is real.
+await fsp.mkdir(path.join(workspace, 'docs', 'reports'), { recursive: true })
+await fsp.writeFile(path.join(workspace, 'docs', 'reports', 'nested.pdf'), textPdf())
 await fsp.writeFile(notesFile, 'not a pdf\n')
 await fsp.writeFile(corruptFile, textPdf().subarray(0, 400))
 // A locked document is one this check cannot build by hand; a file whose name
@@ -212,11 +219,14 @@ check('the row injects tools and connection', Array.isArray(plugin.inject) && pl
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
-check('four tools registered', [...tools.keys()].sort().join(','), 'pdf_find,pdf_info,pdf_read,pdf_render,pdf_scan')
+check('five tools registered', [...tools.keys()].sort().join(','), 'pdf_find,pdf_info,pdf_read,pdf_render,pdf_scan')
 check('the skill registers', skills.length === 1 && skills[0].name, 'pdf-analysis')
 check('the skill has content', (skills[0]?.content ?? '').length > 500)
-check('routes registered', [...routes.keys()].filter((route) => route.startsWith('/api/dsh-pdf')).length >= 6)
-check('vendor route registered per asset', routes.has('/api/dsh-pdf/vendor/pdf.min.mjs') && routes.has('/api/dsh-pdf/vendor/cmaps.json'))
+// The exact count, not a floor: the route vocabulary is what the docs describe,
+// and a loose `>= 6` is how "eight route registrations" drifted out of step with
+// the ten that are actually registered (state, health, file, list, scan + 5).
+check('ten routes registered', [...routes.keys()].filter((route) => route.startsWith('/api/dsh-pdf')).length, 10)
+check('vendor route registered per asset', routes.has('/api/dsh-pdf/vendor/pdf.min.mjs') && routes.has('/api/dsh-pdf/vendor/cmaps.json') && routes.has('/api/dsh-pdf/vendor/wasm.json'))
 check('no wildcard route', [...routes.keys()].every((route) => !route.includes('*')))
 
 // ---------------------------------------------------------------------------
@@ -490,6 +500,7 @@ check('state names the vendored engine', state.engine.version, '6.3.289')
 check('state lists the tools', state.tools.join(','), 'pdf_info,pdf_read,pdf_find,pdf_render,pdf_scan')
 check('state reports the cache ceiling', state.cache.maxBytes > 0)
 check('state carries the scan caps', state.caps.scanMaxPages === 10 && state.caps.scanDpi === 200 && state.caps.scanLang === 'eng')
+check('state carries the index caps', state.caps.listMaxFiles === 200 && state.caps.listMaxDepth === 6 && state.caps.listPageCountFiles === 12)
 check('state reports the OCR capability honestly', typeof state.capabilities.ocr.available === 'boolean' && (state.capabilities.ocr.available ? typeof state.capabilities.ocr.name === 'string' : state.capabilities.ocr.name === null))
 
 /**
@@ -522,6 +533,41 @@ check('the scan route refuses a bad body', (await (async () => {
   return await handler.fetch(new Request('http://127.0.0.1/api/dsh-pdf/scan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{not json' }))
 })()).status, 400)
 
+// ---------------------------------------------------------------------------
+// The workspace PDF index
+// ---------------------------------------------------------------------------
+const listRoute = routes.get('/api/dsh-pdf/list')
+const listResponse = await listRoute.fetch(new Request('http://127.0.0.1/api/dsh-pdf/list?session=s1'))
+const listing = await listResponse.json()
+check('the list route answers', listResponse.status === 200 && listing.ok === true)
+const listed = (listing.files ?? []).map((file) => file.path)
+check(
+  'it lists the workspace PDFs',
+  // Exactly the five PDFs this check writes inside the workspace: four at the
+  // top level and one nested. notes.txt is not a PDF, the one under
+  // node_modules is skipped, and the one in `elsewhere` is outside the root.
+  ['report.pdf', 'scan.pdf', 'batch.pdf', 'corrupt.pdf'].every((name) => listed.includes(name)) && listed.length === 5,
+)
+check('it does not list a non-PDF', listed.includes('notes.txt'), false)
+check('it does not descend into node_modules', listed.some((entry) => entry.includes('node_modules')), false)
+check('it finds a nested document', listed.includes('docs/reports/nested.pdf'))
+check('each row carries an openable address', /^dsh-resource:\/\/file\/session\/s1\/docs\/reports\/nested\.pdf$/.test((listing.files.find((file) => file.path === 'docs/reports/nested.pdf') ?? {}).address ?? ''))
+check('the list is not truncated here', listing.truncated, false)
+check('page counts are opt-in', listing.counted === 0 && (listing.files ?? []).every((file) => file.pages === null))
+
+const counted = await (await listRoute.fetch(new Request('http://127.0.0.1/api/dsh-pdf/list?session=s1&pages=1'))).json()
+const byPages = new Map((counted.files ?? []).map((file) => [file.path, file.pages]))
+check('the count pass reports page counts', counted.counted > 0 && byPages.get('report.pdf') === 2)
+check('a twelve-page document counts as twelve', byPages.get('batch.pdf'), 12)
+check('a damaged document counts as null, not as a failure', byPages.get('corrupt.pdf'), null)
+check(
+  'the count pass is capped',
+  counted.counted === Math.min(12, (counted.files ?? []).filter((file) => !file.tooLarge).length) && counted.counted === 5,
+)
+
+const noSession = await listRoute.fetch(new Request('http://127.0.0.1/api/dsh-pdf/list'))
+check('the list route requires a session', noSession.status, 400)
+
 const fileResponse = await routes.get('/api/dsh-pdf/file').fetch(new Request('http://127.0.0.1/api/dsh-pdf/file?session=s1&path=report.pdf'))
 const fileBytes = Buffer.from(await fileResponse.arrayBuffer())
 check('file route serves the bytes', fileResponse.status === 200 && fileBytes.length === textPdf().length)
@@ -546,6 +592,15 @@ check('the cMap map carries the CJK maps', typeof cmaps['UniJIS-UCS2-H.bcmap'] =
 const fontResponse = await routes.get('/api/dsh-pdf/vendor/standard-fonts.json').fetch(new Request('http://127.0.0.1/api/dsh-pdf/vendor/standard-fonts.json'))
 const fonts = await fontResponse.json()
 check('the standard-font map carries the base fonts', Object.keys(fonts).length >= 10)
+// alpha.3: the WASM image decoders ride one map of their own, exactly like the
+// cMaps - JBIG2 and JPEG2000 are what a scanned page often IS, and without them
+// such a page draws blank while looking like a document.
+const wasmResponse = await routes.get('/api/dsh-pdf/vendor/wasm.json').fetch(new Request('http://127.0.0.1/api/dsh-pdf/vendor/wasm.json'))
+const wasm = await wasmResponse.json()
+check(
+  'the wasm map carries the image decoders',
+  typeof wasm['jbig2.wasm'] === 'string' && typeof wasm['openjpeg.wasm'] === 'string' && typeof wasm['qcms_bg.wasm'] === 'string' && Object.keys(wasm).length >= 13,
+)
 // The registry is exact-path only, so an unknown asset is simply not a route -
 // which is a narrower surface than a prefix route would be, and the reason the
 // two asset maps exist at all.

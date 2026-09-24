@@ -1,11 +1,14 @@
 # dsh-pdf bundle layer (alpha).
 #
-# One extra row ('pdf') owns the whole plugin: its Node half registers the four
-# PDF tools (pdf_info / pdf_read / pdf_find / pdf_render), the bundled
+# One extra row ('pdf') owns the whole plugin: its Node half registers the five
+# PDF tools (pdf_info / pdf_read / pdf_find / pdf_render / pdf_scan), the bundled
 # pdf-analysis skill, the content-addressed artifact cache and the
-# authenticated /api/dsh-pdf/* routes (state, the PDF bytes the tab reads, the
-# vendored engine, and the extracted-page cache), and therefore ships its
-# browser half (dsh.client) with the Loader entry.
+# authenticated /api/dsh-pdf/* routes (the state/health snapshot, the bytes the
+# reader reads, the workspace index, page recognition for the reader, and the
+# vendored engine's own assets), and therefore ships its browser half
+# (dsh.client) with the Loader entry. Its browser half registers TWO tab types:
+# `pdf` (the reader, band `extension`, patterns ['*.pdf']) and `pdfs` (the
+# workspace index page at sidebar://pdfs, a page type with no patterns).
 #
 # Nothing shipped is patched and no core row is disabled. The one surface this
 # package SUPERSEDES it supersedes by REGISTRATION, not by disabling: for a

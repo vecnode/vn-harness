@@ -22,6 +22,11 @@
       "files": 16,
       "bytes": 798046,
       "sha256": "f47ad944158218603c36f16611e1d7abd3632720dfa58318194427612058156a"
+    },
+    "lib/vendor/wasm": {
+      "files": 13,
+      "bytes": 1545074,
+      "sha256": "de18e58208c97794536ddfe4f7f9d8c5f22f7591d2661ccfa8bdcfd5ba73b6bf"
     }
   },
   "notices": [

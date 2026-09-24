@@ -1,4 +1,4 @@
-# dsh-pdf (alpha.2)
+# dsh-pdf (alpha.3)
 
 **PDF the agent can actually read and scan, and a real PDF reader in the right
 bar.**
@@ -9,8 +9,9 @@ five tools over a vendored pdf.js engine and a content-addressed page cache,
 including a **scanner** for the documents that are pictures of text - and, at the
 same time, the right bar's `pdf` tab type, which replaces the shipped bare PDF
 renderer for `*.pdf` with a reader that has zoom, page navigation, a selectable
-text layer, in-document search, and a one-click scan on every page that has no
-text layer.
+text layer, in-document search, **page thumbnails**, the document's **own
+bookmark outline**, and a one-click scan on every page that has no text layer.
+A second, small tab type (`pdfs`) lists **every PDF in the workspace**.
 
 **It is read-only.** There is no tool that modifies, merges, splits, rotates,
 fills or signs a PDF. `pdf_render` writes *new* PNG files; nothing in this
@@ -25,6 +26,9 @@ package can write to, move or delete a document.
 | `pdf_find` | Where does it mention X: literal or regex, with page, line and surrounding context |
 | `pdf_render` | What does this page LOOK like: page pictures through the host's own rasterizer, written as new PNGs |
 | `pdf_scan` | What do these SCANNED pages SAY: recognize the pages that are a picture of text (alpha.2) |
+
+(plus the **PDFs** index page, which lists the workspace's documents — that is a
+tab type, not a tool.)
 
 ### Why `layout` mode exists
 
@@ -96,6 +100,36 @@ In the reader, a page with no text layer says so under itself and offers **Scan
 this page**; the recognized text appears in a panel beneath the page, headed with
 the engine, language and resolution it came from.
 
+## The side panel: thumbnails, and the document's own outline (alpha.3)
+
+Two toolbar buttons open a panel beside the page column:
+
+- **Pages** — a thumbnail rail. Each thumbnail is drawn when the rail scrolls it
+  into view (`IntersectionObserver` rooted on the rail itself, so a thumbnail two
+  screens down never draws until it is nearly shown), at 104 px wide, and the
+  current page is marked. Past **300 pages** the rail says so rather than drawing
+  a thousand canvases; the page field and Find still reach the rest.
+- **Bookmarks** — the document's own outline, resolved in the browser through
+  `getOutline` / `getDestination` / `getPageIndex`, bounded to 200 entries and
+  four levels. Clicking an entry jumps to its page. A bookmark whose destination
+  cannot be resolved is shown disabled rather than dropped — a bookmark a reader
+  can see but not follow is still information — and a document with no bookmarks
+  says so instead of showing an empty panel.
+
+## The workspace index (alpha.3)
+
+The tab strip's **+** / Start page lists **PDFs** (after Files, Editor, History
+and Diagrams). That page shows every PDF in the conversation's workspace with its
+folder, size, modification date and — on request — its page count, and a row
+opens the document in the reader through the ordinary `openResource` action.
+
+It is backed by `GET /api/dsh-pdf/list`, and the walk is deliberately **timid**:
+depth 6, at most 200 files, a skip-list of `node_modules` / `.git` / `__pycache__`
+/ `.venv` / …, symlinks not followed, and `.pdf` only. Page counts are **opt-in
+and capped at 12 documents**, because reporting one means parsing the document —
+worth 12 files on a click, never worth doing for a directory nobody asked about.
+The index lists; it never becomes a way to browse the machine.
+
 ## How it plugs in
 
 | Piece | Value |
@@ -156,8 +190,8 @@ module import for the engine, a worker URL for the render worker.
 
 ## Routes
 
-Exact paths only, GET/HEAD only (the registry's own vocabulary), all behind the
-connection's authentication:
+Exact paths only, GET/HEAD/POST only (the registry's own vocabulary), all behind
+the connection's authentication:
 
 | Route | What it answers |
 |---|---|
@@ -165,15 +199,18 @@ connection's authentication:
 | `GET /api/dsh-pdf/health` | the same snapshot, for the tracked checks |
 | `GET /api/dsh-pdf/file` | one PDF's bytes for the tab (`?session=&path=`), with the content hash as `x-dsh-pdf-sha256` |
 | `POST /api/dsh-pdf/scan` | the reader's "scan this page" - the same pipeline `pdf_scan` drives. A capability refusal answers 200 with `{ok:false, reason, message}`, because a missing engine is a fact about this host and not a bad request |
+| `GET /api/dsh-pdf/list` | the workspace's PDFs for the index page (`?pages=1` adds page counts, capped at 12) |
 | `GET /api/dsh-pdf/vendor/pdf.min.mjs` | the vendored engine |
 | `GET /api/dsh-pdf/vendor/pdf.worker.min.mjs` | the render worker |
 | `GET /api/dsh-pdf/vendor/cmaps.json` | the CJK cMap tree as one base64 map |
 | `GET /api/dsh-pdf/vendor/standard-fonts.json` | the base-14 font tree as one base64 map |
+| `GET /api/dsh-pdf/vendor/wasm.json` | the image decoders (JBIG2 / JPEG2000 / colour profiles) as one base64 map |
 
-The two asset maps exist because the registry matches **exact paths only** -
-there is no wildcard - so serving pdf.js's 169 cMaps and 16 standard fonts file
-by file would have meant 185 registrations. One map per kind, fetched only when
-pdf.js asks for an asset of that kind, decoded per entry on demand.
+The three asset maps exist because the registry matches **exact paths only** -
+there is no wildcard - so serving pdf.js's 169 cMaps, 16 standard fonts and 13
+wasm decoders file by file would have meant 198 registrations. One map per kind,
+fetched only when pdf.js asks for an asset of that kind, decoded per entry on
+demand.
 
 ## Vendored engine
 
@@ -192,13 +229,14 @@ node packages/dsh-pdf/vendor/build.mjs --check   # drift check, part of the trac
 | `legacy/build/pdf.worker.min.mjs` | the browser's render worker |
 | `cmaps/` (169 files) | CID-keyed CJK documents: without them a Japanese or Chinese PDF extracts as replacement characters |
 | `standard_fonts/` (16 files) | documents relying on the base-14 fonts without embedding them |
-| `LICENSE` | pdf.js is Apache-2.0; the license travels with the bytes |
+| `wasm/` (13 files, alpha.3) | pdf.js's image decoders — **JBIG2** (the encoding faxes and many scanners produce), **OpenJPEG** (JPEG2000) and **qcms** (ISO colour profiles). Without them an exotic scanned page draws blank or partial, which for a reader is the worst kind of failure: it looks like the document. `quickjs-eval.wasm` rides along unused, because `isEvalSupported: false` is set on both halves |
+| `LICENSE` (+ the decoders' own licenses) | pdf.js is Apache-2.0 and the bundled decoders carry theirs; the licenses travel with the bytes |
 
 `VERSION.json` records every file's bytes and sha256 plus a digest over each
-tree, and `--check` recomputes all of it. `wasm/` (JPEG2000/JBIG2 decoders) is
-deliberately NOT vendored in alpha.1: it would only change how an exotic scanned
-page is *drawn* in the tab (rasterizing for OCR is the host engine's job), and it
-is the first thing alpha.3 adds if a real document needs it.
+tree, and `--check` recomputes all of it. The tree's TEXT files are pinned to LF
+in `.gitattributes`, because `--check` hashes those bytes and a Windows checkout
+would otherwise report phantom drift (the license files live *inside* the hashed
+trees, so converting them would change a tree digest too).
 
 ## How a document is read
 
@@ -251,6 +289,8 @@ cMap/standard-font trees addressed as `file://` URLs.
 | `pdf_info` inspection | every page up to 60; above that a 20-page sample, and the answer says it sampled |
 | `pdf_find` | 40 hits, up to 2000 pages, 45 s wall-clock budget - and the answer says what it did not search |
 | `pdf_scan` | 10 pages per call, 50-400 dpi (default 200), psm 0-13 (default 3), one language tag or several joined with `+`; the answer names the pages it left |
+| workspace index | depth 6, 200 files, page counts for 12 documents on request; a skip-list keeps the walk out of `node_modules` and friends |
+| reader panel | thumbnails for the first 300 pages; 200 outline entries over 4 levels |
 | cache | 512 MiB, LRU |
 
 ## Model experience
@@ -279,9 +319,10 @@ node packages/dsh-pdf/vendor/build.mjs --check
 
 `check-pdf-node.mjs` builds its own PDFs (a two-page report with a labelled
 value, a one-page scan that is one image and no text, a twelve-page document for
-the per-call caps, and a truncated copy), so it needs no TeX, no poppler and no
-network; where this host does have a rasterizer it also drives a real
-`pdf_render` and checks the PNG's dimensions and the create-exclusive naming.
+the per-call caps, one nested in a subfolder and one inside `node_modules`, and a
+truncated copy), so it needs no TeX, no poppler and no network; where this host
+does have a rasterizer it also drives a real `pdf_render` and checks the PNG's
+dimensions and the create-exclusive naming.
 
 **The scanner is verified in two halves, and that is deliberate.** The `pdf_scan`
 tool is driven exactly as the agent drives it - which, on a host without
@@ -299,12 +340,16 @@ names the pages it left.
 
 - **alpha.1**: the reader tab, `pdf_info` / `pdf_read` / `pdf_find` /
   `pdf_render`, the vendored engine, the cache, the skill.
-- **alpha.2** (this release): `pdf_scan` - image-only page detection, rasterize,
-  OCR through optional host engines with graceful absence, per-page caching under
-  every input that can change the result, and a page that says it is a scan and
-  offers to scan itself in the reader.
-- **alpha.3**: thumbnails, the outline/bookmark panel, a workspace PDF index page
-  (its own guide entry on the Start page), and the `wasm/` image decoders.
+- **alpha.2**: `pdf_scan` - image-only page detection, rasterize, OCR through
+  optional host engines with graceful absence, per-page caching under every input
+  that can change the result, and a page that says it is a scan and offers to
+  scan itself in the reader.
+- **alpha.3** (this release): the side panel (thumbnail rail + the document's own
+  bookmark outline), the **PDFs** workspace index page with its own Start-page
+  entry, and the `wasm/` image decoders.
+- **Next**: whatever the documents you actually read turn out to need — a
+  structured table extractor, per-page OCR of a whole document in one call, or an
+  export of a recognized document as Markdown are the obvious candidates.
 
 ## Install
 

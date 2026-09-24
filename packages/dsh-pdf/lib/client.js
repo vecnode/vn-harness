@@ -58,17 +58,25 @@ window.__ModuleLoader__.load({
     const TYPE_ID = 'dsh-pdf'
     /** The tab kind this package owns. */
     const KIND = 'pdf'
+    /** The workspace PDF index: its own page type, address and seats. */
+    const INDEX_ID = 'dsh-pdf-index'
+    const INDEX_KIND = 'pdfs'
+    const INDEX_ADDRESS = 'sidebar://' + INDEX_KIND
+    /** The address shape a page-address tab is opened with. */
+    const PAGE_PREFIX = 'sidebar://'
     /** Version marker shown in the toolbar, so a loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.2'
+    const PLUGIN_VERSION = '0.1.0-alpha.3'
     /** Keep in sync with lib/index.js. */
     const API_ROOT = '/api/dsh-pdf'
     const FILE_ROUTE = API_ROOT + '/file'
     const STATE_ROUTE = API_ROOT + '/state'
     const SCAN_ROUTE = API_ROOT + '/scan'
+    const LIST_ROUTE = API_ROOT + '/list'
     const VENDOR_ENGINE = API_ROOT + '/vendor/pdf.min.mjs'
     const VENDOR_WORKER = API_ROOT + '/vendor/pdf.worker.min.mjs'
     const VENDOR_CMAPS = API_ROOT + '/vendor/cmaps.json'
     const VENDOR_FONTS = API_ROOT + '/vendor/standard-fonts.json'
+    const VENDOR_WASM = API_ROOT + '/vendor/wasm.json'
     /** Address grammar owned by @deepseek-ai/dsh-util-workspace-path. */
     const FILE_PREFIX = 'dsh-resource://file/'
     const PDF_PREFIX = 'dsh-resource://pdf/'
@@ -117,6 +125,36 @@ window.__ModuleLoader__.load({
 .dpf-hits{flex:none;font-size:11.5px;color:var(--dsw-alias-label-tertiary,#999);min-width:52px;text-align:right;font-variant-numeric:tabular-nums}
 .dpf-ver{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary,#999);opacity:.75;white-space:nowrap}
 .dpf-scroll{flex:1;min-height:0;overflow:auto;position:relative;background:var(--dsw-alias-bg-l1,rgba(127,127,127,.07));overscroll-behavior:contain}
+/* The reader's own body: the side panel and the scrolling page column. */
+.dpf-body{flex:1;min-height:0;display:flex;flex-direction:row;overflow:hidden}
+.dpf-side{flex:none;width:190px;min-width:0;display:flex;flex-direction:column;border-right:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.18));background:var(--dsw-alias-bg-l1,rgba(127,127,127,.04))}
+.dpf-sideHead{flex:none;display:flex;align-items:center;gap:6px;height:32px;box-sizing:border-box;padding:0 6px 0 10px;border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.14))}
+.dpf-sideTitle{font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary,#666)}
+.dpf-sideBody{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:8px}
+.dpf-sideNote{padding:10px 12px;font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#999)}
+.dpf-thumb{flex:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px;border:.5px solid transparent;border-radius:6px;background:transparent;cursor:pointer;font:inherit}
+.dpf-thumb:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dpf-thumb[data-current="true"]{border-color:var(--dsw-alias-state-business-primary,#4f8cff);background:var(--dsw-alias-interactive-bg-hover,rgba(79,140,255,.1))}
+.dpf-thumbCanvas{display:block;background:#fff;box-shadow:0 0 0 .5px rgba(0,0,0,.15)}
+.dpf-thumbBox{display:block;background:rgba(127,127,127,.14);border-radius:2px}
+.dpf-thumbLabel{font-size:10.5px;color:var(--dsw-alias-label-tertiary,#999);font-variant-numeric:tabular-nums}
+.dpf-outlineRow{width:100%;min-width:0;display:flex;align-items:baseline;gap:8px;padding:4px 8px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary,#1f1f1f);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+.dpf-outlineRow:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dpf-outlineRow:disabled{opacity:.6;cursor:default}
+.dpf-outlineTitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dpf-outlinePage{flex:none;font-size:10.5px;color:var(--dsw-alias-label-tertiary,#999);font-variant-numeric:tabular-nums}
+/* The workspace PDF index (its own page tab type). */
+.dpf-index{height:100%;min-height:0;flex:auto;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;color:var(--dsw-alias-label-primary,#1f1f1f);font-size:13px}
+.dpf-indexCount{font-size:12px;color:var(--dsw-alias-label-secondary,#666)}
+.dpf-indexNote{flex:none;padding:6px 12px;font-size:11.5px;color:var(--dsw-alias-label-tertiary,#999);border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.14))}
+.dpf-indexBody{flex:1;min-height:0;overflow:auto;padding:6px 6px 18px 6px}
+.dpf-indexRow{width:100%;min-width:0;display:flex;align-items:center;gap:8px;padding:6px 8px;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.dpf-indexRow:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.1))}
+.dpf-indexName{flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;overflow:hidden}
+.dpf-indexBase{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,'Cascadia Code',Consolas,monospace;font-size:12px}
+.dpf-indexDir{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary,#999);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%}
+.dpf-indexMeta{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary,#999);white-space:nowrap;font-variant-numeric:tabular-nums}
+.dpf-indexPages{min-width:58px;text-align:right}
 .dpf-scroll[data-panning="true"]{cursor:grabbing}
 .dpf-pages{display:flex;flex-direction:column;align-items:center;gap:14px;padding:14px 14px 40px 14px;min-width:min-content}
 /* The page box carries the pdf.js text-layer scale variables: pdf.js reads
@@ -275,7 +313,7 @@ window.__ModuleLoader__.load({
     /** One asset map, fetched from this plugin's route on first use. */
     async function assetMap(kind) {
       if (assetMaps.has(kind)) return assetMaps.get(kind)
-      const route = kind === 'cMapUrl' ? VENDOR_CMAPS : kind === 'standardFontDataUrl' ? VENDOR_FONTS : null
+      const route = kind === 'cMapUrl' ? VENDOR_CMAPS : kind === 'standardFontDataUrl' ? VENDOR_FONTS : kind === 'wasmUrl' ? VENDOR_WASM : null
       const promise = (async () => {
         if (route === null) return {}
         const response = await fetch(route, { credentials: 'same-origin' })
@@ -457,6 +495,8 @@ window.__ModuleLoader__.load({
       up: ['M8 12.5V3.5', 'M4.5 7 8 3.5 11.5 7'],
       down: ['M8 3.5v9', 'M4.5 9 8 12.5 11.5 9'],
       reload: ['M13 8a5 5 0 1 1-1.5-3.6', 'M13 2.4V5h-2.6'],
+      pages: ['M2.5 2.5h4v11h-4z', 'M9.5 2.5h4v11h-4z'],
+      list: ['M3 4h1.5', 'M6.5 4h7', 'M3 8h1.5', 'M6.5 8h7', 'M3 12h1.5', 'M6.5 12h7'],
     }
 
     /** One toolbar button. */
@@ -729,6 +769,216 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------------------
+    // The reader's side panel: thumbnails, and the document's own outline
+    // ---------------------------------------------------------------------
+    /** Thumbnails are drawn lazily; past this many pages the rail says so. */
+    const THUMB_MAX = 300
+    /** The thumbnail rail's canvas width, in CSS pixels. */
+    const THUMB_WIDTH = 104
+    /** How many outline entries are resolved and shown. */
+    const OUTLINE_MAX = 200
+    /** How deep the outline is walked. */
+    const OUTLINE_MAX_DEPTH = 4
+
+    /**
+     * Resolve a document's bookmarks to 1-based page numbers.
+     *
+     * pdf.js hands back destinations as named strings or explicit arrays, and
+     * only `getDestination` + `getPageIndex` turn one into a page. An entry whose
+     * destination cannot be resolved keeps `page: null` rather than being
+     * dropped: a bookmark a reader can see but not jump to is still information.
+     * Bounded, because a generated outline can be enormous.
+     */
+    async function loadOutline(doc) {
+      let raw
+      try {
+        raw = await doc.getOutline()
+      } catch (err) {
+        return { entries: [], error: 'The bookmarks of this document could not be read.' }
+      }
+      if (!raw || raw.length === 0) return { entries: [], error: '' }
+      const entries = []
+      const walk = async (list, depth) => {
+        for (const entry of list) {
+          if (entries.length >= OUTLINE_MAX) return
+          let page = null
+          try {
+            const dest = typeof entry.dest === 'string' ? await doc.getDestination(entry.dest) : entry.dest
+            if (Array.isArray(dest) && dest.length > 0) page = (await doc.getPageIndex(dest[0])) + 1
+          } catch (err) {
+            page = null
+          }
+          entries.push({ title: String(entry.title ?? ''), page, depth })
+          if (Array.isArray(entry.items) && entry.items.length > 0 && depth < OUTLINE_MAX_DEPTH) await walk(entry.items, depth + 1)
+        }
+      }
+      try {
+        await walk(raw, 0)
+      } catch (err) {
+        return { entries, error: 'Some bookmarks could not be resolved.' }
+      }
+      return { entries, error: '' }
+    }
+
+    /**
+     * One thumbnail: a canvas drawn when the rail scrolls it into view.
+     *
+     * Deliberately NOT the page component: a thumbnail is a picture, has no text
+     * layer, keeps no scroll state and is never zoomed, so sharing the page's
+     * machinery would only make both slower.
+     */
+    function Thumb(props) {
+      const { doc, pageNumber, current, onPick } = props
+      const boxRef = useRef(null)
+      const canvasRef = useRef(null)
+      const [size, setSize] = useState(null)
+      const [visible, setVisible] = useState(false)
+      const [failed, setFailed] = useState(false)
+      const drawn = useRef(false)
+
+      useEffect(() => {
+        const element = boxRef.current
+        if (!element || typeof IntersectionObserver !== 'function') {
+          setVisible(true)
+          return undefined
+        }
+        const observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) if (entry.isIntersecting) setVisible(true)
+          },
+          // The rail is the scroll container, so it is the observer's root: a
+          // thumbnail two screens down must not draw until it is nearly shown.
+          { root: element.closest('.dpf-side') ?? null, rootMargin: '300px 0px' },
+        )
+        observer.observe(element)
+        return () => observer.disconnect()
+      }, [])
+
+      useEffect(() => {
+        if (!visible || drawn.current || !doc) return undefined
+        let cancelled = false
+        let task = null
+        ;(async () => {
+          try {
+            const page = await doc.getPage(pageNumber)
+            if (cancelled) return
+            const base = page.getViewport({ scale: 1 })
+            const scale = THUMB_WIDTH / base.width
+            const viewport = page.getViewport({ scale })
+            const canvas = canvasRef.current
+            if (!canvas) return
+            const ratio = Math.min(2, Math.max(1, window.devicePixelRatio || 1))
+            canvas.width = Math.floor(viewport.width * ratio)
+            canvas.height = Math.floor(viewport.height * ratio)
+            canvas.style.width = Math.floor(viewport.width) + 'px'
+            canvas.style.height = Math.floor(viewport.height) + 'px'
+            setSize({ width: viewport.width, height: viewport.height })
+            task = page.render({
+              canvasContext: canvas.getContext('2d', { alpha: false }),
+              viewport,
+              transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0],
+            })
+            await task.promise
+            if (!cancelled) drawn.current = true
+          } catch (err) {
+            if (!cancelled && !(err && err.name === 'RenderingCancelledException')) setFailed(true)
+          }
+        })()
+        return () => {
+          cancelled = true
+          if (task && typeof task.cancel === 'function') {
+            try {
+              task.cancel()
+            } catch (err) {
+              /* already finished */
+            }
+          }
+        }
+      }, [visible, doc, pageNumber])
+
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: 'dpf-thumb',
+          ref: boxRef,
+          'data-pdf-thumb': String(pageNumber),
+          'data-current': current ? 'true' : undefined,
+          title: 'Page ' + pageNumber,
+          onClick: () => onPick(pageNumber),
+        },
+        visible
+          ? h('canvas', { ref: canvasRef, className: 'dpf-thumbCanvas' })
+          : h('span', { className: 'dpf-thumbBox', style: { width: THUMB_WIDTH + 'px', height: Math.round(THUMB_WIDTH * 1.294) + 'px' } }),
+        h('span', { className: 'dpf-thumbLabel' }, failed ? String(pageNumber) + ' \u26a0' : String(pageNumber)),
+      )
+    }
+
+    /** The thumbnail rail. */
+    function ThumbRail(props) {
+      const { doc, pageCount, current, onPick } = props
+      const shown = Math.min(pageCount, THUMB_MAX)
+      const thumbs = []
+      for (let number = 1; number <= shown; number += 1) {
+        thumbs.push(h(Thumb, { key: number, doc, pageNumber: number, current: number === current, onPick }))
+      }
+      return h(
+        'div',
+        { className: 'dpf-sideBody', 'data-pdf-rail': 'pages' },
+        ...thumbs,
+        pageCount > shown
+          ? h('div', { className: 'dpf-sideNote' }, 'Thumbnails stop at ' + shown + ' pages (this document has ' + pageCount + '). Use the page field or Find to reach the rest.')
+          : null,
+      )
+    }
+
+    /** The document's own outline, or why there is none. */
+    function OutlinePanel(props) {
+      const { doc, onPick } = props
+      const [state, setState] = useState({ phase: 'loading', entries: [], error: '' })
+      useEffect(() => {
+        let cancelled = false
+        setState({ phase: 'loading', entries: [], error: '' })
+        ;(async () => {
+          const found = await loadOutline(doc)
+          if (!cancelled) setState({ phase: 'ready', entries: found.entries, error: found.error })
+        })()
+        return () => {
+          cancelled = true
+        }
+      }, [doc])
+      if (state.phase === 'loading') return h('div', { className: 'dpf-sideNote' }, 'Reading the bookmarks\u2026')
+      if (state.entries.length === 0) {
+        return h(
+          'div',
+          { className: 'dpf-sideNote', 'data-pdf-outline': 'none' },
+          state.error !== '' ? state.error : 'This document has no bookmarks. Its pages are the only way in \u2014 use the page field, Find, or the thumbnails.',
+        )
+      }
+      return h(
+        'div',
+        { className: 'dpf-sideBody', 'data-pdf-outline': String(state.entries.length) },
+        ...state.entries.map((entry, index) =>
+          h(
+            'button',
+            {
+              key: index,
+              type: 'button',
+              className: 'dpf-outlineRow',
+              style: { paddingLeft: 8 + entry.depth * 12 + 'px' },
+              title: entry.page ? entry.title + ' (page ' + entry.page + ')' : entry.title,
+              disabled: entry.page === null,
+              onClick: () => (entry.page ? onPick(entry.page) : undefined),
+            },
+            h('span', { className: 'dpf-outlineTitle' }, entry.title === '' ? '(untitled)' : entry.title),
+            entry.page ? h('span', { className: 'dpf-outlinePage' }, String(entry.page)) : null,
+          ),
+        ),
+        state.error !== '' ? h('div', { className: 'dpf-sideNote' }, state.error) : null,
+      )
+    }
+
+    // ---------------------------------------------------------------------
     // The reader
     // ---------------------------------------------------------------------
     /**
@@ -748,6 +998,8 @@ window.__ModuleLoader__.load({
       const [rotation, setRotation] = useState(0)
       const [page, setPage] = useState(1)
       const [pageInput, setPageInput] = useState('1')
+      /** Which side panel is open: the thumbnail rail, the outline, or none. */
+      const [side, setSide] = useState(null)
       const [query, setQuery] = useState('')
       const [search, setSearch] = useState(null)
       const [searchBusy, setSearchBusy] = useState(false)
@@ -1087,24 +1339,44 @@ window.__ModuleLoader__.load({
             ),
           ),
           h('span', { className: 'dpf-spacer' }),
+          h(ToolButton, { icon: 'pages', title: 'Show page thumbnails', active: side === 'pages', onClick: () => setSide((current) => (current === 'pages' ? null : 'pages')), action: 'side-pages' }),
+          h(ToolButton, { icon: 'list', title: 'Show this document\u2019s bookmarks', active: side === 'outline', onClick: () => setSide((current) => (current === 'outline' ? null : 'outline')), action: 'side-outline' }),
           h('span', { className: 'dpf-scope', title: scopeLabel }, name),
           h('span', { className: 'dpf-ver' }, PLUGIN_VERSION),
         ),
         h(
           'div',
-          {
-            className: 'dpf-scroll',
-            ref: scrollRef,
-            tabIndex: 0,
-            onScroll,
-            onKeyDown,
-            onPointerDown,
-            onPointerMove,
-            onPointerUp: endPan,
-            onPointerLeave: endPan,
-            'data-panning': panning ? 'true' : 'false',
-          },
-          h('div', { className: 'dpf-pages' }, ...pages),
+          { className: 'dpf-body', 'data-pdf-side': side ?? 'none' },
+          side === null
+            ? null
+            : h(
+                'div',
+                { className: 'dpf-side', 'data-pdf-side-kind': side },
+                h(
+                  'div',
+                  { className: 'dpf-sideHead' },
+                  h('span', { className: 'dpf-sideTitle' }, side === 'pages' ? 'Pages' : 'Bookmarks'),
+                  h('span', { className: 'dpf-spacer' }),
+                  h(ToolButton, { action: 'side-close', title: 'Hide this panel', onClick: () => setSide(null) }, 'Hide'),
+                ),
+                side === 'pages' ? h(ThumbRail, { doc, pageCount, current: page, onPick: goToPage }) : h(OutlinePanel, { doc, onPick: goToPage }),
+              ),
+          h(
+            'div',
+            {
+              className: 'dpf-scroll',
+              ref: scrollRef,
+              tabIndex: 0,
+              onScroll,
+              onKeyDown,
+              onPointerDown,
+              onPointerMove,
+              onPointerUp: endPan,
+              onPointerLeave: endPan,
+              'data-panning': panning ? 'true' : 'false',
+            },
+            h('div', { className: 'dpf-pages' }, ...pages),
+          ),
         ),
       )
     }
@@ -1148,7 +1420,10 @@ window.__ModuleLoader__.load({
               BinaryDataFactory: MapBinaryDataFactory,
               cMapUrl: VENDOR_CMAPS,
               standardFontDataUrl: VENDOR_FONTS,
-              wasmUrl: null,
+              // The WASM image decoders (JBIG2 / JPEG2000 / colour profiles). The
+              // factory serves them from one map, exactly like the cMaps, and
+              // pdf.js asks only when a page actually carries such an image.
+              wasmUrl: VENDOR_WASM,
               ...(passwordRef.current !== '' ? { password: passwordRef.current } : {}),
             })
             task.onPassword = (updatePassword, reason) => {
@@ -1429,6 +1704,178 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------------------
+    // The workspace PDF index
+    // ---------------------------------------------------------------------
+    /** Human bytes, for the index rows. */
+    function humanBytes(bytes) {
+      if (!Number.isFinite(bytes)) return ''
+      if (bytes < 1024) return bytes + ' B'
+      if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KiB'
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+    }
+
+    /** A short date, or nothing when the mtime is unusable. */
+    function shortDate(ms) {
+      if (!Number.isFinite(ms)) return ''
+      try {
+        return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+      } catch (err) {
+        return ''
+      }
+    }
+
+    /**
+     * The index page: every PDF in this conversation's workspace.
+     *
+     * It reads the list from this plugin's own route (bounded depth, file count
+     * and page counting - see `listWorkspacePdfs`), and a row opens the document
+     * through the ordinary `openResource` action, so whatever claims a PDF
+     * address claims it: this package's reader.
+     *
+     * Requests are guarded by a `useRef` token rather than an effect cleanup, the
+     * pack's rule for a panel that can be reloaded mid-flight: an answer is
+     * applied only while it is still the newest one.
+     */
+    function PdfIndexBody(props) {
+      const sessionId = props.sessionId ?? ''
+      const [state, setState] = useState({ phase: 'loading', files: [], error: '', truncated: false, counted: 0 })
+      const [note, setNote] = useState('')
+      const token = useRef(0)
+
+      const load = useCallback(
+        async (withPages) => {
+          const mine = token.current + 1
+          token.current = mine
+          setNote('')
+          setState((current) => ({ ...current, phase: current.files.length > 0 ? 'ready' : 'loading', error: '' }))
+          let response
+          try {
+            response = await fetch(LIST_ROUTE + '?session=' + encodeURIComponent(sessionId) + (withPages ? '&pages=1' : ''), { credentials: 'same-origin' })
+          } catch (err) {
+            if (token.current === mine) setState({ phase: 'error', files: [], error: 'The workspace could not be read: ' + (err && err.message ? err.message : String(err)), truncated: false, counted: 0 })
+            return
+          }
+          const answer = await response.json().catch(() => null)
+          if (token.current !== mine) return
+          if (!answer || answer.ok !== true) {
+            const message = answer && answer.error && answer.error.message ? answer.error.message : 'The list could not be read (HTTP ' + response.status + ').'
+            setState({ phase: 'error', files: [], error: message, truncated: false, counted: 0 })
+            return
+          }
+          setState({ phase: 'ready', files: answer.files ?? [], error: '', truncated: answer.truncated === true, counted: answer.counted ?? 0 })
+          if (withPages) {
+            const counted = (answer.files ?? []).filter((file) => Number.isFinite(file.pages)).length
+            setNote(counted === 0 ? 'No page counts were available (a PDF may be locked or damaged).' : 'Page counts read for ' + counted + ' document(s).')
+          }
+        },
+        [sessionId],
+      )
+
+      useEffect(() => {
+        load(false)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [load])
+
+      const open = useCallback(
+        (address) => {
+          const controller = sidebarRightNow()
+          if (!controller) {
+            setNote('The right bar is not mounted.')
+            return
+          }
+          try {
+            controller.openResource(address)
+          } catch (err) {
+            setNote(err && err.message ? err.message : 'could not open that PDF')
+          }
+        },
+        [],
+      )
+
+      const files = state.files
+      return h(
+        'div',
+        { className: 'dpf-index', 'data-pdf-index': INDEX_ADDRESS },
+        h(
+          'div',
+          { className: 'dpf-tools' },
+          h('span', { className: 'dpf-indexCount', 'data-pdf-index-count': String(files.length) }, files.length === 1 ? '1 PDF' : files.length + ' PDFs'),
+          h('span', { className: 'dpf-spacer' }),
+          h(ToolButton, { icon: 'reload', title: 'Read the workspace again', onClick: () => load(false), action: 'index-reload' }, 'Refresh'),
+          h(
+            ToolButton,
+            {
+              action: 'index-count',
+              title: 'Open each PDF to report its page count (at most 12, and cached afterwards)',
+              onClick: () => load(true),
+              disabled: state.phase === 'loading',
+            },
+            'Count pages',
+          ),
+          h('span', { className: 'dpf-ver' }, PLUGIN_VERSION),
+        ),
+        note !== '' ? h('div', { className: 'dpf-indexNote' }, note) : null,
+        state.phase === 'error'
+          ? h(
+              'div',
+              { className: 'dpf-state', 'data-pdf-index-state': 'error' },
+              h(PdfGlyph, { size: 26 }),
+              h('div', { className: 'dpf-stateTitle' }, 'The workspace could not be read'),
+              h('div', { className: 'dpf-stateErr' }, state.error),
+            )
+          : state.phase === 'loading'
+            ? h('div', { className: 'dpf-state', 'data-pdf-index-state': 'loading' }, h('div', { className: 'dpf-stateTitle' }, 'Reading the workspace\u2026'))
+            : files.length === 0
+              ? h(
+                  'div',
+                  { className: 'dpf-state', 'data-pdf-index-state': 'empty' },
+                  h(PdfGlyph, { size: 26 }),
+                  h('div', { className: 'dpf-stateTitle' }, 'No PDFs in this workspace'),
+                  h('div', { className: 'dpf-note' }, 'Drop one into the conversation folder (or attach it to the chat and open it by its absolute path) and it will appear here.'),
+                )
+              : h(
+                  'div',
+                  { className: 'dpf-indexBody' },
+                  ...files.map((file) =>
+                    h(
+                      'button',
+                      {
+                        key: file.path,
+                        type: 'button',
+                        className: 'dpf-indexRow',
+                        'data-pdf-index-row': file.path,
+                        title: file.path,
+                        onClick: () => open(file.address),
+                      },
+                      h(PdfGlyph, { size: 15 }),
+                      h(
+                        'span',
+                        { className: 'dpf-indexName' },
+                        h('span', { className: 'dpf-indexBase' }, file.name),
+                        file.path.includes('/') ? h('span', { className: 'dpf-indexDir' }, file.path.slice(0, file.path.lastIndexOf('/')) + '/') : null,
+                      ),
+                      h('span', { className: 'dpf-indexMeta' }, humanBytes(file.bytes)),
+                      h(
+                        'span',
+                        { className: 'dpf-indexMeta dpf-indexPages' },
+                        file.tooLarge ? 'too large' : Number.isFinite(file.pages) ? String(file.pages) + ' pages' : '\u2014',
+                      ),
+                      h('span', { className: 'dpf-indexMeta' }, shortDate(file.mtimeMs)),
+                    ),
+                  ),
+                  state.truncated
+                    ? h('div', { className: 'dpf-indexNote' }, 'The list stops at ' + files.length + ' documents; this workspace has more. Open the Files tab to see everything.')
+                    : null,
+                ),
+      )
+    }
+
+    /** The chip of the index tab. */
+    function PdfIndexTitle() {
+      return h('span', { className: 'dpf-title' }, 'PDFs')
+    }
+
+    // ---------------------------------------------------------------------
     // The tab type
     // ---------------------------------------------------------------------
     /**
@@ -1448,6 +1895,27 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * The index type: a PAGE type (`sidebar://pdfs`, no `patterns`), exactly like
+     * History and Diagrams, so it never competes for a file address.
+     */
+    function pdfIndexDefinition() {
+      return {
+        id: INDEX_ID,
+        kind: INDEX_KIND,
+        priority: 'builtin',
+        title: () => 'PDFs',
+        guide: [
+          {
+            order: 50,
+            title: () => 'PDFs',
+            description: () => 'Every PDF in this workspace',
+            icon: PdfGlyph,
+          },
+        ],
+      }
+    }
+
     // ---------------------------------------------------------------------
     // Plugin entry
     // ---------------------------------------------------------------------
@@ -1462,6 +1930,7 @@ window.__ModuleLoader__.load({
       pluginCtx = ctx
       try {
         ctx.effect(() => ctx.sidebarRightTabs.register(pdfDefinition()), 'dsh-pdf: pdf tab type')
+        ctx.effect(() => ctx.sidebarRightTabs.register(pdfIndexDefinition()), 'dsh-pdf: pdf index tab type')
         ctx.effect(
           () =>
             ctx.slots.inject(TAB_SLOT, () =>
@@ -1473,6 +1942,18 @@ window.__ModuleLoader__.load({
           () =>
             ctx.slots.inject(TITLE_SLOT, () => ctx.slots.register({ name: TITLE_SLOT, key: TYPE_ID }, PdfTitle)),
           'dsh-pdf: pdf tab title',
+        )
+        ctx.effect(
+          () =>
+            ctx.slots.inject(TAB_SLOT, () =>
+              ctx.slots.register({ name: TAB_SLOT, key: INDEX_ID, inject: () => ({}) }, PdfIndexBody),
+            ),
+          'dsh-pdf: index tab body',
+        )
+        ctx.effect(
+          () =>
+            ctx.slots.inject(TITLE_SLOT, () => ctx.slots.register({ name: TITLE_SLOT, key: INDEX_ID }, PdfIndexTitle)),
+          'dsh-pdf: index tab title',
         )
         for (const toolName of TOOL_NAMES) {
           ctx.effect(

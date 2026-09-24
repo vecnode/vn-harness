@@ -79,6 +79,7 @@ const HEALTH_ROUTE = API_ROOT + '/health'
 const STATE_ROUTE = API_ROOT + '/state'
 const FILE_ROUTE = API_ROOT + '/file'
 const SCAN_ROUTE = API_ROOT + '/scan'
+const LIST_ROUTE = API_ROOT + '/list'
 const VENDOR_ROUTE = API_ROOT + '/vendor'
 
 /** Refuse anything larger: a PDF is read into memory to be parsed. */
@@ -101,6 +102,13 @@ const FIND_BUDGET_MS = 45_000
 const FIND_MAX_PAGES = 2_000
 /** How many pages `pdf_scan` inspects when no range is given and none is cached. */
 const SCAN_PROBE_PAGES = 20
+/** The workspace index: how many PDFs it lists, how deep it looks, and how many
+ *  of them it opens just to report a page count. */
+const LIST_MAX_FILES = 200
+const LIST_MAX_DEPTH = 6
+const LIST_PAGE_COUNT_FILES = 12
+/** Directory names the workspace index never descends into. */
+const LIST_SKIP_DIRECTORIES = new Set(['node_modules', '.git', '.svn', '.hg', '__pycache__', '.venv', 'venv', '.next', '.cache'])
 
 /** The bundled skill, as a file beside this module. */
 const SKILL_FILES = [{ name: 'pdf-analysis', file: '../skills/pdf-analysis/SKILL.md' }]
@@ -1355,6 +1363,88 @@ async function resolveOutputDir(ctx, session, requested) {
 }
 
 // ---------------------------------------------------------------------------
+// The workspace index
+// ---------------------------------------------------------------------------
+/**
+ * Every PDF in one conversation's workspace, bounded.
+ *
+ * The walk is deliberately timid: a fixed depth, a fixed file count, a small
+ * skip-list of directories no PDF lives in, and no following of anything
+ * unusual (a symlinked directory is skipped rather than trusted, because the
+ * index is a convenience and never an authority - opening a file re-validates
+ * it through the same `resolveTarget` every other read uses).
+ *
+ * Page counts are OPT-IN and capped: reporting one means parsing the document
+ * (a child process each), which is worth 12 files on a click and never worth
+ * doing for a directory nobody asked about.
+ *
+ * @param root - the realpath'd workspace root.
+ * @param options - `{ withPages, reader, signal }`.
+ * @returns `{ files, truncated }`.
+ */
+async function listWorkspacePdfs(root, { withPages = false, reader, signal } = {}) {
+  const found = []
+  let truncated = false
+  const visit = async (dir, depth) => {
+    if (truncated) return
+    let entries
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true })
+    } catch (err) {
+      return
+    }
+    for (const entry of entries) {
+      if (truncated) return
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (depth >= LIST_MAX_DEPTH || LIST_SKIP_DIRECTORIES.has(entry.name)) continue
+        await visit(full, depth + 1)
+        continue
+      }
+      // A symlink is not followed here: the index lists what is really there.
+      if (!entry.isFile()) continue
+      if (extensionOf(entry.name) !== 'pdf') continue
+      if (found.length >= LIST_MAX_FILES) {
+        truncated = true
+        return
+      }
+      let stats
+      try {
+        stats = await fsp.stat(full)
+      } catch (err) {
+        continue
+      }
+      found.push({
+        path: path.relative(root, full).split(path.sep).join('/'),
+        bytes: stats.size,
+        mtimeMs: stats.mtimeMs,
+        tooLarge: stats.size > MAX_PDF_BYTES,
+        pages: null,
+      })
+    }
+  }
+  await visit(root, 0)
+
+  if (withPages) {
+    let counted = 0
+    for (const file of found) {
+      if (counted >= LIST_PAGE_COUNT_FILES) break
+      if (file.tooLarge) continue
+      counted += 1
+      try {
+        const facts = await reader.facts(path.resolve(root, ...file.path.split('/')), { signal })
+        if (facts.ok) file.pages = facts.doc.numPages
+      } catch (err) {
+        /* a document that will not parse keeps pages: null */
+      }
+      if (signal && signal.aborted) break
+    }
+    return { files: found, truncated, counted }
+  }
+  return { files: found, truncated, counted: 0 }
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 /** Cache of the browser-facing asset maps (cMaps and standard fonts). */
@@ -1416,7 +1506,7 @@ async function assetMap(kind) {
 }
 
 /** The vendored assets the browser asks for, each an EXACT route of its own. */
-const VENDOR_ASSETS = ['pdf.min.mjs', 'pdf.worker.min.mjs', 'standard-fonts.json', 'cmaps.json']
+const VENDOR_ASSETS = ['pdf.min.mjs', 'pdf.worker.min.mjs', 'standard-fonts.json', 'cmaps.json', 'wasm.json']
 
 /** One response for a fixed vendored asset name. */
 async function serveVendorAsset(request, name) {
@@ -1426,6 +1516,9 @@ async function serveVendorAsset(request, name) {
     asset = { bytes: map.body, type: 'application/json; charset=utf-8', etag: map.etag }
   } else if (name === 'cmaps.json') {
     const map = await assetMap('cmaps')
+    asset = { bytes: map.body, type: 'application/json; charset=utf-8', etag: map.etag }
+  } else if (name === 'wasm.json') {
+    const map = await assetMap('wasm')
     asset = { bytes: map.body, type: 'application/json; charset=utf-8', etag: map.etag }
   } else {
     asset = await vendoredFile(name)
@@ -1466,6 +1559,9 @@ function snapshot(deps, ocrLanguages) {
       scanDpi: SCAN_DPI,
       scanPsm: DEFAULT_PSM,
       scanLang: DEFAULT_LANG,
+      listMaxFiles: LIST_MAX_FILES,
+      listMaxDepth: LIST_MAX_DEPTH,
+      listPageCountFiles: LIST_PAGE_COUNT_FILES,
     },
     tools: ['pdf_info', 'pdf_read', 'pdf_find', 'pdf_render', 'pdf_scan'],
   }
@@ -1539,6 +1635,43 @@ export function registerRoutes(ctx, deps) {
     headers.etag = '"' + createHash('sha256').update(bytes).digest('hex').slice(0, 32) + '"'
     headers['x-dsh-pdf-sha256'] = createHash('sha256').update(bytes).digest('hex')
     return new Response(bytes, { status: 200, headers })
+  })
+
+  /**
+   * The workspace's PDFs, for the index page. Same authority as every other
+   * read: a session or an explicit profile, resolved through `sessionRoot`, and
+   * the answer is relative paths inside that workspace - never a way to browse
+   * the machine.
+   */
+  register(LIST_ROUTE, ['GET', 'HEAD'], async (request) => {
+    const url = new URL(request.url)
+    const session = url.searchParams.get('session') ?? ''
+    const root = await sessionRoot(ctx, session)
+    let rootReal
+    try {
+      rootReal = await fsp.realpath(path.resolve(root))
+    } catch (err) {
+      throw httpError(409, 'NO_WORKSPACE', 'The workspace folder for this conversation is not readable.')
+    }
+    const withPages = url.searchParams.get('pages') === '1'
+    const listed = await listWorkspacePdfs(rootReal, { withPages, reader: deps.reader })
+    return json(200, {
+      ok: true,
+      root: rootReal,
+      truncated: listed.truncated,
+      counted: listed.counted,
+      maxFiles: LIST_MAX_FILES,
+      maxDepth: LIST_MAX_DEPTH,
+      files: listed.files.map((file) => ({
+        path: file.path,
+        name: path.basename(file.path),
+        bytes: file.bytes,
+        mtimeMs: file.mtimeMs,
+        tooLarge: file.tooLarge,
+        pages: file.pages,
+        address: 'dsh-resource://file/session/' + encodeURIComponent(session) + '/' + file.path.split('/').map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ':')).join('/'),
+      })),
+    })
   })
 
   /**
