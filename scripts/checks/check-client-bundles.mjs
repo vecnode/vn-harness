@@ -1855,6 +1855,610 @@ check(
 const imageNoTabMarkup = renderToStaticMarkup(h(ImageBody, { useTabInfo: () => ({ tab: { id: 'tab10', contentId: '' } }), sessionId: 's1' }))
 check('an address-less image tab still renders', imageNoTabMarkup.includes('data-image-state="loading"'))
 
+// ---------------------------------------------------------------- dsh-audio
+//
+// The audio bundle is the pack's one surface whose real work is ARITHMETIC: a
+// WAV/AIFF decoder and a peak pyramid. Neither can be exercised through a
+// static render (the decode runs in an effect the server renderer never runs),
+// so the bundle exposes its pure half as `__internals` and this section builds
+// the FILES - a RIFF/WAVE, an IFF FORM, a FLAC - by hand and asserts the
+// numbers that come back out of them. Nothing here needs ffmpeg, sox, a
+// browser or a fixture on disk.
+
+/** One RIFF/WAVE file, built by hand. `sample` writes its own sample bytes. */
+function buildWav(options) {
+  const channels = options.channels === undefined ? 1 : options.channels
+  const bits = options.bits === undefined ? 16 : options.bits
+  const rate = options.rate === undefined ? 44100 : options.rate
+  const frames = options.frames === undefined ? 1000 : options.frames
+  const kind = options.kind === undefined ? 'pcm' : options.kind
+  const extensible = options.extensible === true
+  const bytesPerSample = Math.ceil(bits / 8)
+  const blockAlign = channels * bytesPerSample
+  const dataBytes = frames * blockAlign
+  const tag = kind === 'float' ? 3 : kind === 'alaw' ? 6 : kind === 'ulaw' ? 7 : kind === 'adpcm' ? 0x11 : 1
+  const fmtSize = extensible ? 40 : 16
+  const bytes = new Uint8Array(28 + fmtSize + dataBytes)
+  const view = new DataView(bytes.buffer)
+  const text = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) bytes[offset + index] = value.charCodeAt(index)
+  }
+  text(0, 'RIFF')
+  view.setUint32(4, bytes.length - 8, true)
+  text(8, 'WAVE')
+  text(12, 'fmt ')
+  view.setUint32(16, fmtSize, true)
+  view.setUint16(20, extensible ? 0xfffe : tag, true)
+  view.setUint16(22, channels, true)
+  view.setUint32(24, rate, true)
+  view.setUint32(28, rate * blockAlign, true)
+  view.setUint16(32, blockAlign, true)
+  view.setUint16(34, bits, true)
+  if (extensible) {
+    view.setUint16(36, 22, true)
+    view.setUint16(38, bits, true)
+    view.setUint32(40, 3, true)
+    view.setUint16(44, tag, true)
+  }
+  const dataHeader = 20 + fmtSize
+  text(dataHeader, 'data')
+  view.setUint32(dataHeader + 4, options.declaredDataBytes === undefined ? dataBytes : options.declaredDataBytes, true)
+  const dataStart = dataHeader + 8
+  for (let frame = 0; frame < frames; frame += 1) {
+    for (let channel = 0; channel < channels; channel += 1) {
+      const at = dataStart + frame * blockAlign + channel * bytesPerSample
+      if (options.sample !== undefined) {
+        options.sample(bytes, view, at, frame, channel)
+        continue
+      }
+      const sine = Math.round(Math.sin((2 * Math.PI * 1000 * frame) / rate) * 16384)
+      if (bits === 8) view.setUint8(at, 128 + (sine >> 8))
+      else if (bits === 16) view.setInt16(at, sine, true)
+      else if (bits === 24) {
+        view.setUint8(at, sine & 0xff)
+        view.setUint8(at + 1, (sine >> 8) & 0xff)
+        view.setUint8(at + 2, (sine >> 16) & 0xff)
+      } else if (bits === 32) view.setInt32(at, sine * 65536, true)
+    }
+  }
+  return bytes
+}
+
+/** The 80-bit IEEE extended float AIFF states a sample rate with. */
+function writeExtended80(view, offset, value) {
+  const TWO63 = 9223372036854775808
+  let exponent = 16383 + 63
+  let mantissa = value < 0 ? -value : value
+  while (mantissa < TWO63 && exponent > 0) {
+    mantissa *= 2
+    exponent -= 1
+  }
+  const high = Math.floor(mantissa / 4294967296)
+  view.setUint16(offset, (value < 0 ? 0x8000 : 0) | exponent, false)
+  view.setUint32(offset + 2, high, false)
+  view.setUint32(offset + 6, mantissa - high * 4294967296, false)
+}
+
+/** One IFF FORM (AIFF, or AIFC with a compression type), built by hand. */
+function buildAiff(options) {
+  const channels = options.channels === undefined ? 1 : options.channels
+  const bits = options.bits === undefined ? 16 : options.bits
+  const rate = options.rate === undefined ? 44100 : options.rate
+  const frames = options.frames === undefined ? 100 : options.frames
+  const compression = options.compression === undefined ? '' : options.compression
+  const bytesPerSample = Math.ceil(bits / 8)
+  const blockAlign = channels * bytesPerSample
+  const dataBytes = frames * blockAlign
+  const commSize = compression === '' ? 18 : 23 // AIFC adds the type + a name
+  const commPadded = commSize + (commSize & 1)
+  const ssndSize = 8 + dataBytes
+  const bytes = new Uint8Array(12 + 8 + commPadded + 8 + ssndSize)
+  const view = new DataView(bytes.buffer)
+  const text = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) bytes[offset + index] = value.charCodeAt(index)
+  }
+  text(0, 'FORM')
+  view.setUint32(4, bytes.length - 8, false)
+  text(8, compression === '' ? 'AIFF' : 'AIFC')
+  text(12, 'COMM')
+  view.setUint32(16, commSize, false)
+  const comm = 20
+  view.setInt16(comm, channels, false)
+  view.setUint32(comm + 2, frames, false)
+  view.setInt16(comm + 6, bits, false)
+  writeExtended80(view, comm + 8, rate)
+  if (compression !== '') {
+    text(comm + 18, compression)
+    bytes[comm + 22] = 0 // an empty compression name
+  }
+  const ssnd = 20 + commPadded
+  text(ssnd, 'SSND')
+  view.setUint32(ssnd + 4, ssndSize, false)
+  const dataStart = ssnd + 16
+  for (let frame = 0; frame < frames; frame += 1) {
+    for (let channel = 0; channel < channels; channel += 1) {
+      const at = dataStart + frame * blockAlign + channel * bytesPerSample
+      const value = Math.round(Math.sin((2 * Math.PI * 1000 * frame) / rate) * 12000)
+      if (options.sample !== undefined) options.sample(bytes, view, at, frame, channel)
+      else if (bits === 8) view.setInt8(at, value >> 8)
+      else if (bits === 16) view.setInt16(at, value, compression === 'sowt')
+      else if (bits === 24) {
+        view.setUint8(at, (value >> 16) & 0xff)
+        view.setUint8(at + 1, (value >> 8) & 0xff)
+        view.setUint8(at + 2, value & 0xff)
+      }
+    }
+  }
+  return bytes
+}
+
+/** One FLAC stream: a STREAMINFO block and a Vorbis comment, built by hand. */
+function buildFlac(options) {
+  const vendor = 'vn-harness-check'
+  const entry = 'TITLE=' + (options.title === undefined ? 'Test' : options.title)
+  const comments = new Uint8Array(12 + vendor.length + entry.length)
+  const commentView = new DataView(comments.buffer)
+  commentView.setUint32(0, vendor.length, true)
+  for (let index = 0; index < vendor.length; index += 1) comments[4 + index] = vendor.charCodeAt(index)
+  commentView.setUint32(4 + vendor.length, 1, true)
+  commentView.setUint32(8 + vendor.length, entry.length, true)
+  for (let index = 0; index < entry.length; index += 1) comments[12 + vendor.length + index] = entry.charCodeAt(index)
+  const bytes = new Uint8Array(4 + 4 + 34 + 4 + comments.length)
+  const view = new DataView(bytes.buffer)
+  const text = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) bytes[offset + index] = value.charCodeAt(index)
+  }
+  text(0, 'fLaC')
+  bytes[4] = 0 // STREAMINFO, not the last block
+  bytes[7] = 34
+  view.setUint16(8, 4096, false)
+  view.setUint16(10, 4096, false)
+  const high =
+    (((options.rate & 0xfffff) << 12) | (((options.channels - 1) & 7) << 9) | (((options.bits - 1) & 31) << 4) | Math.floor(options.total / 4294967296)) >>> 0
+  view.setUint32(18, high, false)
+  view.setUint32(22, options.total % 4294967296, false)
+  bytes[42] = 0x80 | 4 // VORBIS_COMMENT, the last block
+  const size = comments.length
+  bytes[43] = (size >> 16) & 0xff
+  bytes[44] = (size >> 8) & 0xff
+  bytes[45] = size & 0xff
+  bytes.set(comments, 46)
+  return bytes
+}
+
+const audio = loadBundle('packages/dsh-audio/lib/client.js', {})
+const audioCssTag = audio.document.head.children.filter((tag) => tag.dataset && tag.dataset.pluginCss === 'dsh-audio/audio.css').pop()
+const audioCss = audioCssTag ? audioCssTag.textContent : ''
+const audioSource = readFileSync(path.join(repo, 'packages/dsh-audio/lib/client.js'), 'utf8')
+const A = audio.exports.__internals
+check('audio bundle id', audio.id, 'dsh-audio')
+check('audio inject', JSON.stringify(audio.exports.inject), '["slots","sidebarRightTabs","remote.workspaceFiles"]')
+check('audio stylesheet injected', audioCss.includes('.dsa-root{') && audioCss.includes('.dsa-tools{'))
+check(
+  'audio top bar is the 38px pane header',
+  audioCss.includes('.dsa-tools{flex:none;display:flex;align-items:center;gap:6px;box-sizing:border-box;height:38px;'),
+)
+// The zoom is a LAYOUT width - the scrollable spacer is the file's duration
+// times the pixels per second - never a CSS transform, and the canvas that
+// paints the waveform is VIEWPORT-ANCHORED over it, because a canvas cannot be
+// hundreds of thousands of pixels wide.
+check(
+  'the zoom moves the layout, never a transform',
+  audioSource.includes("style: { width: contentWidth + 'px', height: contentHeight + 'px' }") &&
+    audioCss.includes('.dsa-spacerBox{position:relative}') &&
+    audioSource.includes('const totalPx = Math.max(1, Math.round(duration * pxPerSecond))') &&
+    audioCss.includes('transform:') === false,
+)
+check('the canvas is viewport-anchored over the file-wide spacer', audioCss.includes('.dsa-canvas{position:sticky;left:0;'))
+check(
+  'a zoom keeps the time under the anchor',
+  audioSource.includes('const timeAtAnchor = (scroller.scrollLeft + anchorX - GUTTER) / current') &&
+    audioSource.includes('element.scrollLeft = Math.max(0, GUTTER + timeAtAnchor * clamped - anchorX)') &&
+    audioSource.includes('window.requestAnimationFrame(restore)'),
+)
+// Ctrl/Cmd + wheel zooms at the POINTER, and the listener must be native and
+// non-passive: React's own wheel listener is passive, so a preventDefault
+// inside it does nothing and the browser's Ctrl+wheel page zoom fires too.
+check(
+  'wheel zoom is a non-passive listener at the pointer',
+  audioSource.includes("scroller.addEventListener('wheel', listener, { passive: false })") &&
+    audioSource.includes('zoomTo(ppsRef.current * factor, { x: event.clientX, y: event.clientY })') &&
+    audioSource.includes('if (event.shiftKey) {'),
+)
+// A trackpad pinch is a STREAM of wheel events that all land before the next
+// render, so the handler must read a ref written synchronously by every move;
+// reading the `pxPerSecond` state would compute every step from the same base
+// and the gesture would under-zoom badly (the bug dsh-image shipped once).
+check(
+  'a pinch compounds on a synchronous zoom ref',
+  audioSource.includes('const ppsRef = useRef(MIN_PPS)') &&
+    audioSource.includes('ppsRef.current = clamped') &&
+    audioSource.includes('const current = ppsRef.current'),
+)
+// The cursor says what a press would do where it is: the ruler pans, a lane
+// selects. A static grab cursor over a waveform that selects is a promise the
+// surface does not keep.
+check(
+  'the cursor follows what a press would do there',
+  audioSource.includes("canvas.style.cursor = 'grabbing'") &&
+    audioSource.includes("canvas.style.cursor = 'ew-resize'") &&
+    audioSource.includes("? 'grab' : 'crosshair'"),
+)
+// A re-read is a new viewer: a stale playback buffer is the bug this key stops.
+check('a re-read resets the viewer', audioSource.includes("key: 'dsh-audio-load-' + reload"))
+// The playhead is the AUDIO CLOCK's own position, not a CSS animation, so the
+// line cannot drift away from the sound.
+check(
+  'the playhead follows the AudioContext clock',
+  audioSource.includes('const elapsed = current.context.currentTime - current.startedAt') &&
+    audioSource.includes('source.start(0, start)'),
+)
+check('the two amplitude scales are both real', audioSource.includes('const DB_RANGE = 72') && audioSource.includes("dbMode ? 'dBFS' : 'linear'"))
+check(
+  'individual samples are drawn as stems once they are big enough on screen',
+  audioSource.includes('const STEM_PX_PER_SAMPLE = 3') && audioSource.includes('if (stems) {'),
+)
+// Bytes come from the harness's own workspaceFiles remote, read in WINDOWS so a
+// file far past the single-read cap still draws - and the package ships no
+// route of its own to re-implement the path policy with.
+check(
+  'audio streams the file through the shipped remote, not a route of its own',
+  audioSource.includes("const REMOTE_NAMESPACE = 'remote.workspaceFiles'") &&
+    audioSource.includes('workspaceFiles.readBytes(sessionId, path, { offset: offset, length: size }, signal)') &&
+    audioSource.includes('workspaceFiles.readAll(sessionId, path, signal)') &&
+    audioSource.includes('fetch(') === false &&
+    audioSource.includes("'/api/") === false,
+)
+check(
+  'a refused window teaches the host cap instead of truncating the read',
+  audioSource.includes("code !== 'workspace-file/too-large' && code !== 'gateway/bad-request'") &&
+    audioSource.includes("typeof error.details.limit === 'number'") &&
+    audioSource.includes('size = Math.max(WINDOW_FLOOR, smaller)'),
+)
+check(
+  'the read is aborted when the tab goes away',
+  audioSource.includes('const controller = new AbortController()') &&
+    audioSource.includes('controller.abort()') &&
+    audioSource.includes('const binary = atob(String(base64))') &&
+    audioSource.includes('bytes[index] = binary.charCodeAt(index)'),
+)
+check(
+  'a FLAC past the single-read cap keeps its facts and says so',
+  audioSource.includes('drawing its waveform means handing the whole file to the browser in one read') &&
+    audioSource.includes('parseFlacInfo(bytes)'),
+)
+check('the peak pyramid starts at 256 samples and quadruples', A.BASE_BUCKET === 256 && A.LEVEL_FACTOR === 4)
+// The header probe has to read PAST one window: a WAV with a large LIST/ID3
+// chunk (embedded cover art) before its `data` is a chunk walk the first window
+// cuts in half, and a walk that never finishes must say so rather than report a
+// format it never reached.
+check(
+  'the header probe reads past one window, up to a ceiling',
+  audioSource.includes('const PROBE_CEILING = 8 * 1024 * 1024') &&
+    audioSource.includes('length = Math.min(ceiling, length * PROBE_GROWTH)') &&
+    audioSource.includes('async function readPrefix(') &&
+    audioSource.includes('so its format was never reached'),
+)
+
+// --- the WAV container, and the decoder behind it
+const wavBytes = buildWav({ rate: 44100, channels: 1, bits: 16, frames: 2000 })
+const wav = A.parseWav(wavBytes, wavBytes.length)
+check(
+  'a RIFF/WAVE header parses into facts',
+  wav.ok === true && wav.sampleRate === 44100 && wav.channels === 1 && wav.bits === 16 && wav.format.kind === 's16' && wav.dataOffset === 44,
+)
+check('the frame count is the data chunk over the block align', wav.frames === 2000 && Math.abs(wav.duration - 2000 / 44100) < 1e-12)
+const wavDecoded = A.decodePcm(wav.format, wavBytes.subarray(wav.dataOffset))
+check('the decoder returns one Float32Array per channel', wavDecoded.channels.length === 1 && wavDecoded.frames === 2000 && wavDecoded.channels[0] instanceof Float32Array)
+let wavPeak = 0
+for (let index = 0; index < wavDecoded.channels[0].length; index += 1) {
+  const magnitude = Math.abs(wavDecoded.channels[0][index])
+  if (magnitude > wavPeak) wavPeak = magnitude
+}
+// 16384 of a signed 16-bit full scale is a half-scale sine, and 44.1 samples
+// per cycle at 1 kHz means the nearest sample sits just under the crest.
+check('a half-scale 16-bit sine decodes to a half-scale envelope', wavPeak > 0.495 && wavPeak <= 0.5)
+
+// A known silence is silence: the second half of this file is exactly zero.
+const gapsBytes = buildWav({
+  rate: 8000,
+  channels: 1,
+  bits: 16,
+  frames: 1600,
+  sample(bytes, view, at, frame) {
+    view.setInt16(at, frame < 800 ? 8000 : 0, true)
+  },
+})
+const gapsFacts = A.parseWav(gapsBytes, gapsBytes.length)
+const gaps = A.decodePcm(gapsFacts.format, gapsBytes.subarray(gapsFacts.dataOffset)).channels[0]
+let silentTail = true
+for (let index = 800; index < 1600; index += 1) if (gaps[index] !== 0) silentTail = false
+let headSquares = 0
+for (let index = 0; index < 800; index += 1) headSquares += gaps[index] * gaps[index]
+check('a DC half then real silence decodes exactly', silentTail && gaps[0] === 8000 / 32768 && Math.abs(Math.sqrt(headSquares / 800) - 8000 / 32768) < 1e-9)
+
+// 24-bit stereo: the two's-complement edges are the values a viewer can get
+// wrong by one LSB.
+const rampBytes = buildWav({
+  channels: 2,
+  bits: 24,
+  frames: 3,
+  sample(bytes, view, at, frame, channel) {
+    const value = frame === 0 ? (channel === 0 ? 0x7fffff : -0x800000) : frame === 1 ? 0 : 0x400000
+    bytes[at] = value & 0xff
+    bytes[at + 1] = (value >> 8) & 0xff
+    bytes[at + 2] = (value >> 16) & 0xff
+  },
+})
+const rampFacts = A.parseWav(rampBytes, rampBytes.length)
+const ramp = A.decodePcm(rampFacts.format, rampBytes.subarray(rampFacts.dataOffset))
+check('24-bit stereo is read as 24-bit with a 6-byte frame', rampFacts.format.kind === 's24' && rampFacts.channels === 2 && rampFacts.blockAlign === 6)
+check(
+  '24-bit two\u2019s-complement edges decode to their exact ratios',
+  ramp.channels[0][0] === 8388607 / 8388608 && ramp.channels[1][0] === -1 && ramp.channels[0][1] === 0 && ramp.channels[0][2] === 0.5,
+)
+
+// IEEE float is NOT clamped by the decoder: the value in the file is the value
+// reported, and it is the DRAWING that clamps.
+const floatBytes = buildWav({
+  bits: 32,
+  kind: 'float',
+  frames: 2,
+  sample(bytes, view, at, frame) {
+    view.setFloat32(at, frame === 0 ? 0.25 : -1.5, true)
+  },
+})
+const floatFacts = A.parseWav(floatBytes, floatBytes.length)
+const floats = A.decodePcm(floatFacts.format, floatBytes.subarray(floatFacts.dataOffset))
+check('IEEE float WAVE decodes unclamped', floatFacts.format.kind === 'f32' && floats.channels[0][0] === 0.25 && floats.channels[0][1] === -1.5)
+
+// WAVE_FORMAT_EXTENSIBLE states its real format in the sub-format GUID.
+const extensibleBytes = buildWav({ bits: 24, extensible: true, frames: 4 })
+const extensibleFacts = A.parseWav(extensibleBytes, extensibleBytes.length)
+check(
+  'a WAVE_FORMAT_EXTENSIBLE header is read through its sub-format',
+  extensibleFacts.ok === true && extensibleFacts.format.kind === 's24' && extensibleFacts.format.extensible === true && extensibleFacts.format.validBits === 24,
+)
+
+// The companded laws, against their canonical identities.
+check(
+  'the G.711 laws decode their own zero and full-scale codes',
+  A.ulawToLinear(0xff) === 0 && A.ulawToLinear(0) === -32124 && A.alawToLinear(0x55) === -8 && A.alawToLinear(0xd5) === 8 && A.alawToLinear(0x2a) === -32256,
+)
+const alawBytes = buildWav({
+  bits: 8,
+  kind: 'alaw',
+  frames: 2,
+  sample(bytes, view, at, frame) {
+    bytes[at] = frame === 0 ? 0x55 : 0x2a
+  },
+})
+const alawFacts = A.parseWav(alawBytes, alawBytes.length)
+const alaw = A.decodePcm(alawFacts.format, alawBytes.subarray(alawFacts.dataOffset))
+check('A-law WAVE audio is decoded through the table', alawFacts.format.kind === 'alaw' && alaw.channels[0][0] === -8 / 32768 && alaw.channels[0][1] === -32256 / 32768)
+
+// A truncated file draws what exists and says the rest is UNKNOWN, not silent.
+const cutBytes = buildWav({ frames: 2000 }).slice(0, 44 + 1000)
+const cut = A.parseWav(cutBytes, cutBytes.length)
+check('a truncated WAVE reports the tail as unknown', cut.ok === true && cut.truncated === true && cut.frames === 500 && cut.declaredDataBytes === 4000)
+
+// A codec this package does not decode is NAMED rather than drawn as noise.
+const adpcmBytes = buildWav({ kind: 'adpcm', bits: 4, frames: 8 })
+const adpcm = A.parseWav(adpcmBytes, adpcmBytes.length)
+check('an unsupported WAVE codec is refused by name', adpcm.ok === false && adpcm.reason.includes('IMA ADPCM'))
+const other = A.parseContainer(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]), 12)
+check('something that is not audio at all is refused in a sentence', other.ok === false && other.reason.includes('not a RIFF/WAVE'))
+
+// --- the AIFF container (the format a browser will not decode for us)
+const aiffBytes = buildAiff({ rate: 44100, channels: 1, bits: 16, frames: 500 })
+const aiff = A.parseAiff(aiffBytes, aiffBytes.length)
+check(
+  'an AIFF header parses, sample rate and all',
+  aiff.ok === true && aiff.sampleRate === 44100 && aiff.channels === 1 && aiff.bits === 16 && aiff.format.kind === 's16' && aiff.format.endian === 'be' && aiff.frames === 500,
+)
+const aiffDecoded = A.decodePcm(aiff.format, aiffBytes.subarray(aiff.dataOffset))
+let aiffPeak = 0
+for (let index = 0; index < aiffDecoded.channels[0].length; index += 1) {
+  const magnitude = Math.abs(aiffDecoded.channels[0][index])
+  if (magnitude > aiffPeak) aiffPeak = magnitude
+}
+// Big-endian: reading these bytes little-endian would give a large, wrong
+// number rather than a plausible one, which is exactly what this pins.
+check('big-endian AIFF samples decode to their signed value', aiffPeak > 0.36 && aiffPeak <= 12000 / 32768)
+const sowtBytes = buildAiff({ compression: 'sowt', bits: 16, frames: 200 })
+const sowt = A.parseAiff(sowtBytes, sowtBytes.length)
+check(
+  'an AIFC sowt keeps its little-endian samples straight',
+  sowt.ok === true && sowt.container === 'AIFC (IFF FORM)' && sowt.format.kind === 's16' && sowt.format.endian === 'le' && sowt.sampleRate === 44100,
+)
+const aiff8 = A.parseAiff(buildAiff({ bits: 8, frames: 100 }), 12 + 8 + 18 + 8 + 8 + 100)
+check('8-bit AIFF is SIGNED, unlike 8-bit WAVE', aiff8.ok === true && aiff8.format.kind === 's8')
+const imaBytes = buildAiff({ compression: 'ima4', bits: 16, frames: 100 })
+const ima = A.parseAiff(imaBytes, imaBytes.length)
+check('an AIFC codec this viewer cannot decode is refused by name', ima.ok === false && ima.reason.includes('IMA 4:1 ADPCM'))
+
+// --- the FLAC container's own facts
+const flacBytes = buildFlac({ rate: 48000, channels: 2, bits: 16, total: 96000, title: 'Tone' })
+const flac = A.parseFlacInfo(flacBytes)
+check(
+  'a FLAC STREAMINFO block parses into facts',
+  flac.ok === true && flac.sampleRate === 48000 && flac.channels === 2 && flac.bits === 16 && flac.frames === 96000 && flac.duration === 2,
+)
+check('a FLAC says which decoder will draw it', flac.format.compressed === true && flac.codec.includes('browser-decoded'))
+check('a FLAC\u2019s Vorbis comment is read for its tags', flac.metadata.title === 'Tone')
+check('the container is recognized from its magic, not its name', A.parseContainer(flacBytes, flacBytes.length).container === 'FLAC')
+
+// --- the peak pyramid
+const wave = new Float32Array(1024)
+for (let index = 0; index < 256; index += 1) wave[index] = 0.5
+for (let index = 256; index < 512; index += 1) wave[index] = -0.25
+const whole = new A.PeakSet(1, 1024)
+whole.push([wave])
+whole.finish()
+const split = new A.PeakSet(1, 1024)
+split.push([wave.subarray(0, 300)])
+split.push([wave.subarray(300, 700)])
+split.push([wave.subarray(700)])
+split.finish()
+check('level 0 is one bucket per 256 samples', whole.levels[0].bucket === 256 && whole.levels[0].count === 4)
+check(
+  'a bucket is the (min, max, rms) of the samples in it',
+  whole.levels[0].maxs[0][0] === 0.5 && whole.levels[0].mins[0][0] === 0.5 && whole.levels[0].rmss[0][0] === 0.5 && whole.levels[0].mins[0][1] === -0.25 && whole.levels[0].rmss[0][1] === 0.25 && whole.levels[0].rmss[0][2] === 0,
+)
+// The pyramid's buckets are Float32Arrays, so a decimated RMS is compared
+// against its exact value with the storage's own tolerance (float32 rounding is
+// ~4e-9 here), not a double's.
+check(
+  'a decimated level groups four buckets, RMS and all',
+  whole.levels[1].bucket === 1024 &&
+    whole.levels[1].count === 1 &&
+    whole.levels[1].maxs[0][0] === 0.5 &&
+    whole.levels[1].mins[0][0] === -0.25 &&
+    Math.abs(whole.levels[1].rmss[0][0] - Math.sqrt((0.25 + 0.0625) / 4)) < 1e-6,
+)
+// This is the claim the windowed decode rests on: feeding the samples in
+// windows builds the SAME pyramid as feeding them in one block. A window
+// boundary that split a bucket would break it.
+check(
+  'a windowed decode builds the same pyramid as a whole one',
+  split.levels[0].count === whole.levels[0].count &&
+    split.levels[0].rmss[0][1] === whole.levels[0].rmss[0][1] &&
+    split.levels[0].maxs[0][0] === whole.levels[0].maxs[0][0] &&
+    split.levels[1].rmss[0][0] === whole.levels[1].rmss[0][0],
+)
+check('the level read is the largest one that fits a pixel', A.pickLevel(whole, 100).bucket === 256 && A.pickLevel(whole, 1024).bucket === 1024 && A.pickLevel(whole, 9e6).bucket === 1024)
+const column = A.columnEnvelope(whole.levels[0], 0, 0, 256)
+check('a pixel column aggregates the buckets under it', column !== null && column.max === 0.5 && column.rms === 0.5)
+
+// --- the ruler, the readouts and the addresses
+check('the ruler picks a 1-2-5 step that fits its labels', A.tickStepFor(100, 64) === 1 && A.tickStepFor(10, 64) === 10 && A.tickStepFor(1000, 64) === 0.1 && A.tickStepFor(500000, 64) === 0.0002)
+check('times read as m:ss.mmm, with the hours only when there are any', A.formatTime(0) === '0:00.000' && A.formatTime(221.512) === '3:41.512' && A.formatTime(3725.5) === '1:02:05.500')
+check(
+  'dBFS is 20 log10, and real silence says so',
+  A.formatDb(1) === '0.0 dBFS' && A.formatDb(0.5) === '-6.0 dBFS' && A.formatDb(0) === 'silent' && Math.abs(A.amplitudeToDb(0.25) + 12.0412) < 0.001,
+)
+check(
+  'channels are named L/R for a stereo pair, M for mono, numbers past that',
+  A.channelLabel(0, 2) === 'L' && A.channelLabel(1, 2) === 'R' && A.channelLabel(0, 1) === 'M' && A.channelLabel(3, 6) === '4',
+)
+check(
+  'audio canOpen takes the three families and refuses everything else',
+  A.isAudioAddress('dsh-resource://file/session/s1/takes/take%2001.WAV') === true &&
+    A.isAudioAddress('dsh-resource://file/session/s1/takes/take.flac') === true &&
+    A.isAudioAddress('dsh-resource://file/session/s1/takes/take.aifc') === true &&
+    A.isAudioAddress('dsh-resource://file/session/s1/song.mp3') === false &&
+    A.isAudioAddress('dsh-resource://file/session/s1/notes.txt') === false &&
+    A.isAudioAddress('dsh-resource://file/absolute/C:/tmp/take.wav') === false &&
+    A.isAudioAddress('dsh-resource://pdf/absolute/x.wav') === false,
+)
+check('the address parser keeps a Windows drive segment whole', A.parseAudioAddress('dsh-resource://file/session/s1/C:/audio/take.wav').path, 'C:/audio/take.wav')
+
+// --- activation, the tab type and the seats
+const audioTypes = []
+const audioSeats = {}
+audio.exports.apply({
+  slots: {
+    inject: (name, fn) => fn(),
+    register(spec, component) {
+      audioSeats[spec.name + (spec.key ? '#' + spec.key : '')] = { spec, component }
+      return () => {}
+    },
+  },
+  sidebarRightTabs: { register: (definition) => (audioTypes.push(definition), () => {}), entries: () => [] },
+  get: () => ({ readBytes: () => Promise.resolve({ ok: false, error: { code: 'workspace-file/not-found' } }) }),
+  effect: (fn) => fn(),
+  logger: { debug() {}, warn() {} },
+})
+check('audio type registered', audioTypes.length === 1 && audioTypes[0].id + '/' + audioTypes[0].kind, 'dsh-audio/audio')
+check('audio outranks the shipped preview band', audioTypes[0].priority, 'extension')
+check('audio claims exactly the three families', JSON.stringify(audioTypes[0].patterns), '["*.wav","*.wave","*.aif","*.aiff","*.aifc","*.flac"]')
+// A blank audio file is not a document anyone opens from the "+" control, so
+// this type adds no guide capsule - it only ever claims a real file address.
+check('the audio type adds no guide entry', audioTypes[0].guide === undefined)
+check('the audio chip title is the file name', audioTypes[0].title('dsh-resource://file/session/s1/takes/take%2001.wav'), 'take 01.wav')
+check('audio seats', Object.keys(audioSeats).sort().join(','), 'sidebar.right.pane.tab#dsh-audio,sidebar.right.pane.tab.title#dsh-audio')
+const AudioBody = audioSeats['sidebar.right.pane.tab#dsh-audio'].component
+const audioTab = { id: 'tab11', contentId: 'dsh-resource://file/session/s1/takes/take%2001.wav', title: 'take 01.wav' }
+const audioMarkup = renderToStaticMarkup(h(AudioBody, { useTabInfo: () => ({ tab: audioTab }), sessionId: 's1' }))
+check('the audio body renders its opening state', audioMarkup.includes('data-audio-state="loading"') && audioMarkup.includes('Opening take 01.wav'))
+check('the opening state names the file it is opening', audioMarkup.includes('s1/takes/take 01.wav'))
+check(
+  'audio title seat draws the chip',
+  renderToStaticMarkup(h(audioSeats['sidebar.right.pane.tab.title#dsh-audio'].component, { useTabInfo: () => ({ tab: audioTab }) })),
+  '<span class="dsa-title">take 01.wav</span>',
+)
+const audioNoTabMarkup = renderToStaticMarkup(h(AudioBody, { useTabInfo: () => ({ tab: { id: 'tab12', contentId: '' } }) }))
+check('an address-less audio tab still renders', audioNoTabMarkup.includes('data-audio-state="loading"'))
+
+// --- the surface itself, rendered
+//
+// The loading state above is all a server render of the BODY reaches (the
+// decode runs in an effect). The viewer and the details panel are rendered
+// directly instead, on facts and a pyramid built here, so the toolbar, the
+// spacer, the canvas and the status line are all exercised as markup - which is
+// what catches a reference or a prop that only the loaded surface touches.
+const audioViewerFacts = {
+  container: 'WAVE (RIFF)',
+  codec: 'PCM signed 16-bit little-endian',
+  sampleRate: 8000,
+  channels: 2,
+  bits: 16,
+  frames: 1024,
+  duration: 0.128,
+  truncated: false,
+  metadata: { title: 'Take 1', artist: 'Test' },
+  format: { kind: 's16', endian: 'le', channels: 2, sampleRate: 8000, bits: 16, blockAlign: 4 },
+}
+const audioViewerPeaks = new A.PeakSet(2, 1024)
+audioViewerPeaks.push([new Float32Array(1024).fill(0.25), new Float32Array(1024).fill(-0.25)])
+audioViewerPeaks.finish()
+const audioViewerMarkup = renderToStaticMarkup(
+  h(A.AudioViewer, {
+    facts: audioViewerFacts,
+    peaks: audioViewerPeaks,
+    samples: [new Float32Array(1024).fill(0.25), new Float32Array(1024).fill(-0.25)],
+    buffer: null,
+    size: 4124,
+    source: 'this package (WAV/AIFF decoded in the page, window by window)',
+    name: 'take 01.wav',
+    path: 'takes/take 01.wav',
+    onReload: () => {},
+  }),
+)
+check(
+  'the viewer renders its transport, canvas, spacer and status line',
+  audioViewerMarkup.includes('data-audio-viewer="take 01.wav"') &&
+    audioViewerMarkup.includes('data-audio-action="play"') &&
+    audioViewerMarkup.includes('data-audio-canvas="true"') &&
+    audioViewerMarkup.includes('data-audio-spacer="true"') &&
+    audioViewerMarkup.includes('data-audio-status="true"'),
+)
+check(
+  'the viewer states the facts it was given',
+  audioViewerMarkup.includes('data-audio-rate="8000"') &&
+    audioViewerMarkup.includes('8000 Hz') &&
+    audioViewerMarkup.includes('2 ch') &&
+    audioViewerMarkup.includes('16-bit') &&
+    audioViewerMarkup.includes('0:00.128') &&
+    audioViewerMarkup.includes('WAV'),
+)
+check(
+  'the spacer carries the file\'s own width at this zoom, and the canvas does not',
+  audioViewerMarkup.includes('data-audio-spacer="true"') && audioViewerMarkup.includes('width:') && audioViewerMarkup.includes('data-audio-canvas="true"'),
+)
+check('the scale toggle shows which scale is on', audioViewerMarkup.includes('>linear<') && audioViewerMarkup.includes('data-audio-action="scale"'))
+const audioViewerInfoMarkup = renderToStaticMarkup(
+  h(A.InfoPanel, { facts: audioViewerFacts, size: 4124, source: 'this package', levels: '256 samples/bucket \u2192 1024 samples/bucket' }),
+)
+check(
+  'the details panel carries the facts, the pyramid and the file\'s metadata',
+  audioViewerInfoMarkup.includes('PCM signed 16-bit little-endian') &&
+    audioViewerInfoMarkup.includes('8000 Hz') &&
+    audioViewerInfoMarkup.includes('Take 1') &&
+    audioViewerInfoMarkup.includes('Test') &&
+    audioViewerInfoMarkup.includes('256 samples/bucket'),
+)
+
 console.log('')
 console.log(failures === 0 ? 'all client-bundle checks passed' : failures + ' check(s) FAILED')
 process.exitCode = failures === 0 ? 0 : 1

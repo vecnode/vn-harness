@@ -66,6 +66,20 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
     pixelated threshold, the base64 decode, and the fact that the bundle has no
     `fetch` and no route of its own because bytes come from the shipped
     `workspaceFiles` remote.
+  - `dsh-audio` - the audio type and its seat, the extension band and the
+    `canOpen` refusals, the chip title and the deliberate absence of a guide
+    entry, the opening markup, and the viewer's load-bearing rules by name (the
+    layout-sized zoom, the viewport-anchored canvas, the non-passive wheel
+    listener, the audio-clock playhead, the streaming window read and the host
+    cap a refusal teaches it). It is also the one section that **builds its own
+    audio** - a RIFF/WAVE, an IFF FORM and a FLAC, byte by byte - and drives the
+    bundle's pure half (`exports.__internals`) to assert the decoded numbers:
+    sample rates, channel counts, bit depths, durations, a half-scale sine's
+    envelope, a DC half followed by real silence, the 24-bit two's-complement
+    edges, unclamped IEEE float, `WAVE_FORMAT_EXTENSIBLE`, the G.711 laws, a
+    truncated file reported as unknown rather than silent, an unsupported codec
+    refused by name, and the peak pyramid's bucket arithmetic - including that a
+    WINDOWED decode builds the same pyramid as a whole-file one.
 - `check-node-routes.mjs` imports each Node half, captures the handlers it
   registers on the `connection` service, and drives them with real `Request`s
   against temp workspaces and a temp `DSH_HOME`:

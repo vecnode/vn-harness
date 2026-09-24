@@ -1,0 +1,31 @@
+{
+  "name": "dsh-audio",
+  "version": "0.1.0-alpha.1",
+  "description": "Audio viewer: a real audio tab type for the vn-harness right bar (dsh-rightbar). WAV/RIFF, AIFF/AIFC and FLAC open as a WAVEFORM - one lane per channel, an adaptive time ruler, a min/max envelope with the RMS band drawn inside it, a dBFS or linear amplitude scale, zoom by pixels-per-second up to 500000 (individual samples as stems) and down to 1, fit, drag-to-select, and playback with a playhead driven by the AudioContext clock. The bytes are decoded in the page: WAV and AIFF/AIFC by a hand-written decoder that streams the file in windows through the harness's own workspaceFiles remote (so a file far past the 32 MiB single-read cap still draws), FLAC by the browser's own decoder. The zoom moves the LAYOUT - the scrollable width is the file's real duration times the zoom - and the waveform is painted by a viewport-anchored canvas, so a zoomed waveform stays scrollable to its edge and panning is the pane's own scrollLeft. Alpha.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-workspace-files",
+        "@deepseek-ai/dsh-client-ui-session",
+        "dsh-rightbar"
+      ]
+    }
+  },
+  "license": "MIT"
+}

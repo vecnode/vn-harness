@@ -1,9 +1,44 @@
 # PLAN — `dsh-audio`: WAV / AIFF / FLAC as a surface the pack can show and the agent can read
 
-Status: **plan, not built**. Nothing in this document exists yet. It is the
-design for a new bundle under `packages/dsh-audio/` (row `audio`, tab kind
-`audio`) built the way every other package in this pack is built: one bundle, no
-npm dependencies, no fork, no disabled core row, its own tracked checks.
+Status: **alpha.1 delivered; sections 1, 2, 3 and 6 are built**. The bundle
+exists at `packages/dsh-audio/` (row `audio`, tab kind `audio`) and its README is
+the reference for what actually shipped. What the build settled, and where it
+departs from this document, in one place:
+
+- **The decoder runs in the PAGE, not in a child process.** `readBytes` windows
+  (2 MiB each, the host's cap, learned from a refusal) are decoded by a
+  hand-written WAV/AIFF decoder in the browser and folded straight into the peak
+  pyramid, so the samples are dropped as they are consumed and a file far past
+  the 32 MiB single-read cap still draws. That is why T1 is not a host tier but a
+  client one, and why `lib/index.js` is still a no-op row: the package ships no
+  route, no cache directory and no path policy of its own.
+- **The peak pyramid is per tab-open, in memory** (section 2's shape and bucket
+  sizes exactly, but not yet content-addressed on disk). A host-side cache keyed
+  by SHA-256 is the next step; today's cost is one streaming pass per open.
+- **T2 is the FLAC path**, and it is bounded by the harness's single-read cap:
+  the browser's `decodeAudioData` needs the whole file. STREAMINFO is parsed here
+  first, so such a file still reports its exact facts. T3 (ffmpeg/sox) is not
+  built - section 4's tools are what would need it.
+- **Built from section 3**: the lanes, the ruler with measured labels, the
+  min/max envelope with the RMS band, the dB/linear scale, the layout-sized zoom,
+  selection with measured peak and RMS, and playback with an audio-clock
+  playhead. **Not yet built**: the spectrum view (alpha.2), the remembered
+  per-file view, and vertical zoom as its own ladder (Shift+wheel scales the
+  drawing today).
+- **Section 5's routes do not exist and are not needed** for the viewer: the
+  `workspaceFiles` remote already resolves the path inside the conversation
+  workspace, refuses a symlink out, requires a regular file and enforces its
+  caps on the host side.
+- **Section 9's open questions are answered by the build**: playback is in
+  (question 1); alpha.1 is the viewer and the tools are next (question 2); no
+  spectrogram yet (question 3); FLAC rides on the browser with its facts always
+  reported, so no vendored decoder is needed to be useful (question 4); the tab
+  claims the three named families and leaves MP3/M4A/Ogg to the shipped element
+  (question 5); and audio arrives from the Files tab / workspace files, by the
+  ordinary session address (question 6).
+
+The plan below is kept as written; read it as the design the alpha.1 build
+implements and the alpha.2/alpha.3 work still ahead of it.
 
 The two questions it answers are the two the other surfaces answer:
 

@@ -1,0 +1,22 @@
+# dsh-audio bundle layer (alpha).
+#
+# One row ('audio') ships the browser half and nothing else: the waveform viewer
+# is pure client code over the harness's own `workspaceFiles` remote, so there is
+# no route to register, no tool to expose and no host-side state.
+#
+# Nothing shipped is patched and no core row is disabled. The one surface this
+# package SUPERSEDES it supersedes by REGISTRATION, not by disabling: the bar's
+# tab registry ranks a type in the `extension` band above the shipped document
+# preview's `text` type in the `fallback` band, so for a `*.wav` (or `*.aif*` /
+# `*.flac`) address this package's `audio` kind wins while every other file type
+# keeps exactly the surface it had - the shipped preview's own <audio> element
+# included, which is what still plays MP3 and M4A, formats this package
+# deliberately does not claim. The shipped preview stays mounted and remains the
+# fallback for a profile without this package.
+#
+# There is therefore no `disabled: true` here and nothing for
+# scripts/sync-vendored.ps1 to keep in sync: this package is hand-written and
+# forks nothing.
+- insert:
+    - id: audio
+      name: 'dsh-audio'
