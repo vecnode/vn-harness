@@ -67,6 +67,7 @@ side never needs PowerShell.
 |---|---|---|---|
 | **1. Install** | `install.bat` | `./install.sh` | adds every bundle under `packages/` to the web profile (`~/.dsh/profiles/web`) and copies the bundled skills into `~/.dsh/skills` |
 | **2. Run** | `run.bat` (double-click) | `./run.sh` | starts `npx @deepseek-ai/dsh@<pin> web` and opens the URL it prints — token included — in **Chrome**, falling back to the default browser |
+| **2b. Run (desktop)** | `run-desktop.bat` (double-click) | `cargo build --release` in `app/src-tauri` | the **same** harness in a native window instead of a browser tab: builds the small Rust/Tauri shell under `app/` when it is out of date, then starts the same pinned server on a free port and shows it in a WebView2 / WKWebView / WebKitGTK window |
 | **3. Remove** | `uninstall.bat` | `./uninstall.sh` | removes the bundles, their patch layers and the skills the installer copied |
 
 ```bat
@@ -74,6 +75,8 @@ side never needs PowerShell.
 install.bat                  :: installs into the web profile (the only target)
 run.bat                      :: starts the harness and opens it in Chrome
                              :: (the entry point; scripts\run-web.ps1 does the work)
+run-desktop.bat              :: the same harness in a NATIVE WINDOW instead of a
+                             :: browser tab (cargo builds app\src-tauri first)
 uninstall.bat                :: removes the pack
 ```
 
@@ -94,6 +97,20 @@ line — stays visible and **Ctrl+C** stops it. Flags pass straight through:
 
 The URL is opened only when it names a loopback address, and the launch token is
 never written to a file — both rules are explained in [SECURITY.md](SECURITY.md).
+
+**Prefer a window to a tab?** `run-desktop.bat` builds and runs the small
+Rust/Tauri shell in [`app/`](app/README.md) and shows the harness in a native
+WebView2 / WKWebView / WebKitGTK window. It is the same server, the same pin and
+the same profile — nothing is bundled and no plugin knows the difference, so the
+two launchers are interchangeable. The shell picks a **free** port (so it never
+collides with a `run.bat` server on 3080), opens its window immediately with a
+splash while `npx` works, holds the launch token to the same two rules the
+browser launcher does, and kills the harness when the window closes. It needs the
+Rust toolchain ([rustup.rs](https://rustup.rs)) in addition to Node.js; the first
+build compiles the shell's dependencies and takes a few minutes, after which it
+is instant. The same shell compiles on macOS and Linux with
+`cargo build --release` in `app/src-tauri`; only the Windows double-click wrapper
+is committed so far.
 
 Install flags: `-Force` re-adds bundles even when the versions match.
 `-Plugin` / `-DshHome` / `-ProfileName` / `-DshVersion` / `-Target web|cli`
@@ -174,7 +191,11 @@ switches. Removing a bundle also removes its patch layer.
   passed through a shell. On Windows `run.bat` is the double-clickable entry point
   and `scripts/run-web.ps1` the worker behind it, because cmd cannot watch a
   running child's output; [SECURITY.md](SECURITY.md) describes the whole access
-  model and how to lock the app down.
+  model and how to lock the app down. **Running it in a window instead:**
+  `run-desktop.bat` does the same job with a webview in place of the browser
+  hand-off — the watching half is Rust ([`app/`](app/README.md)), so it is one
+  batch file with no PowerShell worker, and it holds the launch token to the same
+  rules.
 - **Where to read more.** [`docs/INSTALL.md`](docs/INSTALL.md) has the manual
   install path and troubleshooting, [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
   the supported harness line, and each package's own README the details of that
@@ -209,4 +230,10 @@ scripts/               install-all.ps1 / uninstall-all.ps1 (Windows PowerShell)
 .dsh-version.json      the pinned harness line + per-package versions
 install.bat / .sh      installer       |  uninstall.bat / .sh  remover
 run.bat / run.sh       starts the app and opens it in a browser
+run-desktop.bat        the same app in a native window (builds + runs app/)
+app/                   the Rust/Tauri desktop shell: src-tauri/ (the supervisor)
+                       + ui/ (its splash). NOT a plugin and NOT installed into
+                       any profile - a launcher for the web profile
+scripts/make-desktop-icon.mjs  regenerates app/src-tauri/icons from
+                       assets/vn-harness.svg (the icons are committed)
 ```
