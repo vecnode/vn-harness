@@ -1,0 +1,44 @@
+[package]
+name = "vn-harness-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform window for vn-harness: runs the pinned dsh web profile and shows it in a native webview."
+license = "MIT"
+publish = false
+
+# The binary is a CONSOLE application on purpose, and that is load-bearing:
+# run-desktop.bat runs it in the FOREGROUND so the harness's own output - with
+# the launch token redacted - stays readable in that window, and the shell
+# prints its own diagnostics (cargo/npx failures, a server that never became
+# ready) to the same place. Adding `#![windows_subsystem = "windows"]` would
+# detach the console and take that log away.
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# The window, and nothing else: no Tauri plugin is needed. There is no IPC
+# command, no tray, no updater and no dialog box - a failure is reported by
+# retitling the window and printing to this console, which is what keeps this
+# dependency list at two crates.
+tauri = { version = "2", features = [] }
+# Reads .dsh-version.json, and the web profile's package.json for the
+# missing-pack nudge. Already in the tree behind tauri, so it adds no crate of
+# its own to compile.
+serde_json = "1"
+
+# Windows only, for ONE call: a Job Object with KILL_ON_JOB_CLOSE, so the
+# harness dies with this shell even when the shell is killed outright rather
+# than closed. Without it a crash (or Task Manager) leaves `node` holding the
+# port - measured, not assumed. Three features, each for a real reason:
+# Win32_Security gates `CreateJobObjectW` (it takes a SECURITY_ATTRIBUTES
+# pointer), Win32_System_JobObjects is the module itself, and
+# Win32_System_Threading gates `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`, which
+# embeds that module's IO_COUNTERS.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
