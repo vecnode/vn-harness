@@ -1,4 +1,4 @@
-# dsh-editor (alpha.11)
+# dsh-editor (alpha.12)
 
 **Editor** is a **tab type for the pack's right bar** (`dsh-rightbar` — the
 right-hand column of the DeepSeek Harness web GUI, beside the **Start** page and
@@ -9,7 +9,26 @@ names and creates new files through the shared **`dsh-modal`** dialog, and saves
 them back to disk. It is a **sub-plugin**: it holds no bar code, and its
 host-side half owns the pack's own HTTP routes. Alpha.
 
-## What it does (through alpha.11)
+## What it does (through alpha.12)
+
+- **The engine and the bundle can no longer disagree** (alpha.12 — a real bug
+  alpha.11 shipped). The vendored engine is ONE artifact at ONE URL, and it was
+  cached **in memory for the life of the harness process** and served with
+  `cache-control: public, max-age=3600`. Opening a `.rs` tab right after
+  alpha.11 therefore ran a **new client bundle against an old engine**, and
+  `streamLanguage()`'s missing mode made `StreamLanguage.define(undefined)`
+  dereference what it was handed: the whole tab died with *“Editor unavailable —
+  Cannot read properties of undefined (reading 'languageData')”*. Three changes,
+  each aimed at one half of that mismatch: the engine URL is now
+  **version-qualified** (`/api/dsh-editor/vendor?v=<bundle version>`), so a new
+  bundle is a new request instead of a cache hit; the route answers
+  **`cache-control: no-cache`** (it is a generated artifact at a stable URL — the
+  content-hash ETag makes revalidation a 304, never a re-download) instead of
+  trusting a one-hour freshness window; the route **re-`stat`s the file** and
+  re-reads it when it changed, so a rebuild or a `git pull` needs no harness
+  restart; and a mode the loaded engine does not carry now **degrades to no
+  language with a console warning naming the mismatch**, because a document that
+  opens unhighlighted beats a dead tab.
 
 - **Rust and TOML are highlighted too** (alpha.11). `.rs` and `.toml` files used
   to open with **no language at all**, exactly like the shell scripts before
@@ -18,8 +37,8 @@ host-side half owns the pack's own HTTP routes. Alpha.
   exists for CM6 at all), while the **already-vendored**
   `@codemirror/legacy-modes` carries a ported CM5 mode for **both**. So nothing
   new is installed: `vendor/entry.js` re-exports `rust` and `toml`, the bundle is
-  rebuilt, and the map wraps them with the same `StreamLanguage.define()` call
-  the shell languages use — which means the same `defaultHighlightStyle` (light)
+  rebuilt, and the map wraps them with the same `StreamLanguage` call the shell
+  languages use — which means the same `defaultHighlightStyle` (light)
   and oneDark (dark) colour them. The **`rust`** mode is a `simpleMode`: keywords,
   the name a `fn` / `struct` / `enum` / `type` / `union` / `let` declares,
   primitive types, `true` / `false` / `Some` / `None` / `Ok` / `Err`, char and
@@ -152,7 +171,10 @@ host-side half owns the pack's own HTTP routes. Alpha.
   palette follows the **app's own light/dark theme** (oneDark while the app is
   dark, a token-driven transparent theme while it is light; see alpha.5 above).
   The engine is **lazy**: the vendored classic bundle is
-  fetched once from `/api/dsh-editor/vendor` the first time a file opens.
+  fetched once from `/api/dsh-editor/vendor` the first time a file opens. A
+  language the loaded engine does not carry opens the document **without
+  syntax highlighting** and warns once in the console (alpha.12) instead of
+  failing the tab.
 - **Toolbar**: a find-in-file search input, a **Preview** button (Markdown files
   only, see alpha.7) and a **Save** button. Save is offered for an unnamed
   document at all times and for an open file while it is modified;
@@ -177,7 +199,7 @@ shipped `dsh-session-log-export` plugin, the Node half registers
 | `GET /api/dsh-editor/file?session=<id>&path=<rel>` | read one text file (the host resolves the session's workspace root, containment-checks the path against it; strict UTF-8, no NUL; ≤ 2 MiB) |
 | `PUT /api/dsh-editor/file` | save one text file `{session, path, text, expected?: {mtimeMs, size}}` (atomic temp+rename; 409 when the file moved on disk) |
 | `PUT /api/dsh-editor/file` with `{create: true}` | **create** a new file at `path` (the PARENT folder must exist inside the workspace and is realpath-checked; the target must not exist — `409 EXISTS`; published create-exclusive, so a create never overwrites a file the user did not open) |
-| `GET /api/dsh-editor/vendor` | serve the vendored CodeMirror 6 classic bundle (lazy, cached) |
+| `GET /api/dsh-editor/vendor` | serve the vendored CodeMirror 6 classic bundle (lazy; cached, re-`stat`ed per request so a rebuilt artifact is picked up without a restart; `cache-control: no-cache` + a content-hash ETag, so a client always revalidates rather than reusing a stale engine) |
 
 The session id is what the tab's address already carries
 (`dsh-resource://file/session/<sessionId>/<path>`); the workspace root is

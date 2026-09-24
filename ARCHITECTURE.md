@@ -389,9 +389,25 @@ own workspace.
 (`window.DSHEditorCM`) and fetched over the plugin's own route on the first
 file open, so an idle GUI never pays for the editor. `lib/client.js` is
 hand-written module-table code with **no build step**; only the CM6 artifact is
-generated (when the version set changes). The route reads the file once and
-serves it from memory with an ETag, so a rebuilt bundle is picked up on the next
-harness start.
+generated (when the version set changes).
+
+**Engine and bundle stay in step (alpha.12).** The engine is one generated
+artifact at one stable URL and the two halves load independently, so they can
+skew - and alpha.11 shipped exactly that: the route cached the artifact in memory
+for the life of the process and served it with `public, max-age=3600`, the
+browser kept it, and a newer client bundle then asked a stale engine for a `rust`
+mode it did not carry. `StreamLanguage.define(undefined)` dereferences the mode
+it is handed, so the tab died with *"Cannot read properties of undefined (reading
+'languageData')"* instead of opening unhighlighted. Four rules come out of it:
+the engine is requested at a **version-qualified URL** (`?v=<bundle version>`;
+the fetch registry matches on `pathname`, so the query is free), the route
+**never offers a freshness window** (`cache-control: no-cache` over a
+content-hash ETag - revalidation is a 304, never a re-download), the route
+**re-`stat`s the artifact per request** and re-reads it when the stamp changed so
+a rebuild or a `git pull` needs no restart, and every mode is wrapped by **one
+guarded call site** (`streamLanguage(CM, name)`) that returns `null` - no
+language - with a single console warning when the engine lacks the name. The
+tracked checks pin all four.
 
 **Languages.** The map from file extension to a CodeMirror language lives in
 `languageExtensionFor` and has two kinds of entry. The Lezer parsers vendored as

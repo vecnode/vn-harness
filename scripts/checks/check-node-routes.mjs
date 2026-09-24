@@ -172,6 +172,40 @@ check(
 check('unknown session', await code(await put({ session: 'nope', path: 'x.txt', text: 'x', create: true })), 'NO_WORKSPACE')
 await fsp.rm(root, { recursive: true, force: true })
 
+// The vendored engine route. Its artifact is GENERATED and regenerated in place
+// at a stable URL, so it must never be served from a freshness window: alpha.11
+// served it with `public, max-age=3600`, and a browser handed the engine it had
+// cached an hour earlier to a client bundle that had just gained a `rust` mode -
+// `StreamLanguage.define(undefined)` then killed the whole tab. Revalidation (a
+// 304 against the content-hash ETag) is what keeps engine and bundle in step.
+const vendorHandler = await capture(path.join(repo, 'packages/dsh-editor/lib/index.js'), '/api/dsh-editor/vendor', {})
+const vendorResponse = await vendorHandler(new Request('http://x/api/dsh-editor/vendor', { method: 'GET' }))
+const vendorEtag = vendorResponse.headers.get('etag')
+const vendorBody = await vendorResponse.text()
+check('vendor route answers', vendorResponse.status, 200)
+check('vendor body is the committed engine', vendorBody.length, (await fsp.stat(path.join(repo, 'packages/dsh-editor/lib/vendor/cm6.min.js'))).size)
+check('vendor must be revalidated, never trusted for a freshness window', vendorResponse.headers.get('cache-control'), 'no-cache')
+check('vendor etag is a content hash', /^"[0-9a-f]{40}"$/.test(vendorEtag || ''), true)
+check(
+  'vendor revalidates to 304',
+  (await vendorHandler(new Request('http://x/api/dsh-editor/vendor', { method: 'GET', headers: { 'if-none-match': vendorEtag } }))).status,
+  304,
+)
+check('vendor answers HEAD without a body', (await vendorHandler(new Request('http://x/api/dsh-editor/vendor', { method: 'HEAD' }))).status, 200)
+// The engine the route serves must be the one the client bundle asks for: the
+// five stream modes languageExtensionFor names, wrapped exactly as it wraps them.
+const vendorEngine = new Function(
+  'window',
+  'document',
+  'console',
+  vendorBody + '\nreturn DSHEditorCM',
+)(undefined, undefined, console)
+check(
+  'vendor engine carries every stream mode the client names',
+  ['shell', 'powerShell', 'batch', 'rust', 'toml'].every((name) => vendorEngine[name] && Boolean(vendorEngine.StreamLanguage.define(vendorEngine[name]))),
+  true,
+)
+
 // -------------------------------------------------------- dsh-open-in-app
 const openHandler = await capture(path.join(repo, 'packages/dsh-open-in-app/lib/index.js'), '/api/dsh-open-in-app/open', {})
 const open = (body) =>

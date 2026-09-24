@@ -109,7 +109,7 @@ window.__ModuleLoader__.load({
     const FILE_PREFIX = 'dsh-resource://file/'
     const SESSION_SEGMENT = 'session/'
     /** Version marker shown on the toolbar so a freshly loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.11'
+    const PLUGIN_VERSION = '0.1.0-alpha.12'
     /** The client service dsh-modal provides; resolved lazily, never required. */
     const MODAL_SERVICE = 'modals'
     /** The client service @deepseek-ai/dsh-client-ui-theme provides; resolved lazily too. */
@@ -509,7 +509,16 @@ window.__ModuleLoader__.load({
       if (window.DSHEditorCM) return Promise.resolve(window.DSHEditorCM)
       if (!cmEnginePromise) {
         cmEnginePromise = (async () => {
-          const res = await fetch(VENDOR_ROUTE, { method: 'GET', credentials: 'same-origin' })
+          // The engine's URL carries this bundle's version. The route serves ONE
+          // artifact at a stable path, and a browser is entitled to reuse a fresh
+          // cached response for it - which is how a client bundle newer than the
+          // engine it loads happened once (alpha.11: a .rs tab asked for a mode
+          // the cached engine did not have). A version-qualified URL makes "new
+          // bundle" mean "new request", so the two halves cannot disagree.
+          const res = await fetch(VENDOR_ROUTE + '?v=' + encodeURIComponent(PLUGIN_VERSION), {
+            method: 'GET',
+            credentials: 'same-origin',
+          })
           if (!res.ok) {
             throw new Error('editor engine unavailable (HTTP ' + res.status + ')')
           }
@@ -546,6 +555,43 @@ window.__ModuleLoader__.load({
         })()
       }
       return cmEnginePromise
+    }
+
+    // ---------------------------------------------------------------------
+    // The vendored engine can lag the bundle. It is one artifact on one route,
+    // cached in memory for the life of the harness process and (until alpha.12)
+    // cacheable by the browser for an hour, so a client bundle newer than the
+    // loaded engine CAN ask for a mode the engine does not carry - and
+    // `StreamLanguage.define(undefined)` dereferences what it was handed, so the
+    // whole tab died with "Cannot read properties of undefined (reading
+    // 'languageData')". A document the editor can open unhighlighted beats a
+    // dead tab, so a missing (or unusable) mode degrades to no language and
+    // says which one and why.
+    // ---------------------------------------------------------------------
+    const missingModesReported = new Set()
+    function streamLanguage(CM, name) {
+      const mode = CM[name]
+      if (!mode) {
+        if (!missingModesReported.has(name)) {
+          missingModesReported.add(name)
+          console.warn(
+            '[dsh-editor] the loaded CodeMirror engine has no "' +
+              name +
+              '" mode, so this document opens without syntax highlighting: the engine is older than this bundle. ' +
+              'The engine route caches the artifact in memory for the life of the harness process, so RESTART `dsh web` (and hard-refresh the browser) to load the current one.',
+          )
+        }
+        return null
+      }
+      try {
+        return CM.StreamLanguage.define(mode)
+      } catch (err) {
+        if (!missingModesReported.has(name)) {
+          missingModesReported.add(name)
+          console.warn('[dsh-editor] the "' + name + '" mode could not be wrapped as a language:', err)
+        }
+        return null
+      }
     }
 
     // ---------------------------------------------------------------------
@@ -596,18 +642,18 @@ window.__ModuleLoader__.load({
         case 'zsh':
         case 'ksh':
         case 'dash':
-          return CM.StreamLanguage.define(CM.shell)
+          return streamLanguage(CM, 'shell')
         case 'ps1':
         case 'psm1':
         case 'psd1':
-          return CM.StreamLanguage.define(CM.powerShell)
+          return streamLanguage(CM, 'powerShell')
         case 'bat':
         case 'cmd':
-          return CM.StreamLanguage.define(CM.batch)
+          return streamLanguage(CM, 'batch')
         case 'rs':
-          return CM.StreamLanguage.define(CM.rust)
+          return streamLanguage(CM, 'rust')
         case 'toml':
-          return CM.StreamLanguage.define(CM.toml)
+          return streamLanguage(CM, 'toml')
         default:
           return null
       }

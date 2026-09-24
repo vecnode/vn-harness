@@ -442,37 +442,69 @@ async function handleFile(ctx, request) {
   }
 }
 
-/** GET/HEAD /api/dsh-editor/vendor — the vendored CodeMirror 6 classic bundle. */
+/**
+ * The vendored bundle in hand: its bytes, the file stamp they were read at, and
+ * the ETag (a hash of the bytes, so it changes exactly when the artifact does).
+ *
+ * Read ONCE and then re-validated per request with a `stat`, because the file is
+ * GENERATED: a rebuild - or a `git pull` of one - must not require a harness
+ * restart. The engine is one artifact at one stable URL, so a process-lifetime
+ * cache let the browser keep an engine older than the client bundle that asked
+ * for it (alpha.11: a `.rs` tab requested a `rust` mode the cached engine did not
+ * carry). A missing file never discards a good copy.
+ */
 let vendorState = null
+async function readVendor() {
+  const vendorUrl = new URL('./vendor/cm6.min.js', import.meta.url)
+  const vendorPath = fileURLToPath(vendorUrl)
+  const missing = () =>
+    httpError(500, 'VENDOR_MISSING', 'The vendored editor bundle is missing (run the CM6 vendor build in packages/dsh-editor/vendor).')
+  let stamp
+  try {
+    const stat = await fsp.stat(vendorPath)
+    stamp = String(stat.size) + '@' + String(stat.mtimeMs)
+  } catch (err) {
+    if (vendorState) return vendorState
+    throw missing()
+  }
+  if (vendorState && vendorState.stamp === stamp) return vendorState
+  let bytes
+  try {
+    bytes = await fsp.readFile(vendorPath)
+  } catch (err) {
+    if (vendorState) return vendorState
+    throw missing()
+  }
+  const { createHash } = await import('node:crypto')
+  vendorState = {
+    bytes,
+    stamp,
+    etag: '"' + createHash('sha1').update(bytes).digest('hex') + '"',
+  }
+  return vendorState
+}
+
+/** GET/HEAD /api/dsh-editor/vendor — the vendored CodeMirror 6 classic bundle. */
 async function handleVendor(request) {
   try {
-    if (!vendorState) {
-      const vendorUrl = new URL('./vendor/cm6.min.js', import.meta.url)
-      const vendorPath = fileURLToPath(vendorUrl)
-      let bytes
-      try {
-        bytes = await fsp.readFile(vendorPath)
-      } catch (err) {
-        throw httpError(500, 'VENDOR_MISSING', 'The vendored editor bundle is missing (run the CM6 vendor build in packages/dsh-editor/vendor).', err)
-      }
-      const { createHash } = await import('node:crypto')
-      vendorState = {
-        bytes,
-        etag: '"' + createHash('sha1').update(bytes).digest('hex') + '"',
-      }
-    }
+    const state = await readVendor()
     const headers = {
       'content-type': 'text/javascript; charset=utf-8',
-      'cache-control': 'public, max-age=3600',
-      etag: vendorState.etag,
+      // Revalidate rather than trust a freshness window: the URL is stable while
+      // the artifact is regenerated whenever the CM6 version set changes, so a
+      // max-age once let a browser serve a stale engine to a newer client bundle.
+      // The ETag is the content hash, so revalidation costs a 304, never a
+      // re-download.
+      'cache-control': 'no-cache',
+      etag: state.etag,
     }
-    if (request.headers.get('if-none-match') === vendorState.etag) {
+    if (request.headers.get('if-none-match') === state.etag) {
       return new Response(null, { status: 304, headers })
     }
     if (request.method === 'HEAD') {
       return new Response(null, { status: 200, headers })
     }
-    return new Response(vendorState.bytes, { status: 200, headers })
+    return new Response(state.bytes, { status: 200, headers })
   } catch (err) {
     return readErrorToResponse(err)
   }

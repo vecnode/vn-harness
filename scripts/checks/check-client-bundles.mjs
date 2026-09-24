@@ -257,16 +257,33 @@ const editorSource = readFileSync(path.join(repo, 'packages/dsh-editor/lib/clien
 check(
   'editor maps the shell extensions',
   ['sh', 'bash', 'zsh', 'ksh', 'dash', 'ps1', 'psm1', 'psd1', 'bat', 'cmd'].every((ext) => editorSource.includes("case '" + ext + "':")) &&
-    editorSource.includes('CM.StreamLanguage.define(CM.shell)') &&
-    editorSource.includes('CM.StreamLanguage.define(CM.powerShell)') &&
-    editorSource.includes('CM.StreamLanguage.define(CM.batch)'),
+    editorSource.includes("streamLanguage(CM, 'shell')") &&
+    editorSource.includes("streamLanguage(CM, 'powerShell')") &&
+    editorSource.includes("streamLanguage(CM, 'batch')"),
 )
 check(
   'editor maps the rust and toml extensions',
   ['rs', 'toml'].every((ext) => editorSource.includes("case '" + ext + "':")) &&
-    editorSource.includes('CM.StreamLanguage.define(CM.rust)') &&
-    editorSource.includes('CM.StreamLanguage.define(CM.toml)'),
+    editorSource.includes("streamLanguage(CM, 'rust')") &&
+    editorSource.includes("streamLanguage(CM, 'toml')"),
 )
+// A mode the LOADED ENGINE does not carry must degrade, not throw. The engine is
+// one artifact on one route and need not be the one this bundle was built with,
+// and alpha.11 proved what that costs: a bundle newer than its engine asked for
+// `rust`, `StreamLanguage.define(undefined)` dereferenced it, and the tab died
+// with "Cannot read properties of undefined (reading 'languageData')" instead of
+// opening the file unhighlighted. `streamLanguage` is the only place a mode is
+// wrapped, and it returns null when the name is missing.
+check(
+  'a missing engine mode degrades instead of throwing',
+  editorSource.includes('function streamLanguage(CM, name)') &&
+    editorSource.includes('const mode = CM[name]') &&
+    editorSource.includes('if (!mode)') &&
+    !editorSource.includes('CM.StreamLanguage.define(CM.'),
+)
+// ...and the request for that engine is VERSION-QUALIFIED, so a browser cannot
+// hand this bundle an engine it cached under the same stable URL yesterday.
+check('the engine request carries this bundle\'s version', editorSource.includes("fetch(VENDOR_ROUTE + '?v=' + encodeURIComponent(PLUGIN_VERSION)"))
 // ...and the generated bundle must actually CARRY those names, which is the
 // half a source-only assertion cannot see: a stale cm6.min.js whose entry.js was
 // updated but never rebuilt fails here. `window`/`document` are passed as
