@@ -459,6 +459,14 @@ the details.
   returns to the durable built-in. Adding another theme is one entry in
   `THEME_EXTENSIONS` plus its copy in both dictionaries. Restart and hard-refresh.
 
+- **themes alpha.14**: the pack's own product text on the left top bar reads
+  **vn-harness** - the repository's own spelling - instead of the title-case
+  **VN Harness** it used through alpha.13. Nothing else about the branding moved:
+  same slot override, same 24px disc, same chat-title type, same inlined icon.
+  The draw string is what the tracked check pins, so a bundle still saying
+  `VN Harness` fails the check loudly. Restart and hard-refresh; the version
+  changed, so a plain install run (or `-Force`) re-adds the bundle.
+
 - **layout parity (rightbar alpha.2, editor alpha.9, gittree alpha.4)**: three
   changes that are about the same 38px box. The pack's bar lifts the shipped
   bundle's **two-pane dock cap** to the docking kit's own four (with the top/bottom

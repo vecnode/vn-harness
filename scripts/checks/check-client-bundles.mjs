@@ -889,7 +889,7 @@ check(
   'the hero whale is replaced by the icon',
   topBar.includes('.pXSMma_fishHitbox>*{display:none!important}') && topBar.includes('.pXSMma_fishHitbox::before{content:"";width:26px;height:26px'),
 )
-check('branding draws the product name', topBar.includes('.hHd-Xa_brandName::before{content:"VN Harness"}'))
+check('branding draws the product name', topBar.includes('.hHd-Xa_brandName::before{content:"vn-harness"}'))
 // The product text wears the conversation TITLE's type: ui-conversation's current
 // crumb is 14px/20px at weight 500, while the shipped brand name is 18px/600 in
 // the same 30px strip - they read as different sizes a few pixels apart.

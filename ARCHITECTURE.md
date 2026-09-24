@@ -663,7 +663,7 @@ and name, and both are **slots**: `sidebar.brand.mark` and `sidebar.brand.name`,
 each `single`, which the shipped `@deepseek-ai/dsh-client-ui-brand-official` row
 fills (and which fall back to the layout's own `FishLogo` when no brand plugin is
 mounted). The pack replaces that art with its own: a plain **24px black disc**
-where the mark was, and the product text **VN Harness**.
+where the mark was, and the product text **vn-harness** (alpha.14; it read **VN Harness** through alpha.13).
 
 - **An override, not a slot registration.** A `single` slot has one occupant, and
   the shipped brand row already holds both of them: a second registration would
@@ -677,7 +677,7 @@ where the mark was, and the product text **VN Harness**.
 - **The replacements are drawn, not inserted**: a `::before` carrying the **app
   icon** (`assets/vn-harness.svg` at the pack root, inlined as a data URI) at the
   slot's own 24px on `.hHd-Xa_brandMark`, the same icon on the collapsed rail's
-  `.hHd-Xa_railMark`, and `content:"VN Harness"` on `.hHd-Xa_brandName`. Being in
+  `.hHd-Xa_railMark`, and `content:"vn-harness"` on `.hHd-Xa_brandName`. Being in
   the same pinned rule set as the band, they are installed once and need no refresh
   on `theme/change`.
 - **The icon carries its own margin, and that is the point** (alpha.8). The mark is

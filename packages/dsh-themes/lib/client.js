@@ -1071,8 +1071,11 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
         'html .hHd-Xa_root .hHd-Xa_brandMark::before,html .hHd-Xa_root .hHd-Xa_railMark::before{content:"";width:24px;height:24px;flex:none;display:block;background:url("' +
           MARK_ICON +
           '") center/contain no-repeat}',
-        // The name: the pack's own product text.
-        'html .hHd-Xa_root .hHd-Xa_brandName::before{content:"VN Harness"}',
+        // The name: the pack's own product text, in the REPOSITORY'S OWN
+        // spelling - lowercase and hyphenated, the way the repo, the npm
+        // package and `run-desktop.bat` name it - not the title-case form the
+        // draw-strings used through alpha.13.
+        'html .hHd-Xa_root .hHd-Xa_brandName::before{content:"vn-harness"}',
         // ...wearing the CHAT TITLE's type, not the shipped brand name's. The
         // conversation's own title - the current crumb in the header strip this
         // band is levelled with - is `.wSkVaW_crumb` + `.wSkVaW_crumbCurrent` in

@@ -297,7 +297,7 @@ fn open_external(url: &str) {
 /// a link in a rendered document and the app being replaced by a web page.
 fn build_window(app: &AppHandle) -> tauri::Result<()> {
     WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::App(PathBuf::from("index.html")))
-        .title("VN Harness")
+        .title("vn-harness")
         .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
         .min_inner_size(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         .center()
@@ -318,7 +318,7 @@ fn build_window(app: &AppHandle) -> tauri::Result<()> {
 fn fail(app: &AppHandle, message: &str) {
     eprintln!("[vn-harness] {message}");
     if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-        let _ = window.set_title("VN Harness - the harness server did not start (see the console window)");
+        let _ = window.set_title("vn-harness - the harness server did not start (see the console window)");
     }
 }
 
@@ -339,7 +339,7 @@ fn supervise(app: AppHandle, options: Options) {
         }
     };
 
-    println!("[vn-harness] VN Harness desktop shell");
+    println!("[vn-harness] desktop shell");
     println!("[vn-harness] Pinned dsh version: {version}");
     if let Some(home) = harness_home(&options) {
         println!("[vn-harness] DSH_HOME: {}", home.display());

@@ -1,4 +1,4 @@
-# dsh-themes (alpha.13)
+# dsh-themes (alpha.14)
 
 **The pack's conversation-header package.** It owns three controls on that header
 and the appearance overrides that dress it.
@@ -38,7 +38,7 @@ one viewer, so the preview header's viewer menu is hidden on Markdown tabs. The
 third is the left column's **top bar** (alpha.4): the sidebar's branding row
 becomes the same 76px band, ending in the same hairline, that the middle and right
 columns open with — and, since alpha.6, that row wears the pack's own **VN
-branding** (a 24px black disc and the text *VN Harness*) instead of the shipped
+branding** (a 24px black disc and the text *vn-harness*) instead of the shipped
 fish and wordmark. The fourth (alpha.9) is the **header ring**: the right bar's
 own collapse/expand toggle in the header corner is the one icon button on that bar
 that could not be given the group's round outline where it lives (it belongs to a
@@ -273,7 +273,7 @@ html .hHd-Xa_root.hHd-Xa_collapsed .hHd-Xa_logoRow{margin:0 -10px 12px;padding:1
 ### The VN branding (alpha.6, icon alpha.8)
 
 The same rule set also replaces what that row *shows*: the product's mark becomes
-the **app icon** and its name the text **VN Harness**.
+the **app icon** and its name the text **vn-harness** (alpha.14; the draw string read **VN Harness** through alpha.13).
 
 ```css
 /* hide whatever occupies the brand slots, then draw the replacements */
@@ -285,7 +285,7 @@ html .hHd-Xa_root .hHd-Xa_railMark::before{
   content:"";width:24px;height:24px;flex:none;display:block;
   background:url("<the icon, inlined>") center/contain no-repeat
 }
-html .hHd-Xa_root .hHd-Xa_brandName::before{content:"VN Harness"}
+html .hHd-Xa_root .hHd-Xa_brandName::before{content:"vn-harness"}
 /* and the same icon where the empty conversation's whale sits */
 html .pXSMma_fishHitbox>*{display:none!important}
 html .pXSMma_fishHitbox::before{
@@ -332,7 +332,7 @@ html .pXSMma_fishHitbox::before{
   ```
 - **Verified, not assumed.** In the running app the shipped art computes to
   `display:none`, the sidebar and rail marks draw the icon at `24px × 24px`, the
-  hero draws it at `26px × 26px`, the name reads `"VN Harness"` at
+  hero draws it at `26px × 26px`, the name reads `"vn-harness"` at
   `14px/20px/500` — the same numbers the **served** `ui-conversation` bundle
   declares for its title crumb. The icon's own pixels were checked by drawing the
   asset to canvases and reading them back: at 24px and 26px the opaque box is

@@ -81,7 +81,7 @@ browser, so a rendered document can never replace the app's only window.
 
 There is no dialog plugin; the console is the log and the window title carries
 the verdict. If the harness never becomes ready, the window is retitled
-`VN Harness - the harness server did not start (see the console window)` and the
+`vn-harness - the harness server did not start (see the console window)` and the
 reason is printed - `npx` missing, the pin unreadable, no free port, or 90
 seconds without a ready line. Because the shell is a **console** application on
 purpose, `run-desktop.bat` runs it in the foreground and that output stays on
@@ -95,7 +95,7 @@ Measured on Windows 11 (Rust 1.94, Node 22.20, WebView2 153) rather than assumed
 - a free port is picked (61203, 62066, 60927 across runs - never 3080, which was
   already serving the Web GUI);
 - the ready line is found ~8 seconds into a warm run, the window is titled
-  `VN Harness` and answering, and a `msedgewebview2.exe` process holds established
+  `vn-harness` and answering, and a `msedgewebview2.exe` process holds established
   connections to the harness port - so the app really loaded, rather than the
   window merely being pointed at the URL;
 - **no token leaked**: every `token=` occurrence in either stream, across every

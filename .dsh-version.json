@@ -160,7 +160,7 @@
       "rowOverrides": []
     },
     "dsh-themes": {
-      "version": "0.1.0-alpha.13",
+      "version": "0.1.0-alpha.14",
       "rows": [
         "themes"
       ],
@@ -174,7 +174,7 @@
         "markdown paper: re-declares ui-theme's light declarations on the rendered Markdown root, so the page stays white in the dark theme",
         "markdown chrome: hides the preview header's viewer menu on Markdown tabs (the page has exactly one renderer; the editor's Edit button is the way back to editing)",
         "left top bar: the sidebar branding row becomes the 76px band the middle and right columns open with, its hairline at the same y=76 in both rail states, with the mark, brand name and collapse control on the band's top strip and the core's 8px/12px gap kept under the line; pinned to the sidebar's hashed class names",
-        "branding: the left bar brand row drops the shipped mark and wordmark - whatever occupies the single-occupant sidebar.brand.mark / sidebar.brand.name slots, including the layout fallback - and draws a 24px black disc plus the product text VN Harness in their place, in the wide row and in the collapsed rail",
+        "branding: the left bar brand row drops the shipped mark and wordmark - whatever occupies the single-occupant sidebar.brand.mark / sidebar.brand.name slots, including the layout fallback - and draws a 24px black disc plus the product text vn-harness in their place (alpha.14; the draw string read VN Harness through alpha.13), in the wide row and in the collapsed rail",
         "branding type: the VN Harness text wears the conversation title's own type - 14px/20px at weight 500, the size of ui-conversation's current crumb - instead of the shipped brand name's 18px/600, which sat in the same 30px strip",
         "branding mark: the drawn disc is replaced by the app icon itself - assets/vn-harness.svg at the pack root, a black circle centred on (12,12) with a 1px transparent margin inside its box - inlined as a data URI so no route or request is needed, and painted at 24px in the left bar (wide row and rail) and 26px in the empty conversation hero, where the shipped whale is also hidden",
         "header ring: the right bar's own collapse/expand toggle in the header corner wears the same .5px round hairline outline as this package's own header icon buttons, keyed on the header's stable data-conversation-header-corner marker rather than a hashed class",

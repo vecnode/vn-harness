@@ -177,7 +177,7 @@ from the web profile, plus any retired bundle name (`dsh-files`, `dsh-focus`).
    dock's left edge follows the left bar when that is collapsed or expanded —
    the bar itself never moves.
 4. The left bar's top row wears the pack's branding: the **app icon** (a black
-   disc, `assets/vn-harness.svg`) and **VN Harness** where the shipped mark and
+   disc, `assets/vn-harness.svg`) and **vn-harness** where the shipped mark and
    wordmark were — and the same icon replaces the whale beside **Into the
    Unknown** on the new-session screen.
 
@@ -328,7 +328,7 @@ from the web profile, plus any retired bundle name (`dsh-files`, `dsh-focus`).
 - **The left bar still shows the fish and the "deepseek" wordmark** — the branding
   override arrives with `dsh-themes` alpha.6; reinstall (`install.bat` /
   `./install.sh`, or `-Force`) so that version is in the profile, then restart and
-  hard-refresh. The row should show the app icon and **VN Harness**, at the chat
+  hard-refresh. The row should show the app icon and **vn-harness**, at the chat
   title's size (alpha.7), with the same icon beside **Into the Unknown** (alpha.8).
 - **The mark looks clipped or oval** — alpha.7 drew it as a CSS disc, which lost a
   fraction of a pixel inside the sidebar's `overflow:hidden` brand button.
