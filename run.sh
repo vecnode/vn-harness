@@ -23,9 +23,10 @@
 #  handed to a browser after the URL has been checked to be a loopback address.
 #
 #  POSIX shell only: this script needs Node.js (>= 22) with npm/npx - never
-#  PowerShell. The Windows half is `run.ps1` in this same folder and it holds all
-#  the work; the root `run.bat` there is a double-click convenience that only
-#  forwards its flags to run.ps1, so there is nothing to mirror in this file.
+#  PowerShell. The Windows half is `run.bat` in this same folder - plain cmd, one
+#  self-contained file, no PowerShell in it - and the two halves do the same work
+#  with the same flags, print the same messages and put the same tab on screen,
+#  so keep them in step.
 #
 #  Usage:
 #    ./run.sh [-Port <n>] [-DshHome <dir>] [-DshVersion <version>]
@@ -59,7 +60,7 @@ usage() {
     '  -DefaultBrowser    skip Google Chrome and use the default browser' \
     '' \
     'Run it from the repository root (it reads .dsh-version.json from there);' \
-    'the Windows half is run.ps1, which does exactly the same thing.'
+    'the Windows half is run.bat, which does exactly the same thing.'
 }
 
 while [ $# -gt 0 ]; do

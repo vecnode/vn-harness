@@ -595,5 +595,5 @@ added by one plain launcher run (no `-Force` needed); after that a plain run is
 enough. The web profile links
 it into this repo, so code edits only need a restart of
 `npx @deepseek-ai/dsh web` plus a hard browser refresh. Starting it is
-`run.ps1` / `./run.sh` — the launcher that starts `dsh web` and opens the URL it
+`run.bat` / `./run.sh` — the launcher that starts `dsh web` and opens the URL it
 prints in Chrome.

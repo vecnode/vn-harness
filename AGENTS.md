@@ -30,29 +30,35 @@ Node.js with npm/npx and nothing else. Both halves do the same work with the sam
 flags, and entry points come in pairs: `install.bat` / `install.sh`,
 `uninstall.bat` / `uninstall.sh`, plus the console twins `scripts/*.bat` /
 `scripts/*.sh`. The run launcher is the one pair that is NOT split that way: it is
-`run.ps1` + `run.sh`, one per host, both at the repo root, and each half IS the
-entry point (there is no `scripts/run-all.*` - for run there is no wrapper-only
-behaviour to add, which is the whole reason the install pair has a wrapper). The
-root `run.bat` is a **double-click convenience only**: it injects no flag and owns
-no behaviour, it forwards everything to `run.ps1` verbatim, because a `.bat` is
-double-clickable where a `.ps1` is not.
+`run.bat` + `run.sh`, one per host, both at the repo root, and each half IS the
+entry point AND holds all the work (there is no `scripts/run-all.*` - for run
+there is no wrapper-only behaviour to add, which is the whole reason the install
+pair has a wrapper). `run.bat` is plain batch on purpose: a single file with no
+PowerShell in it, so a double-click starts the app on a machine where nothing was
+configured.
 `scripts/sync-vendored.ps1` is the one exception:
 maintainer tooling for moving the forks forward, and it wants `pwsh` on
 macOS/Linux.
 
-**The run launcher.** `run.ps1` / `run.sh` start the pinned
+**The run launcher.** `run.bat` / `run.sh` start the pinned
 `npx @deepseek-ai/dsh@<pin> web --no-open`, stream the app's own output to the
 terminal, read the ready line it prints once the server is listening
 (`dsh web: http://127.0.0.1:<port>/?token=<launch token>`) and open THAT url in
 Chrome, falling back to the default browser. Two rules are load-bearing and must
 survive any edit: the launch token is a live credential, so it is read IN MEMORY
-and never written to a file, echoed by us, or handed to a shell (it reaches the
-browser as one argv element), and a URL that does not name a loopback address is
-refused instead of opened. The two halves mirror each other flag for flag
+and never written to a file and never echoed by us, and a URL that does not name
+a loopback address is refused instead of opened. The WINDOWS half is the weaker
+one on the hand-off and that is documented, not hidden: cmd has no argv interface,
+so `run.bat` gives the URL to `start` as one quoted argument, which cmd's parser
+does see - a token would have to contain a double quote to break out, and launch
+tokens are hex/base64url. The `-File run.ps1` launcher that used
+`Start-Process -ArgumentList` (never a shell) was deleted at the owner's request in
+favour of the single file; do not claim the old guarantee in docs again (SECURITY.md
+states the current one). The two halves mirror each other flag for flag
 (`-Port`, `-DshHome`, `-DshVersion`, `-NoBrowser`, `-DefaultBrowser`), and each
 reads `.dsh-version.json` from its OWN directory - so they must stay at the repo
-root, and a move into `scripts/` means `repoRoot = $PSScriptRoot` and
-`repo_root=$script_dir` have to change with it.
+root, and a move into `scripts/` means `repo_root=$script_dir` has to change with
+it in the shell half and `%~dp0` in the batch half.
 
 ## Layout
 
@@ -79,15 +85,15 @@ root, and a move into `scripts/` means `repoRoot = $PSScriptRoot` and
   plain POSIX sh (dash/bash), Node.js + npm/npx only, **no PowerShell**, driven
   by `scripts/*.sh` and the root `install.sh` / `uninstall.sh`. Same flags, same
   messages and same behaviour as the PowerShell half
-- `run.bat` - the double-click wrapper for the run launcher: it forwards its flags
-  to `run.ps1` and does nothing else (no injected flag, no extra behaviour), so
-  the launcher is still `run.ps1` + `run.sh` and this file can be deleted without
-  changing what a run does
-- `run.ps1` / `run.sh` - the run launcher, one file per host, both at the repo
-  root (see **The run launcher** above). It pipes the app's output through a FIFO
-  on the POSIX side (never a file, so the launch token stays off the disk) and
-  reads it from the main shell, which is what lets `wait` report the harness's own
-  exit status
+- `run.bat` - the run launcher on Windows: ONE self-contained batch file, plain
+  cmd, no PowerShell anywhere in it (double-click friendly). It streams the app's
+  output, watches for the ready line, refuses a non-loopback URL and hands the URL
+  to `start` as one quoted argument; it reads `.dsh-version.json` through `%~dp0`
+  and `.dsh-version.json`'s `"dsh"` value with `node -p`
+- `run.sh` - the run launcher on macOS/Linux: POSIX sh, one file, same flags and
+  same messages. It pipes the app's output through a FIFO (never a file, so the
+  launch token stays off the disk) and reads it from the main shell, which is what
+  lets `wait` report the harness's own exit status
 - `scripts/sync-vendored.ps1` - moves the forks forward after a harness-line bump
   (copies the core bundles, rewrites the module ids, applies each fork's patch
   list, stamps the banner; `-Check` reports drift without writing). Maintainer
@@ -162,9 +168,7 @@ root, and a move into `scripts/` means `repoRoot = $PSScriptRoot` and
 :: Windows
 install.bat                   :: installs into the web profile (the only target)
 install.bat -Force            :: re-add bundles even when versions match
-run.bat                       :: double-click friendly wrapper around run.ps1 (same flags)
-powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1
-                              :: start the app + open it in Chrome (foreground; Ctrl+C stops it)
+run.bat                       :: start the app + open it in Chrome (foreground; Ctrl+C stops it)
 uninstall.bat
 ```
 
@@ -177,7 +181,7 @@ uninstall.bat
 ```
 
 `install.bat` drives the PowerShell half and `install.sh` the POSIX half; the
-run launcher is the root `run.ps1` / `./run.sh` pair. Each can also be run
+run launcher is the root `run.bat` / `./run.sh` pair. Each can also be run
 directly:
 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-all.ps1 -Force`
 (Windows) and `sh scripts/install-all.sh -Force` (macOS/Linux).
@@ -206,8 +210,8 @@ node --check packages/dsh-rightbar/lib/index.js    # forked client.js is generat
 sh -n scripts/install-all.sh scripts/uninstall-all.sh install.sh uninstall.sh run.sh
 $t=$null;$e=$null; [System.Management.Automation.Language.Parser]::ParseFile(
   'scripts/install-all.ps1',[ref]$t,[ref]$e); $e.Count   # expect 0
-$t=$null;$e=$null; [System.Management.Automation.Language.Parser]::ParseFile(
-  'run.ps1',[ref]$t,[ref]$e); $e.Count                   # expect 0
+cmd /c "run.bat -Help"                                  # batch half: expect usage, exit 0
+cmd /c "run.bat -BadFlag < nul"                         # ...and an unknown flag exits 2
 
 # 2. after a harness-line bump, move the forks forward (then review the diff).
 #    sync-vendored.ps1 is maintainer tooling and is the one script that wants

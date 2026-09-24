@@ -199,7 +199,7 @@ Do these and the app is reachable by exactly one thing: a browser you control, o
 the machine running it.
 
 **1. Keep it on loopback — the default is already correct.**
-Run it with the pack's launcher (`run.ps1` / `./run.sh`) or
+Run it with the pack's launcher (`run.bat` / `./run.sh`) or
 `npx @deepseek-ai/dsh@0.1.5-rc.1 web`. Do **not** pass `--host`, and do not pass
 `--trusted-host`. Do not put the port behind a reverse proxy, an SSH `-L`
 forward for someone else, a tunnel (ngrok, cloudflared, Tailscale `serve`),
@@ -211,8 +211,10 @@ control.
 **2. Treat the printed URL as a password.**
 It contains the launch token, and anyone who can reach the port can open that URL
 and take a session. Do not paste it into a chat, an issue, a screenshot or a
-recording. The launchers never write it to a file, never echo it and never pass
-it through a shell — but nothing stops a screen recording.
+recording. The launchers never write it to a file and never echo it, and they
+only ever hand it to a browser on this machine as a single argument — on Windows
+through `start`, which does let cmd's parser see that one quoted argument (see
+**the launch token** below) — but nothing stops a screen recording.
 
 **3. Know what logs out, and what does not.**
 
@@ -345,7 +347,7 @@ That token is the running process's **launch credential**: the server exchanges
 it for the browser session cookie, and every request that follows rides the
 cookie. Treat the line the way you would treat the cookie itself.
 
-How the pack handles it (`run.ps1` on Windows, `run.sh` on macOS/Linux — one file
+How the pack handles it (`run.bat` on Windows, `run.sh` on macOS/Linux — one file
 per host, no wrapper):
 
 - it is **read in memory** from the app's own output and never written to a file
@@ -353,12 +355,23 @@ per host, no wrapper):
   exactly this reason);
 - it is **never echoed by the launchers** — they only report the origin they
   opened — and it is never put in a URL logged anywhere else;
-- it reaches the browser as **one argv element**, never through a command
-  string: no `cmd /c start`, no `sh -c`, so nothing in it can be read as a shell
-  metacharacter;
+- it is handed to the browser as **one argument**, never concatenated into a
+  command string, and **this is the one place the two halves differ**:
+  - macOS/Linux hand the URL to `open` / `xdg-open` as an argv element, so no
+    shell parses it at all;
+  - Windows hands it to `start` as ONE QUOTED ARGUMENT
+    (`start "" "<chrome>" "<url>"`). `start` is a cmd built-in, so cmd's parser
+    does see that one line: a token would have to contain a double quote to
+    break out of the argument, and launch tokens are hex/base64url. That argv
+    guarantee is exactly what the pack gave up when the PowerShell launcher
+    (`Start-Process -ArgumentList`, which never let a shell see the URL) was
+    replaced by the single-file `run.bat` at the owner's request — every other
+    rule below is unchanged;
 - the URL is opened **only when it names a loopback address** (`127.0.0.1`,
-  `::1`, `localhost`). Anything else is refused and reported, because the line
-  can also carry a LAN URL when a deployment binds a LAN interface on purpose;
+  `::1`, `localhost`; on Windows only a literal `127.x.x.x` address is accepted,
+  so a name that merely starts with `127.` is refused too). Anything else is
+  refused and reported, because the line can also carry a LAN URL when a
+  deployment binds a LAN interface on purpose;
 - `--no-open` is passed to the app so the hand-off happens exactly once.
 
 **Lifetimes, precisely.** The *token* is process-scoped: it dies with the app,

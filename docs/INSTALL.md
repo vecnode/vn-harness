@@ -5,14 +5,14 @@ Three launchers, one per job:
 | | Windows | macOS / Linux |
 |---|---|---|
 | **Install** | `install.bat` | `./install.sh` |
-| **Run** | `run.ps1` | `./run.sh` |
+| **Run** | `run.bat` | `./run.sh` |
 | **Remove** | `uninstall.bat` | `./uninstall.sh` |
 
 Double-click the `.bat` files on Windows; run the `.sh` files from the repo root
-on macOS/Linux. Windows runs the PowerShell scripts
-(`scripts/install-all.ps1`, and the root `run.ps1` — a `.ps1` is not
-double-clickable by default, so run it as shown in **Running it**); macOS/Linux
-run the POSIX shell scripts and need **no PowerShell at all**.
+on macOS/Linux. Windows runs the PowerShell scripts for install/uninstall
+(`scripts/install-all.ps1`); the run launcher there is `run.bat`, one plain batch
+file with **no PowerShell in it**, which is also why a double-click just works.
+macOS/Linux run the POSIX shell scripts and need **no PowerShell at all**.
 
 ## Requirements
 
@@ -51,9 +51,9 @@ Overrides if the profile lives somewhere else:
 
 | Platform | Root launchers | Console twins |
 |---|---|---|
-| Windows | `install.bat` / `uninstall.bat` (double-click) and `run.ps1` (`run.bat` is its double-click wrapper) | `scripts\install-all.bat` / `uninstall-all.bat` |
+| Windows | `install.bat` / `uninstall.bat` / `run.bat` (all double-click) | `scripts\install-all.bat` / `uninstall-all.bat` |
 | macOS / Linux | `./install.sh` / `./uninstall.sh` / `./run.sh` | `./scripts/install-all.sh` / `uninstall-all.sh` |
-| Windows (direct) | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-all.ps1 -Force` | same with `uninstall-all.ps1`, and `-File run.ps1` for the app |
+| Windows (direct) | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-all.ps1 -Force` | same with `uninstall-all.ps1`, and `run.bat` for the app |
 | macOS / Linux (direct) | `sh scripts/install-all.sh -Force` | `sh scripts/uninstall-all.sh`, and `sh run.sh` for the app |
 
 The install and uninstall launchers pass the force flag unless you already did,
@@ -61,24 +61,22 @@ so running them again always installs the latest edits. The console twins behave
 like plain script runs: they skip bundles that are already installed at the same
 version. Both halves accept the same flags (`-Force`, `-Plugin`, `-DshHome`,
 `-ProfileName`, `-DshVersion`, `-Target web|cli`), and `--help` prints them. The
-run launcher is `run.ps1` + `./run.sh`, one file per host; on Windows the root
-`run.bat` is a double-click wrapper that forwards its flags to `run.ps1` and does
-nothing else. Both take their own flags (see **Running it** below).
+run launcher is `run.bat` + `./run.sh`, one file per host, each holding the whole
+launcher. Both take their own flags (see **Running it** below).
 
 ## Running it
 
 Once the pack is installed, start the app with the run launcher — it *is* the
 `npx @deepseek-ai/dsh web` command, with the browser hand-off attached. It is two
-files, one per platform: `run.ps1` (Windows) and `run.sh` (macOS/Linux), both at
-the repo root.
+files, one per platform: `run.bat` (Windows, plain batch) and `run.sh`
+(macOS/Linux), both at the repo root.
 
 ```bat
-:: Windows - double-click run.bat, or run it from the repo root
-run.bat                       :: same launcher, same flags (a .ps1 is not double-clickable)
-powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -Port 3099
-powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -DefaultBrowser
-powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -NoBrowser
+:: Windows - just double-click run.bat at the repo root, or run it with flags
+run.bat
+run.bat -Port 3099
+run.bat -DefaultBrowser
+run.bat -NoBrowser
 ```
 
 ```sh
@@ -114,10 +112,12 @@ Two properties worth knowing:
 - **The launch token is a live credential.** It is the value the server
   exchanges for the browser session cookie, so it is read from the app's output
   **in memory only**: the launchers never write it to a file, never echo it
-  themselves, and never pass it through a shell — it reaches the browser as a
-  single argument. The terminal still shows it, because the app prints it; treat
-  a copy of that pane (a screenshot, a pasted log) the way you would treat the
-  session cookie itself.
+  themselves, and never build a command string out of it — it reaches the browser
+  as a single argument. On Windows that argument is one quoted argument of cmd's
+  `start`, and on macOS/Linux it is an argv element of `open`/`xdg-open`;
+  [SECURITY.md](../SECURITY.md) spells out that difference. The terminal still
+  shows the token, because the app prints it; treat a copy of that pane (a
+  screenshot, a pasted log) the way you would treat the session cookie itself.
 - **Only a loopback URL is opened.** If the ready line ever named anything but
   `127.0.0.1`, `::1` or `localhost`, the launcher refuses and says so rather
   than handing the token to a browser pointed at another host.
@@ -157,7 +157,7 @@ from the web profile, plus any retired bundle name (`dsh-files`, `dsh-focus`).
 
 ## After installing
 
-1. Start (or restart) the app with **`run.ps1`** (Windows) or **`./run.sh`**
+1. Start (or restart) the app with **`run.bat`** (Windows) or **`./run.sh`**
    (macOS/Linux) — or `npx @deepseek-ai/dsh web` by hand — and open/select a
    conversation.
 2. Open the right Sidebar with the **expand button** in the conversation header
@@ -183,13 +183,14 @@ from the web profile, plus any retired bundle name (`dsh-files`, `dsh-focus`).
 
 - **The run launcher says the port is already in use** — an app is already
   listening on 3080 (another terminal, or this one). Use the running one, stop
-  it, or start a second instance on another port:
-  `powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -Port 3099` /
+  it, or start a second instance on another port: `run.bat -Port 3099` /
   `./run.sh -Port 3099`.
-- **`run.ps1` will not start on Windows** — run it from the repo root with the
-  line above: double-clicking a `.ps1` opens it in an editor instead, and a
-  restrictive execution policy needs the `-ExecutionPolicy Bypass` that line
-  already carries.
+- **`run.bat` refuses to start / the window flashes and closes** — it prints why
+  and then pauses on a failure, so read the window; run it from the repo root
+  (it reads `.dsh-version.json` from its own folder) and check that
+  `node` and `npx` are on the `PATH`. A double-click is supported on purpose —
+  there is no execution policy involved, because the file is batch, not
+  PowerShell.
 - **No browser opened, but the app is running** — the ready line was never
   printed (a profile with `printUrl` disabled) or the launcher said why. The URL
   is in the app's own output; `-NoBrowser` turns the hand-off off on purpose.

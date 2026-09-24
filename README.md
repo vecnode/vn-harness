@@ -64,14 +64,14 @@ side never needs PowerShell.
 | Step | Windows | macOS / Linux | What it does |
 |---|---|---|---|
 | **1. Install** | `install.bat` | `./install.sh` | adds every bundle under `packages/` to the web profile (`~/.dsh/profiles/web`) and copies the bundled skills into `~/.dsh/skills` |
-| **2. Run** | `run.bat` (double-click) / `run.ps1` | `./run.sh` | starts `npx @deepseek-ai/dsh@<pin> web` and opens the URL it prints — token included — in **Chrome**, falling back to the default browser |
+| **2. Run** | `run.bat` (double-click) | `./run.sh` | starts `npx @deepseek-ai/dsh@<pin> web` and opens the URL it prints — token included — in **Chrome**, falling back to the default browser |
 | **3. Remove** | `uninstall.bat` | `./uninstall.sh` | removes the bundles, their patch layers and the skills the installer copied |
 
 ```bat
 :: Windows - install/uninstall/run are all double-click friendly
 install.bat                  :: installs into the web profile (the only target)
 run.bat                      :: starts the harness and opens it in Chrome
-                             :: (a wrapper around run.ps1 - same flags, same behaviour)
+                             :: (the whole launcher: plain batch, no PowerShell)
 uninstall.bat                :: removes the pack
 ```
 
@@ -163,14 +163,15 @@ switches. Removing a bundle also removes its patch layer.
   changed (bump `package.json` + `.dsh-version.json` first); `-Force` re-adds
   regardless, which is what a changed package **set** needs. There is no hot
   reload unless a `pnpm run dev:web` watcher from the harness repo is running.
-- **Running it.** `run.ps1` / `./run.sh` start the pinned `dsh web` with
+- **Running it.** `run.bat` / `./run.sh` start the pinned `dsh web` with
   `--no-open`, read the `dsh web: http://127.0.0.1:<port>/?token=<token>` line
   the app prints once it is listening, and open **that** URL in Chrome (the
   default browser is the fallback). A URL that does not name a loopback address
   is refused instead of opened, and the launch token — a live credential for the
-  running process — is only ever held in memory: never written to a file, never
-  passed through a shell. [SECURITY.md](SECURITY.md) describes the whole access
-  model and how to lock the app down.
+  running process — is only ever held in memory and never written to a file.
+  [SECURITY.md](SECURITY.md) describes the whole access model, including exactly
+  how each half hands the URL to the browser (they are not identical on Windows,
+  and the file says so).
 - **Where to read more.** [`docs/INSTALL.md`](docs/INSTALL.md) has the manual
   install path and troubleshooting, [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
   the supported harness line, and each package's own README the details of that
@@ -204,5 +205,5 @@ scripts/               install-all.ps1 / uninstall-all.ps1 (Windows PowerShell)
   checks/              standalone verification for the JS halves (see its README)
 .dsh-version.json      the pinned harness line + per-package versions
 install.bat / .sh      installer       |  uninstall.bat / .sh  remover
-run.ps1 / run.sh       starts the app and opens it in a browser
+run.bat / run.sh       starts the app and opens it in a browser
 ```
