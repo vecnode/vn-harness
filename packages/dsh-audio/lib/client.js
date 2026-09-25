@@ -205,7 +205,7 @@ window.__ModuleLoader__.load({
    transformed - the SPACER below carries the zoom as a real layout width. */
 .dsa-scroll{flex:1;min-height:0;overflow:auto;position:relative;box-sizing:border-box;background:var(--dsw-alias-bg-l1,rgba(127,127,127,.055));overscroll-behavior:contain}
 .dsa-scroll:focus{outline:none}
-.dsa-scroll:focus-visible{box-shadow:inset 0 0 0 2px var(--dsw-alias-state-accent,#4f8cff)}
+.dsa-scroll:focus-visible{box-shadow:inset 0 0 0 2px var(--dsw-alias-brand-primary,#4f8cff)}
 /* The file's real width at this zoom. The canvas is STICKY against it, so the
    canvas is never wider than the pane while the scroll range stays the file's. */
 .dsa-spacerBox{position:relative}
@@ -214,7 +214,7 @@ window.__ModuleLoader__.load({
 .dsa-statusSel{color:var(--dsw-alias-label-secondary,#666)}
 .dsa-statusHint{margin-left:auto;opacity:.8}
 .dsa-progress{flex:none;height:2px;background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.16))}
-.dsa-progressFill{height:100%;background:var(--dsw-alias-state-accent,#4f8cff);transition:width .12s linear}
+.dsa-progressFill{height:100%;background:var(--dsw-alias-brand-primary,#4f8cff);transition:width .12s linear}
 .dsa-state{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;color:var(--dsw-alias-label-tertiary,#999);font-size:12.5px;line-height:18px;text-align:center}
 .dsa-stateTitle{font-size:13px;color:var(--dsw-alias-label-secondary,#666);font-weight:500}
 .dsa-stateErr{color:var(--dsw-alias-state-error-primary,#d3382c);max-width:560px;word-break:break-word}
@@ -413,11 +413,24 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The answer for a chunk that runs past the bytes in hand.
+     *
+     * Reading MORE is only worth offering when those bytes are a PREFIX of the
+     * file. A prefix that IS the whole file has nothing more to give, and
+     * answering `needsMore` there is what made a 20-byte `RIFF...WAVE` report
+     * that "its header is larger than the 8 MiB this viewer reads": the caller
+     * could not tell "waiting for more bytes" from "the file simply ends here".
+     */
+    function cutOff(reason, wholeFile) {
+      return wholeFile === true ? { ok: false, reason: reason } : { ok: false, needsMore: true, reason: reason }
+    }
+
+    /**
      * The `fmt ` chunk of a WAVE file, including WAVE_FORMAT_EXTENSIBLE.
      * @returns a decode descriptor, or the refusal to report.
      */
-    function parseWavFmt(bytes, body, size) {
-      if (body + 16 > bytes.length) return { ok: false, needsMore: true, reason: 'the fmt chunk was cut off' }
+    function parseWavFmt(bytes, body, size, wholeFile) {
+      if (body + 16 > bytes.length) return cutOff('the fmt chunk was cut off', wholeFile)
       const tag = u16le(bytes, body)
       const channels = u16le(bytes, body + 2)
       const sampleRate = u32le(bytes, body + 4)
@@ -429,7 +442,7 @@ window.__ModuleLoader__.load({
       let extensible = false
       if (tag === 0xfffe) {
         if (size < 40 || body + 40 > bytes.length) {
-          return { ok: false, needsMore: true, reason: 'the WAVE_FORMAT_EXTENSIBLE fmt chunk was cut off' }
+          return cutOff('the WAVE_FORMAT_EXTENSIBLE fmt chunk was cut off', wholeFile)
         }
         extensible = true
         validBits = u16le(bytes, body + 18)
@@ -455,6 +468,27 @@ window.__ModuleLoader__.load({
         return { ok: false, reason: 'its audio is ' + named + bitsNote + ', which this viewer does not decode' }
       }
       const bytesPerSample = bits === 1 ? 1 : Math.ceil(bits / 8)
+      const frameBytes = channels * bytesPerSample
+      // `blockAlign` is the file's own frame stride, and it is what the decoder
+      // walks with. A value smaller than one frame cannot be a stride at all:
+      // walking it reads a channel out of the NEXT frame's bytes (silently wrong
+      // samples), an 8-bit stereo file reads `undefined` into the samples, and a
+      // float file throws a raw DataView RangeError at the last frame. Refused by
+      // name instead, so the viewer says what is wrong with the file.
+      if (blockAlign > 0 && blockAlign < frameBytes) {
+        return {
+          ok: false,
+          reason:
+            'its fmt chunk says ' +
+            channels +
+            ' channel(s) at ' +
+            bits +
+            ' bits, which is a frame of ' +
+            frameBytes +
+            ' bytes, but it declares a block align of ' +
+            blockAlign,
+        }
+      }
       return {
         ok: true,
         kind: kind,
@@ -466,7 +500,7 @@ window.__ModuleLoader__.load({
         channelMask: channelMask,
         extensible: extensible,
         tag: effective,
-        blockAlign: blockAlign > 0 ? blockAlign : channels * bytesPerSample,
+        blockAlign: blockAlign > 0 ? blockAlign : frameBytes,
       }
     }
 
@@ -533,8 +567,10 @@ window.__ModuleLoader__.load({
      * A WAVE (RIFF) file.
      * @param bytes - the prefix (or the whole file).
      * @param totalBytes - the file's real size, for the truncation check.
+     * @param wholeFile - whether `bytes` is the ENTIRE file, which is what turns
+     *   a walk that ran out of bytes from "read more" into a verdict.
      */
-    function parseWav(bytes, totalBytes) {
+    function parseWav(bytes, totalBytes, wholeFile) {
       // RF64 and BW64 are the same container with 64-bit sizes, written by
       // anything that records past 4 GiB; the walk below is identical and the
       // real size of the data chunk comes from the `ds64` chunk.
@@ -559,7 +595,7 @@ window.__ModuleLoader__.load({
         const size = u32le(bytes, offset + 4)
         const body = offset + 8
         if (id === 'fmt ') {
-          const parsed = parseWavFmt(bytes, body, size)
+          const parsed = parseWavFmt(bytes, body, size, wholeFile)
           if (!parsed.ok) return parsed
           format = parsed
         } else if (id === 'data') {
@@ -582,20 +618,26 @@ window.__ModuleLoader__.load({
         } else if (id === 'ID3 ' || id === 'id3 ') {
           metadata.id3 = true
         }
+        // A chunk with no body at all - a zero-size `junk`, an empty `LIST` - is
+        // legal and is exactly 8 bytes of header, so the walk has to step OVER
+        // it. It used to STOP here, which made any file carrying one unreadable:
+        // the walk ended before the `data` chunk, the parse answered "no data
+        // chunk ... so far", the probe re-read the whole file looking for one and
+        // the viewer then blamed a header it had never reached.
         const next = body + size + (size & 1)
-        if (size <= 0 || next <= body) {
+        if (next <= offset) {
           sawEnd = true
           break
         }
         offset = next
       }
       if (format === null) {
-        return sawEnd
+        return sawEnd && wholeFile !== true
           ? { ok: false, needsMore: true, reason: 'no fmt chunk was found in the bytes read so far' }
           : { ok: false, reason: 'it has no fmt chunk' }
       }
       if (dataOffset < 0) {
-        return sawEnd
+        return sawEnd && wholeFile !== true
           ? { ok: false, needsMore: true, reason: 'no data chunk was found in the bytes read so far' }
           : { ok: false, reason: 'it has no data chunk' }
       }
@@ -640,15 +682,15 @@ window.__ModuleLoader__.load({
     }
 
     /** The `COMM` chunk of an AIFF/AIFC file. */
-    function parseAiffComm(bytes, body, size, formType) {
-      if (body + 18 > bytes.length) return { ok: false, needsMore: true, reason: 'the COMM chunk was cut off' }
+    function parseAiffComm(bytes, body, size, formType, wholeFile) {
+      if (body + 18 > bytes.length) return cutOff('the COMM chunk was cut off', wholeFile)
       const channels = int16be(bytes, body)
       const declaredFrames = u32be(bytes, body + 2)
       const sampleSize = int16be(bytes, body + 6)
       const sampleRate = readExtended80(bytes, body + 8)
       let compression = ''
       if (formType === 'AIFC') {
-        if (body + 22 > bytes.length) return { ok: false, needsMore: true, reason: 'the COMM chunk was cut off' }
+        if (body + 22 > bytes.length) return cutOff('the COMM chunk was cut off', wholeFile)
         compression = asciiAt(bytes, body + 18, 4)
       }
       if (channels < 1 || channels > 64) return { ok: false, reason: 'it claims ' + channels + ' channels' }
@@ -693,8 +735,9 @@ window.__ModuleLoader__.load({
      * An AIFF or AIFC (IFF FORM) file.
      * @param bytes - the prefix (or the whole file).
      * @param totalBytes - the file's real size, for the truncation check.
+     * @param wholeFile - whether `bytes` is the ENTIRE file (see `parseWav`).
      */
-    function parseAiff(bytes, totalBytes) {
+    function parseAiff(bytes, totalBytes, wholeFile) {
       if (bytes.length < 12 || asciiAt(bytes, 0, 4) !== 'FORM') return { ok: false, reason: 'not an IFF FORM' }
       const formType = asciiAt(bytes, 8, 4)
       if (formType !== 'AIFF' && formType !== 'AIFC') return { ok: false, reason: 'an IFF FORM of type ' + formType }
@@ -712,7 +755,7 @@ window.__ModuleLoader__.load({
         const size = u32be(bytes, offset + 4)
         const body = offset + 8
         if (id === 'COMM') {
-          const parsed = parseAiffComm(bytes, body, size, formType)
+          const parsed = parseAiffComm(bytes, body, size, formType, wholeFile)
           if (!parsed.ok) return parsed
           format = parsed
         } else if (id === 'SSND') {
@@ -734,20 +777,21 @@ window.__ModuleLoader__.load({
         } else if (id === '(c) ') {
           metadata.copyright = textAt(bytes, body, Math.min(size, bytes.length - body))
         }
+        // The same zero-size-chunk step-over as the WAV walk above.
         const next = body + size + (size & 1)
-        if (size <= 0 || next <= body) {
+        if (next <= offset) {
           sawEnd = true
           break
         }
         offset = next
       }
       if (format === null) {
-        return sawEnd
+        return sawEnd && wholeFile !== true
           ? { ok: false, needsMore: true, reason: 'no COMM chunk was found in the bytes read so far' }
           : { ok: false, reason: 'it has no COMM chunk' }
       }
       if (sound === null) {
-        return sawEnd
+        return sawEnd && wholeFile !== true
           ? { ok: false, needsMore: true, reason: 'no SSND chunk was found in the bytes read so far' }
           : { ok: false, reason: 'it has no SSND chunk (an AIFF with no audio in it)' }
       }
@@ -821,8 +865,9 @@ window.__ModuleLoader__.load({
      * the file's first 42 bytes, so this viewer can state a FLAC's length even
      * when it is too big for the browser's decoder.
      * @param bytes - the prefix (or the whole file).
+     * @param wholeFile - whether `bytes` is the ENTIRE file (see `parseWav`).
      */
-    function parseFlacInfo(bytes) {
+    function parseFlacInfo(bytes, wholeFile) {
       if (bytes.length < 4 || asciiAt(bytes, 0, 4) !== 'fLaC') return { ok: false, reason: 'not a FLAC stream' }
       let offset = 4
       let stream = null
@@ -835,7 +880,7 @@ window.__ModuleLoader__.load({
         const body = offset + 4
         if (type === 0) {
           if (body + 34 > bytes.length) {
-            return { ok: false, needsMore: true, reason: 'the STREAMINFO block was cut off' }
+            return cutOff('the STREAMINFO block was cut off', wholeFile)
           }
           const high = u32be(bytes, body + 10)
           const low = u32be(bytes, body + 14)
@@ -851,8 +896,10 @@ window.__ModuleLoader__.load({
           parseVorbisComment(bytes, body, size, metadata)
         }
         if (last) break
+        // A zero-size metadata block is 4 bytes of header and nothing else; step
+        // over it rather than stopping the walk (see the WAV walk above).
         const next = body + size
-        if (size <= 0 || next <= body) break
+        if (next <= offset) break
         offset = next
       }
       if (stream === null) return { ok: false, reason: 'it carries no STREAMINFO block' }
@@ -885,14 +932,15 @@ window.__ModuleLoader__.load({
      * a RIFF walk.
      * @param bytes - the prefix.
      * @param totalBytes - the file's real size.
+     * @param wholeFile - whether `bytes` is the ENTIRE file (see `parseWav`).
      */
-    function parseContainer(bytes, totalBytes) {
+    function parseContainer(bytes, totalBytes, wholeFile) {
       if (bytes.length >= 12 && asciiAt(bytes, 8, 4) === 'WAVE') {
         const magic = asciiAt(bytes, 0, 4)
-        if (magic === 'RIFF' || magic === 'RF64' || magic === 'BW64') return parseWav(bytes, totalBytes)
+        if (magic === 'RIFF' || magic === 'RF64' || magic === 'BW64') return parseWav(bytes, totalBytes, wholeFile)
       }
-      if (bytes.length >= 12 && asciiAt(bytes, 0, 4) === 'FORM') return parseAiff(bytes, totalBytes)
-      if (bytes.length >= 4 && asciiAt(bytes, 0, 4) === 'fLaC') return parseFlacInfo(bytes)
+      if (bytes.length >= 12 && asciiAt(bytes, 0, 4) === 'FORM') return parseAiff(bytes, totalBytes, wholeFile)
+      if (bytes.length >= 4 && asciiAt(bytes, 0, 4) === 'fLaC') return parseFlacInfo(bytes, wholeFile)
       return { ok: false, reason: 'its first bytes are not a RIFF/WAVE, an IFF FORM or a FLAC stream' }
     }
 
@@ -908,6 +956,9 @@ window.__ModuleLoader__.load({
      * `bytes` must start on a frame boundary and be a whole number of frames
      * long (the loader guarantees both, which is what makes a windowed decode
      * of a huge file produce the same samples as a single whole-file decode).
+     * `format.blockAlign` is a whole frame's stride and at least one frame wide:
+     * the parsers REFUSE a file that declares less, so no read here can walk out
+     * of the window behind a malformed header.
      *
      * @returns `{ channels: Float32Array[], frames }`.
      */
@@ -1250,21 +1301,27 @@ window.__ModuleLoader__.load({
      *
      * The host hands over one window per call, so a prefix larger than that
      * window is several calls stitched - which is what the header probe needs
-     * when a chunk walk runs past a window boundary.
+     * when a chunk walk runs past a window boundary. The host's own `eof` is
+     * carried out with the bytes: that flag ("does this window reach the last
+     * byte") is what lets a parser that stopped early answer with a verdict
+     * instead of asking for more.
+     * @returns `{ bytes, eof }`.
      */
     async function readPrefix(sessionId, path, length, signal) {
       const parts = []
       let read = 0
+      let eof = false
       while (read < length) {
         const want = length - read
         const window = await readWindow(sessionId, path, read, want, signal)
+        eof = window.eof === true
         if (window.bytes.length === 0) break
         parts.push(window.bytes)
         read += window.bytes.length
         if (window.bytes.length < Math.min(want, windowCap)) break
       }
-      if (parts.length === 0) return new Uint8Array(0)
-      if (parts.length === 1) return parts[0]
+      if (parts.length === 0) return { bytes: new Uint8Array(0), eof: eof }
+      if (parts.length === 1) return { bytes: parts[0], eof: eof }
       let total = 0
       for (const part of parts) total += part.length
       const joined = new Uint8Array(total)
@@ -1273,7 +1330,7 @@ window.__ModuleLoader__.load({
         joined.set(part, at)
         at += part.length
       }
-      return joined
+      return { bytes: joined, eof: eof }
     }
 
     /**
@@ -1287,11 +1344,17 @@ window.__ModuleLoader__.load({
       let length = Math.max(1, Math.min(ceiling, PROBE_START))
       let facts = null
       for (let step = 0; step < 8; step += 1) {
-        const bytes = await readPrefix(sessionId, path, length, signal)
-        facts = parseContainer(bytes, size > 0 ? size : bytes.length)
+        const prefix = await readPrefix(sessionId, path, length, signal)
+        const bytes = prefix.bytes
+        // Whether these bytes are the WHOLE file is what a parser's "read more"
+        // has to be judged against: a prefix that already holds the file's last
+        // byte can be answered with the parser's own verdict, and the caller then
+        // never blames the 8 MiB ceiling for a file it has read to the end.
+        const wholeFile = prefix.eof === true || (size > 0 && bytes.length >= size)
+        facts = parseContainer(bytes, size > 0 ? size : bytes.length, wholeFile)
         if (facts.ok === true) return facts
         if (facts.needsMore !== true) return facts
-        if (bytes.length < length) return facts
+        if (wholeFile) return facts
         if (length >= ceiling) return facts
         length = Math.min(ceiling, length * PROBE_GROWTH)
       }
@@ -1770,16 +1833,97 @@ window.__ModuleLoader__.load({
      * read (no `getComputedStyle`, an unmounted canvas, a token the theme does
      * not define). Chosen to read on a light AND a dark page.
      */
+    /**
+     * ONE accent, and the alphas of the surfaces that sit ON the waveform.
+     *
+     * The alpha is what separates them: the envelope is the accent at 55%, the
+     * RMS core inside it is the accent solid, the selection wash is 16% and its
+     * edge 50%. Both paths below derive all four from that one accent, so a token
+     * the theme cannot hand over changes the SHADE and nothing else - which is
+     * the bug this shape exists to prevent. The token path used to read a name
+     * the pinned line does not define and hand the same opaque colour to every
+     * one of the four, so the RMS core was painted in its envelope's own colour
+     * (invisible), the stems were solid and the selection covered the waveform.
+     */
+    const ACCENT_FALLBACK = '#4f8cff'
+    const ENVELOPE_ALPHA = 0.55
+    const RMS_ALPHA = 1
+    const SELECTION_ALPHA = 0.16
+    const SELECTION_EDGE_ALPHA = 0.5
+
+    /**
+     * Whether a canvas takes this colour, asked ONCE and remembered.
+     *
+     * It has to be asked rather than assumed: a canvas ignores a `fillStyle` it
+     * cannot parse and KEEPS THE PREVIOUS ONE, so an unparsed colour paints the
+     * wrong thing (the hairline, the track wash) rather than a wrong shade.
+     */
+    let canvasTakesCache = null
+    function canvasTakes(colour) {
+      if (canvasTakesCache !== null) return canvasTakesCache
+      canvasTakesCache = false
+      try {
+        if (typeof document === 'undefined' || typeof document.createElement !== 'function') return false
+        const canvas = document.createElement('canvas')
+        canvas.width = 1
+        canvas.height = 1
+        const context = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null
+        if (!context) return false
+        context.fillStyle = '#010203'
+        context.fillStyle = colour
+        canvasTakesCache = context.fillStyle !== '#010203'
+      } catch (err) {
+        canvasTakesCache = false
+      }
+      return canvasTakesCache
+    }
+
+    /**
+     * A colour with an alpha applied to it.
+     *
+     * The theme's accent token is OPAQUE, so every surface that is meant to sit
+     * over the waveform needs its alpha put on here. A hex token (the shape the
+     * harness's colours take) is parsed directly; anything else goes through CSS
+     * `color-mix`, which is tested first because the substitute for an unparsed
+     * canvas colour is a wrong colour, not a weaker one. A browser with neither
+     * gets the solid accent, which is still visible - only its alpha is lost.
+     */
+    function withAlpha(colour, alpha) {
+      const text = String(colour).trim()
+      const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(text)
+      if (hex) {
+        const digits = hex[1]
+        const full =
+          digits.length === 3
+            ? digits.charAt(0) + digits.charAt(0) + digits.charAt(1) + digits.charAt(1) + digits.charAt(2) + digits.charAt(2)
+            : digits
+        return (
+          'rgba(' +
+          parseInt(full.slice(0, 2), 16) +
+          ',' +
+          parseInt(full.slice(2, 4), 16) +
+          ',' +
+          parseInt(full.slice(4, 6), 16) +
+          ',' +
+          alpha +
+          ')'
+        )
+      }
+      const mixed = 'color-mix(in srgb, ' + text + ' ' + Math.round(alpha * 100) + '%, transparent)'
+      return canvasTakes(mixed) ? mixed : text
+    }
+
+    /** The palette of last resort: the same accent, the same alphas. */
     const FALLBACK_PALETTE = {
       track: 'rgba(127,127,127,.05)',
       hairline: 'rgba(127,127,127,.22)',
       text: '#8a8a8a',
       textStrong: '#5a5a5a',
-      envelope: 'rgba(79,140,255,.55)',
-      rms: 'rgba(79,140,255,1)',
+      envelope: withAlpha(ACCENT_FALLBACK, ENVELOPE_ALPHA),
+      rms: withAlpha(ACCENT_FALLBACK, RMS_ALPHA),
       playhead: '#e5484d',
-      selection: 'rgba(79,140,255,.16)',
-      selectionEdge: 'rgba(79,140,255,.5)',
+      selection: withAlpha(ACCENT_FALLBACK, SELECTION_ALPHA),
+      selectionEdge: withAlpha(ACCENT_FALLBACK, SELECTION_EDGE_ALPHA),
     }
 
     /** The palette the canvas paints with, read off the app's own tokens. */
@@ -1792,17 +1936,17 @@ window.__ModuleLoader__.load({
           const raw = styles.getPropertyValue(name)
           return raw === undefined || raw.trim() === '' ? otherwise : raw.trim()
         }
-        const accent = value('--dsw-alias-state-accent', '#4f8cff')
+        const accent = value('--dsw-alias-brand-primary', ACCENT_FALLBACK)
         return {
           track: value('--dsw-alias-bg-layer-1', fallback.track),
           hairline: value('--dsw-alias-border-l3', fallback.hairline),
           text: value('--dsw-alias-label-tertiary', fallback.text),
           textStrong: value('--dsw-alias-label-secondary', fallback.textStrong),
-          envelope: accent,
-          rms: accent,
+          envelope: withAlpha(accent, ENVELOPE_ALPHA),
+          rms: withAlpha(accent, RMS_ALPHA),
           playhead: value('--dsw-alias-state-error-primary', fallback.playhead),
-          selection: accent,
-          selectionEdge: accent,
+          selection: withAlpha(accent, SELECTION_ALPHA),
+          selectionEdge: withAlpha(accent, SELECTION_EDGE_ALPHA),
         }
       } catch (err) {
         return fallback
@@ -3007,6 +3151,7 @@ window.__ModuleLoader__.load({
       decimateLevel: decimateLevel,
       pickLevel: pickLevel,
       columnEnvelope: columnEnvelope,
+      withAlpha: withAlpha,
       tickStepFor: tickStepFor,
       tickDecimals: tickDecimals,
       formatTime: formatTime,

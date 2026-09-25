@@ -1,4 +1,4 @@
-# dsh-editor (alpha.12)
+# dsh-editor (alpha.13)
 
 **Editor** is a **tab type for the pack's right bar** (`dsh-rightbar` — the
 right-hand column of the DeepSeek Harness web GUI, beside the **Start** page and
@@ -9,7 +9,7 @@ names and creates new files through the shared **`dsh-modal`** dialog, and saves
 them back to disk. It is a **sub-plugin**: it holds no bar code, and its
 host-side half owns the pack's own HTTP routes. Alpha.
 
-## What it does (through alpha.12)
+## What it does (through alpha.13)
 
 - **The engine and the bundle can no longer disagree** (alpha.12 — a real bug
   alpha.11 shipped). The vendored engine is ONE artifact at ONE URL, and it was
@@ -18,7 +18,7 @@ host-side half owns the pack's own HTTP routes. Alpha.
   alpha.11 therefore ran a **new client bundle against an old engine**, and
   `streamLanguage()`'s missing mode made `StreamLanguage.define(undefined)`
   dereference what it was handed: the whole tab died with *“Editor unavailable —
-  Cannot read properties of undefined (reading 'languageData')”*. Three changes,
+  Cannot read properties of undefined (reading 'languageData')”*. Four changes,
   each aimed at one half of that mismatch: the engine URL is now
   **version-qualified** (`/api/dsh-editor/vendor?v=<bundle version>`), so a new
   bundle is a new request instead of a cache hit; the route answers
@@ -29,6 +29,28 @@ host-side half owns the pack's own HTTP routes. Alpha.
   restart; and a mode the loaded engine does not carry now **degrades to no
   language with a console warning naming the mismatch**, because a document that
   opens unhighlighted beats a dead tab.
+
+- **Every language goes through that guard, not just the stream modes**
+  (alpha.13). alpha.12 wrapped the five **stream** languages (`shell`,
+  `powerShell`, `batch`, `rust`, `toml`) and left the seven **Lezer** ones called
+  straight off the engine (`CM.javascript()`, `CM.json()`, `CM.markdown()`,
+  `CM.python()`, `CM.html()`, `CM.css()`, `CM.yaml()`). The mismatch it was
+  fixing reaches those too — an engine older than its bundle answers
+  **`CM.yaml is not a function`**, which `openFile`'s `catch` turns into the very
+  "Editor unavailable" tab the fix exists to prevent — so the claim in this file
+  was broader than the code. One lookup now serves both families:
+  `engineLanguage(CM, name)` returns null (and reports once) when the engine
+  exports no factory of that name, `lezerLanguage` builds through it, and
+  `streamLanguage` wraps a stream mode through it — so `languageExtensionFor`
+  contains **no direct `CM.<name>(...)` call at all**, and the tracked check
+  asserts exactly that (it fails on a bare `return CM.<name>(` reappearing). The
+  warning's remedy was also stale: it still told the reader the route "caches the
+  artifact in memory for the life of the harness process, so RESTART `dsh web`",
+  which alpha.12 had just made false — a restart cannot help when the artifact on
+  disk is the old one. It now names the **rebuild** command and says a restart is
+  neither needed nor useful. The tracked check pins both halves, and it also
+  compares the client's `PLUGIN_VERSION` with `package.json`, because the
+  version-qualified URL is only worth anything while the two agree.
 
 - **Rust and TOML are highlighted too** (alpha.11). `.rs` and `.toml` files used
   to open with **no language at all**, exactly like the shell scripts before
@@ -171,10 +193,12 @@ host-side half owns the pack's own HTTP routes. Alpha.
   palette follows the **app's own light/dark theme** (oneDark while the app is
   dark, a token-driven transparent theme while it is light; see alpha.5 above).
   The engine is **lazy**: the vendored classic bundle is
-  fetched once from `/api/dsh-editor/vendor` the first time a file opens. A
-  language the loaded engine does not carry opens the document **without
-  syntax highlighting** and warns once in the console (alpha.12) instead of
-  failing the tab.
+  fetched once from `/api/dsh-editor/vendor` the first time a file opens — once
+  per bundle version, since the request carries `?v=<bundle version>` (alpha.12).
+  A language the loaded engine does not carry — Lezer or stream, both go through
+  the one guarded lookup (alpha.13) — opens the document **without syntax
+  highlighting** and warns once in the console with the rebuild command, instead
+  of failing the tab.
 - **Toolbar**: a find-in-file search input, a **Preview** button (Markdown files
   only, see alpha.7) and a **Save** button. Save is offered for an unnamed
   document at all times and for an open file while it is modified;

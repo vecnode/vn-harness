@@ -337,18 +337,38 @@ check(
 // and alpha.11 proved what that costs: a bundle newer than its engine asked for
 // `rust`, `StreamLanguage.define(undefined)` dereferenced it, and the tab died
 // with "Cannot read properties of undefined (reading 'languageData')" instead of
-// opening the file unhighlighted. `streamLanguage` is the only place a mode is
-// wrapped, and it returns null when the name is missing.
+// opening the file unhighlighted. alpha.12 guarded the five STREAM modes and left
+// the seven Lezer ones able to kill a tab the same way (`CM.yaml is not a
+// function`), so alpha.13 put EVERY lookup behind one guard: `engineLanguage`
+// answers null for a name the engine does not export, and `lezerLanguage` /
+// `streamLanguage` are the only two ways a language is built.
 check(
-  'a missing engine mode degrades instead of throwing',
-  editorSource.includes('function streamLanguage(CM, name)') &&
-    editorSource.includes('const mode = CM[name]') &&
-    editorSource.includes('if (!mode)') &&
-    !editorSource.includes('CM.StreamLanguage.define(CM.'),
+  'a missing engine language degrades instead of throwing',
+  editorSource.includes('function engineLanguage(CM, name)') &&
+    editorSource.includes('function lezerLanguage(CM, name, options)') &&
+    editorSource.includes('function streamLanguage(CM, name)') &&
+    editorSource.includes("const factory = CM[name]") &&
+    editorSource.includes('if (typeof factory !== \'function\')') &&
+    !editorSource.includes('CM.StreamLanguage.define(CM.') &&
+    // No language is built from the engine anywhere but through the guard: a bare
+    // `CM.<name>(...)` call is what a future mapping would add back by accident.
+    !/return CM\.[A-Za-z]+\(/.test(editorSource),
+)
+check(
+  'the guarded lookup reports the REBUILD, not a restart',
+  editorSource.includes('The route re-reads and re-ETags that artifact per request, so REBUILD it') &&
+    editorSource.includes('Restarting `dsh web` neither helps nor is needed') &&
+    editorSource.includes('RESTART `dsh web`') === false &&
+    editorSource.includes('caches the artifact in memory') === false,
 )
 // ...and the request for that engine is VERSION-QUALIFIED, so a browser cannot
 // hand this bundle an engine it cached under the same stable URL yesterday.
 check('the engine request carries this bundle\'s version', editorSource.includes("fetch(VENDOR_ROUTE + '?v=' + encodeURIComponent(PLUGIN_VERSION)"))
+// ...and that version is the PACKAGE's, read here rather than trusted: the URL
+// qualifier is only worth anything while the two agree, and alpha.10 shipped a
+// client whose constant said alpha.9.
+const editorVersion = JSON.parse(readFileSync(path.join(repo, 'packages/dsh-editor/package.json'), 'utf8')).version
+check('the client version constant is the package version', editorSource.includes("PLUGIN_VERSION = '" + editorVersion + "'"))
 // ...and the generated bundle must actually CARRY those names, which is the
 // half a source-only assertion cannot see: a stale cm6.min.js whose entry.js was
 // updated but never rebuilt fails here. `window`/`document` are passed as
@@ -371,6 +391,12 @@ check(
     ['shell', 'powerShell', 'batch', 'rust', 'toml'].every(
       (name) => cmVendor[name] && typeof cmVendor[name].token === 'function' && Boolean(cmVendor.StreamLanguage.define(cmVendor[name])),
     ),
+)
+check(
+  'editor engine carries the Lezer languages too',
+  // The other half of the mapping: these are called through the same guard, so a
+  // generated artifact missing one of them has to fail here rather than in a tab.
+  ['javascript', 'json', 'markdown', 'python', 'html', 'css', 'yaml'].every((name) => typeof cmVendor[name] === 'function'),
 )
 const registered = {}
 const types = []
@@ -2502,6 +2528,81 @@ const adpcm = A.parseWav(adpcmBytes, adpcmBytes.length)
 check('an unsupported WAVE codec is refused by name', adpcm.ok === false && adpcm.reason.includes('IMA ADPCM'))
 const other = A.parseContainer(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]), 12)
 check('something that is not audio at all is refused in a sentence', other.ok === false && other.reason.includes('not a RIFF/WAVE'))
+
+// A `fmt ` chunk whose block align is narrower than one frame cannot be a stride
+// at all: walking it reads a channel out of the NEXT frame's bytes (silently
+// wrong samples), an 8-bit stereo file reads `undefined` into the samples and a
+// float file throws a raw DataView RangeError at the last frame. Refused by name.
+const narrowStride = buildWav({ channels: 2, bits: 16, frames: 16 })
+new DataView(narrowStride.buffer).setUint16(32, 1, true)
+const narrow = A.parseWav(narrowStride, narrowStride.length)
+check(
+  'a block align narrower than a frame is refused by name',
+  narrow.ok === false && narrow.reason.includes('a frame of 4 bytes') && narrow.reason.includes('block align of 1'),
+)
+
+// A chunk with no body at all (a zero-size `junk`, an empty `LIST`) is 8 bytes of
+// header and nothing else, so the walk has to step OVER it. It used to stop
+// there, which made any file carrying one unreadable: the walk ended before
+// `data`, the parse answered "no data chunk ... so far", the probe re-read the
+// whole file looking for one and the viewer blamed a header it never reached.
+const withEmptyChunk = buildWav({ channels: 1, bits: 16, frames: 8 })
+const emptyChunk = new Uint8Array(withEmptyChunk.length + 8)
+emptyChunk.set(withEmptyChunk.subarray(0, 36), 0)
+emptyChunk.set([0x6a, 0x75, 0x6e, 0x6b, 0, 0, 0, 0], 36)
+emptyChunk.set(withEmptyChunk.subarray(36), 44)
+new DataView(emptyChunk.buffer).setUint32(4, emptyChunk.length - 8, true)
+const stepped = A.parseWav(emptyChunk, emptyChunk.length, true)
+check('a zero-size chunk is stepped over, not the end of the walk', stepped.ok === true && stepped.frames === 8)
+
+// A prefix that IS the whole file has no more bytes to offer, so "read more" is
+// the wrong answer: it is what made a 20-byte `RIFF...WAVE` report that its
+// header was larger than the 8 MiB ceiling. The probe knows (the host says `eof`,
+// and a known size it has covered is the same fact) and passes it down.
+const stub = new Uint8Array(20)
+const stubView = new DataView(stub.buffer)
+for (const at of [0, 8]) {
+  const word = at === 0 ? 'RIFF' : 'WAVE'
+  for (let index = 0; index < 4; index += 1) stub[at + index] = word.charCodeAt(index)
+}
+stubView.setUint32(4, 12, true)
+const wholeStub = A.parseWav(stub, stub.length, true)
+check(
+  'a whole-file prefix gets a verdict, not a "read more"',
+  wholeStub.ok === false && wholeStub.needsMore !== true && wholeStub.reason === 'it has no fmt chunk',
+)
+const prefixStub = A.parseWav(stub, 4096)
+check('a genuine prefix still asks for more bytes', prefixStub.ok === false && prefixStub.needsMore === true)
+const flacStub = new Uint8Array(8)
+flacStub.set([0x66, 0x4c, 0x61, 0x43], 0)
+flacStub[4] = 0x80
+flacStub[7] = 34
+check(
+  'an AIFF/FLAC chunk cut off by the END of the file is a verdict too',
+  A.parseFlacInfo(flacStub, true).needsMore !== true && A.parseFlacInfo(flacStub, false).needsMore === true,
+)
+
+// ONE accent, four surfaces: the alpha is what separates the envelope from the
+// RMS core inside it, and the token path used to hand the SAME opaque colour to
+// envelope, rms, selection and selectionEdge - so the RMS core was painted in its
+// envelope's own colour (invisible), the stems were solid and the selection
+// covered the waveform. The token it read was not one the pinned line defines.
+check('a hex accent takes the alpha it is given', A.withAlpha('#4f8cff', 0.55) === 'rgba(79,140,255,0.55)')
+check('a short hex is expanded', A.withAlpha('#abc', 0.5) === 'rgba(170,187,204,0.5)')
+check(
+  'the envelope and the RMS core are different colours',
+  A.withAlpha('#4f8cff', 0.55) !== A.withAlpha('#4f8cff', 1) &&
+    audioSource.includes('envelope: withAlpha(accent, ENVELOPE_ALPHA)') &&
+    audioSource.includes('rms: withAlpha(accent, RMS_ALPHA)'),
+)
+check(
+  'every translucent surface gets its alpha',
+  audioSource.includes('selection: withAlpha(accent, SELECTION_ALPHA)') && audioSource.includes('selectionEdge: withAlpha(accent, SELECTION_EDGE_ALPHA)'),
+)
+check(
+  'the accent token is one the pinned line defines',
+  audioSource.includes("value('--dsw-alias-brand-primary', ACCENT_FALLBACK)") && audioSource.includes('--dsw-alias-state-accent') === false,
+)
 
 // --- the AIFF container (the format a browser will not decode for us)
 const aiffBytes = buildAiff({ rate: 44100, channels: 1, bits: 16, frames: 500 })

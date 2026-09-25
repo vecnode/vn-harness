@@ -405,10 +405,30 @@ the fetch registry matches on `pathname`, so the query is free), the route
 **never offers a freshness window** (`cache-control: no-cache` over a
 content-hash ETag - revalidation is a 304, never a re-download), the route
 **re-`stat`s the artifact per request** and re-reads it when the stamp changed so
-a rebuild or a `git pull` needs no restart, and every mode is wrapped by **one
-guarded call site** (`streamLanguage(CM, name)`) that returns `null` - no
-language - with a single console warning when the engine lacks the name. The
-tracked checks pin all four.
+a rebuild or a `git pull` needs no restart, and every language lookup is wrapped by
+**one guarded call site** that returns `null` - no language - with a single console
+warning when the engine lacks the name. The tracked checks pin all four.
+
+**That last rule only held for half the map until alpha.13.** alpha.12 guarded the
+five **stream** modes and left the seven **Lezer** ones called straight off the
+engine (`CM.javascript()`, `CM.json()`, `CM.markdown()`, `CM.python()`,
+`CM.html()`, `CM.css()`, `CM.yaml()`), so an engine older than its bundle answered
+`CM.yaml is not a function` and `openFile`'s `catch` turned that into the very
+"Editor unavailable" tab the alpha.12 work exists to prevent - the claim above was
+broader than the code. One lookup now serves both families: `engineLanguage(CM,
+name)` answers `null` and reports once when the engine exports no factory of that
+name, `lezerLanguage` builds through it (with the flags a `javascript()` call
+takes), and `streamLanguage` wraps a stream mode through it, so
+`languageExtensionFor` contains **no direct `CM.<name>(...)` call at all** - and the
+tracked check fails on a bare `return CM.<name>(` reappearing, which is how a future
+mapping would add the bug back. The warning's remedy was stale in the same way: it
+still told the reader the route "caches the artifact in memory for the life of the
+harness process, so RESTART `dsh web`", which alpha.12 had just made false - a
+restart cannot help when the artifact **on disk** is the old one. It now names the
+rebuild command and says a restart is neither needed nor useful. The check also
+compares the client's `PLUGIN_VERSION` with `package.json`'s version, because the
+version-qualified URL is only worth anything while the two agree (alpha.10 shipped a
+client whose constant still said alpha.9).
 
 **Languages.** The map from file extension to a CodeMirror language lives in
 `languageExtensionFor` and has two kinds of entry. The Lezer parsers vendored as

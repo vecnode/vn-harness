@@ -109,7 +109,7 @@ window.__ModuleLoader__.load({
     const FILE_PREFIX = 'dsh-resource://file/'
     const SESSION_SEGMENT = 'session/'
     /** Version marker shown on the toolbar so a freshly loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.12'
+    const PLUGIN_VERSION = '0.1.0-alpha.13'
     /** The client service dsh-modal provides; resolved lazily, never required. */
     const MODAL_SERVICE = 'modals'
     /** The client service @deepseek-ai/dsh-client-ui-theme provides; resolved lazily too. */
@@ -558,38 +558,71 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------------------
-    // The vendored engine can lag the bundle. It is one artifact on one route,
-    // cached in memory for the life of the harness process and (until alpha.12)
-    // cacheable by the browser for an hour, so a client bundle newer than the
-    // loaded engine CAN ask for a mode the engine does not carry - and
-    // `StreamLanguage.define(undefined)` dereferences what it was handed, so the
-    // whole tab died with "Cannot read properties of undefined (reading
-    // 'languageData')". A document the editor can open unhighlighted beats a
-    // dead tab, so a missing (or unusable) mode degrades to no language and
-    // says which one and why.
+    // The vendored engine can lag the bundle. It is one GENERATED artifact on one
+    // route, and a client bundle newer than the loaded engine CAN ask for a
+    // language the engine does not carry. Two shapes of that exist and BOTH are
+    // fatal without a guard: a Lezer factory that is not a function at all
+    // (`CM.yaml is not a function`), and `StreamLanguage.define(undefined)`,
+    // which dereferences what it was handed ("Cannot read properties of undefined
+    // (reading 'languageData')"). alpha.12 guarded the five stream modes only,
+    // which left the seven Lezer ones able to kill a tab the same way; every
+    // lookup now goes through `engineLanguage`. A document that opens
+    // unhighlighted beats a tab that cannot open at all, so the missing mode
+    // degrades to no language and says which one and why.
     // ---------------------------------------------------------------------
     const missingModesReported = new Set()
+
+    /** One report per missing mode: which one, what it costs, and the real fix. */
+    function reportMissingMode(name, why) {
+      if (missingModesReported.has(name)) return
+      missingModesReported.add(name)
+      console.warn(
+        '[dsh-editor] the loaded CodeMirror engine cannot provide the "' +
+          name +
+          '" language (' +
+          why +
+          '), so this document opens without syntax highlighting: the engine artifact is older than this bundle. ' +
+          'The route re-reads and re-ETags that artifact per request, so REBUILD it - packages/dsh-editor/vendor: npx --yes esbuild entry.js --bundle --minify --format=iife --global-name=DSHEditorCM --target=es2020 --outfile=../lib/vendor/cm6.min.js - then reload the page. Restarting `dsh web` neither helps nor is needed.',
+      )
+    }
+
+    /**
+     * A language factory out of the loaded engine, or null when it does not carry
+     * one. The ONE place a language name is looked up.
+     */
+    function engineLanguage(CM, name) {
+      const factory = CM[name]
+      if (typeof factory !== 'function') {
+        reportMissingMode(name, 'the engine exports no ' + name + '()')
+        return null
+      }
+      return factory
+    }
+
+    /** A Lezer language from the engine, with the optional flags it takes. */
+    function lezerLanguage(CM, name, options) {
+      const factory = engineLanguage(CM, name)
+      if (factory === null) return null
+      try {
+        return factory(options)
+      } catch (err) {
+        reportMissingMode(name, 'building it threw: ' + err)
+        return null
+      }
+    }
+
+    /** A CM5-style stream mode from the engine, wrapped as a CM6 language. */
     function streamLanguage(CM, name) {
-      const mode = CM[name]
-      if (!mode) {
-        if (!missingModesReported.has(name)) {
-          missingModesReported.add(name)
-          console.warn(
-            '[dsh-editor] the loaded CodeMirror engine has no "' +
-              name +
-              '" mode, so this document opens without syntax highlighting: the engine is older than this bundle. ' +
-              'The engine route caches the artifact in memory for the life of the harness process, so RESTART `dsh web` (and hard-refresh the browser) to load the current one.',
-          )
-        }
+      const mode = engineLanguage(CM, name)
+      if (mode === null) return null
+      if (!CM.StreamLanguage || typeof CM.StreamLanguage.define !== 'function') {
+        reportMissingMode(name, 'the engine exports no StreamLanguage.define()')
         return null
       }
       try {
         return CM.StreamLanguage.define(mode)
       } catch (err) {
-        if (!missingModesReported.has(name)) {
-          missingModesReported.add(name)
-          console.warn('[dsh-editor] the "' + name + '" mode could not be wrapped as a language:', err)
-        }
+        reportMissingMode(name, 'wrapping it threw: ' + err)
         return null
       }
     }
@@ -604,6 +637,8 @@ window.__ModuleLoader__.load({
     // for any of them, so all five ride on StreamLanguage; without a mapping a
     // shell script drew as one flat colour in the light theme - the whole point
     // of alpha.10 - and a .rs or a .toml drew the same way until alpha.11.
+    // EVERY case below goes through the guarded lookup, whichever family it
+    // belongs to (alpha.13).
     // ---------------------------------------------------------------------
     function languageExtensionFor(CM, fileName) {
       const ext = extensionOf(fileName)
@@ -611,32 +646,32 @@ window.__ModuleLoader__.load({
         case 'js':
         case 'mjs':
         case 'cjs':
-          return CM.javascript()
+          return lezerLanguage(CM, 'javascript')
         case 'jsx':
-          return CM.javascript({ jsx: true })
+          return lezerLanguage(CM, 'javascript', { jsx: true })
         case 'ts':
-          return CM.javascript({ typescript: true })
+          return lezerLanguage(CM, 'javascript', { typescript: true })
         case 'tsx':
-          return CM.javascript({ typescript: true, jsx: true })
+          return lezerLanguage(CM, 'javascript', { typescript: true, jsx: true })
         case 'json':
         case 'jsonc':
-          return CM.json()
+          return lezerLanguage(CM, 'json')
         case 'md':
         case 'markdown':
         case 'mdown':
-          return CM.markdown()
+          return lezerLanguage(CM, 'markdown')
         case 'py':
         case 'pyw':
-          return CM.python()
+          return lezerLanguage(CM, 'python')
         case 'html':
         case 'htm':
         case 'xhtml':
-          return CM.html()
+          return lezerLanguage(CM, 'html')
         case 'css':
-          return CM.css()
+          return lezerLanguage(CM, 'css')
         case 'yaml':
         case 'yml':
-          return CM.yaml()
+          return lezerLanguage(CM, 'yaml')
         case 'sh':
         case 'bash':
         case 'zsh':
