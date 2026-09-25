@@ -1329,7 +1329,55 @@ check('terminal refits on resize and follows the end', termSource.includes('refi
 //     the columns the dock spans, which is what a ResizeObserver reports.
 check('terminal tracks the animated left bar', termSource.includes('new ResizeObserver(') && termSource.includes('columnObserver.observe(column)'))
 check('terminal also snaps on transitionend', termSource.includes("frame.addEventListener('transitionend', onTransitionEnd)"))
-check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.3'))
+//  4. the bar's chip strip (alpha.4). Two behaviours, both only visible in a live
+//     document, so both are pinned at the source level:
+//
+//     a. picking a chip must PUBLISH the pick. `runtime.show()` writes
+//        `dock.active` straight into the store's map and re-fits the emulator
+//        but never bumps the revision, so routing the click through it alone
+//        left `data-active` on the chip the reader had just left - the terminal
+//        being shown changed and the highlight did not;
+//     b. the strip must SCROLL sideways rather than clip (`overflow:hidden` cut
+//        the chips off with no way to reach them), the `+` must sit outside it,
+//        the arrows must be gated on real overflow, and the wheel listener must
+//        be native and non-passive or its `preventDefault()` is a no-op.
+check(
+  'terminal chip pick publishes to the store',
+  /const selectSlot = useCallback\([\s\S]*?dock\.active\.set\(sessionId, index\)[\s\S]*?bump\(\)[\s\S]{0,80}?\[sessionId\]/.test(termSource),
+)
+check('terminal bar draws through selectSlot', termSource.includes('onClick: () => selectSlot(slot.index)'))
+check(
+  'terminal chip strip scrolls instead of clipping',
+  termCss.includes('.dst-chips{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow-x:auto;overflow-y:hidden'),
+)
+check(
+  'terminal strip arrows ride on measured overflow',
+  termSource.includes("setChipNav") &&
+    termSource.includes("chipNav.over") &&
+    termSource.includes("'aria-label': 'Scroll the terminals left'") &&
+    termSource.includes("'aria-label': 'Scroll the terminals right'"),
+)
+check(
+  'terminal wheel listener is native and non-passive',
+  /chipsRef[\s\S]*addEventListener\('wheel', onWheel, \{ passive: false \}\)/.test(termSource),
+)
+check(
+  'terminal shows the active chip',
+  termSource.includes('chipRefs.current.get(active)') && termSource.includes('revealDelta(boxRect, chipRect)'),
+)
+// The one piece of the strip a static render cannot exercise: the scroll it takes
+// to reveal a chip. Wrong signs here are the classic scroll-into-view bug (the
+// strip runs further away from the chip it was asked to show), so the arithmetic
+// is driven directly.
+const reveal = terminal.exports.__internals.revealDelta
+const strip = { left: 100, right: 400 }
+check('terminal reveal: a chip on the left pulls back', reveal(strip, { left: 40, right: 140 }), -68)
+check('terminal reveal: a chip on the right pushes on', reveal(strip, { left: 380, right: 480 }), 88)
+check('terminal reveal: a chip already inside does not move', reveal(strip, { left: 120, right: 300 }), 0)
+check('terminal reveal: a chip just inside the edge stays put', reveal(strip, { left: 108, right: 392 }), 0)
+check('terminal reveal: a chip flush with the left edge stays put', reveal(strip, { left: 100, right: 120 }), 0)
+check('terminal reveal: no margin means no air', reveal(strip, { left: 60, right: 120 }, 0), -40)
+check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.4'))
 
 // -------------------------------------------------------------- dsh-rightbar
 // The right bar is a GENERATED fork, so these are source-level checks (like the

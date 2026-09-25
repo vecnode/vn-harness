@@ -1136,6 +1136,33 @@ region - `ctx.layout` only exposes `openRightbar`/`closeRightbar`/`toggleSidebar
   line count with the newest output out of sight, which is the pair of symptoms
   alpha.2 fixed.
 
+**The bar's chip strip.** One chip per terminal, `+` beside it, and the strip is a
+horizontally **scrolling** box. alpha.3 clipped what ran past the right edge
+(`overflow:hidden`) and kept `+` *inside* the clipped region, so the control that
+opens a terminal could scroll out of reach with the chips. Two rules keep it
+honest: the strip measures its own overflow (`scrollWidth > clientWidth`, plus
+each end, so a click at an end dims) and grows a `‹`/`›` pair only while there
+really is some — the arrows are the affordance the strip wears **instead of** a
+native scrollbar, which on a 24px row costs more height than it explains and
+would shift the whole bar the first time a chip overflowed. A bare wheel over the
+strip moves it (the pack's other scrollable surfaces do the same, and that
+listener is NATIVE with `{passive:false}` because React's own wheel listener is
+passive and a `preventDefault()` inside it is a no-op), and the chip on screen is
+scrolled into view by the smallest amount that reveals it, measured against the
+strip's own `getBoundingClientRect`. That last piece is a **pure function**
+(`revealDelta`), exported as the bundle's `__internals` so the tracked check can
+drive the arithmetic directly — a sign error there scrolls the strip *further
+away* from the chip it was asked to show, which no static render can see, and the
+check asserts both directions, the 8px of air and the no-op case.
+
+Picking a chip **publishes** the pick. `runtime.show()` writes `dock.active`
+straight into the store's map and re-fits the visible emulator, but it bumps no
+revision — so a pick routed through it alone left React's `data-active` on the
+chip the reader had just left: the terminal being shown changed and the highlight
+did not (reported against alpha.3, fixed in alpha.4 by routing every pick through
+one `selectSlot()` that writes the store, asks the runtime to show the slot and
+bumps).
+
 **Where the PTY comes from.** Not from this pack. The harness already ships
 `node-pty` (ConPTY prebuilds for `win32-x64/arm64`, plus `darwin-x64/arm64` and
 `linux-x64/arm64`) in its own dependency closure, so nothing is installed and
@@ -1372,6 +1399,8 @@ passes that through as the batch's own exit code).
 | Opening the dock moves the LEFT bar (its items slide up) | regression of alpha.1, where the room came from the frame's own height: the frame has ONE grid row shared with the left bar, so only the two columns the dock spans may be inset. The check `terminal never resizes the frame` pins this |
 | The terminal shows the wrong number of lines, or the newest output is out of view after a resize | the emulator was not re-fitted: a size change must recompute rows/cols from the new box, send `resize` to the PTY, and `scrollToBottom()`. Pinned by the check `terminal refits on resize and follows the end` |
 | The dock keeps the old left edge after collapsing/expanding the left bar | only the frame's `style` mutation was being watched. The left bar is ANIMATED (one grid rewrite, then a transition), so that mutation reports the pre-transition value and never fires again - the `ResizeObserver` on the two columns is what follows it. Pinned by the check `terminal tracks the animated left bar` |
+| The chip you just left keeps the selected dress after clicking another one | the pick went through `runtime.show()` alone, which writes `dock.active` into the store's map and bumps no revision, so React keeps the `data-active` it rendered last. Every pick must go through `selectSlot()` (store, then show, then `bump()`). Pinned by the check `terminal chip pick publishes to the store` |
+| Terminals past the right edge of the bar cannot be reached | `.dst-chips` went back to `overflow:hidden` (alpha.3), which also traps the `+` inside the clipped strip. It must be a horizontally scrolling box with the `+` outside it. Pinned by the checks `terminal chip strip scrolls instead of clipping` and `terminal strip arrows ride on measured overflow` |
 | The left bar still shows the fish / "deepseek" wordmark | `dsh-themes` alpha.6 hides whatever occupies `sidebar.brand.mark` / `sidebar.brand.name` and draws the VN mark instead; confirm the served `dsh-themes` bundle prints alpha.6 and hard-refresh. If the sidebar's hashed classes changed in a harness bump, the rule (pinned to them) needs updating |
 | A terminal prints nothing after a page reload | the shell is kept only five minutes after its last socket (`DETACH_GRACE_MS`); past that it was reaped and the dock opens a NEW shell in the same folder |
 | The terminal's `Ctrl+C` copies instead of interrupting | it must not: `Ctrl+C` is SIGINT and clipboard is `Ctrl+Shift+C` (`Cmd+C` on macOS). A single-key difference here is a bug, not a preference |

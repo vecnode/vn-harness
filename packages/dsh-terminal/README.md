@@ -1,4 +1,4 @@
-# dsh-terminal (alpha.3)
+# dsh-terminal (alpha.4)
 
 **Terminal** is a **bottom dock** for the DeepSeek Harness web GUI: a real shell,
 in the app, under the conversation. A header button — the same 28px round control
@@ -88,6 +88,14 @@ nodes into a React-managed container), so it positions itself:
   between them, `+` opens another, a chip's `×` kills that one shell. The dock
   is bound to the conversation that opened it; **switching conversation closes
   it**.
+- **The chip strip scrolls sideways** once the terminals outgrow it. While there
+  is real overflow the strip grows a `‹` and a `›` — one page per click, and they
+  dim at the ends — a bare wheel over the strip moves it, and the chip on screen
+  is always scrolled into view, so a terminal added with `+` (or picked from the
+  strip) never lands out of sight. The `+` sits **outside** the strip and is
+  therefore always reachable. The strip wears those arrows *instead of* a
+  scrollbar: a classic scrollbar on a 24px row costs more height than it explains
+  and would shift the whole bar the moment one more chip appeared.
 - **Clipboard** is `Ctrl+Shift+C` / `Ctrl+Shift+V` (`Cmd` on macOS). A bare
   `Ctrl+C` stays **SIGINT**, which is the whole reason for the shift.
 - **Follows the app's appearance**: the palette is re-applied from
@@ -191,7 +199,17 @@ The client check cannot run effects, so the geometry promises are pinned at the
 source level: this bundle must never write the frame's height, it must inset the
 two columns it spans, it must re-fit (and follow the end) on a resize, and it
 must track the left bar through *both* the mutation observer and the column
-`ResizeObserver` (plus the `transitionend` snap).
+`ResizeObserver` (plus the `transitionend` snap). The bar's own two behaviours are
+pinned the same way (alpha.4): picking a chip must write the store **and** bump
+its revision — `runtime.show()` alone left the highlight on the terminal the
+reader had just left — and the strip must be a scrolling box with the `+` outside
+it, the arrows gated on real overflow and the wheel listener registered natively
+as `{passive:false}`. The strip's scroll arithmetic is pinned by **driving** it
+rather than reading it: the bundle exposes its pure half as
+`__internals.revealDelta(box, chip, margin)` and the check asserts the sign in
+both directions, the 8px of air and the no-op case — a sign error there scrolls
+the strip *further away* from the chip it was asked to show, and no static render
+would ever see it.
 The behaviour itself was verified in a real browser engine while it was built —
 including that the left bar's height and contents are byte-for-byte where they
 were before the dock opened, that the middle and right columns end exactly at the
@@ -202,6 +220,19 @@ the tracking removed, that check reports the dock stuck at its old edge).
 
 ## Alpha notes
 
+- **alpha.4** — two things about the bar itself, both reported from use:
+  1. picking a chip showed the terminal but left the **highlight** on the chip you
+     had just left. The pick was routed through `runtime.show()`, which writes
+     `dock.active` straight into the store's map and re-fits the visible emulator
+     but never bumps the revision — so React did not re-render and `data-active`
+     stayed where it was. The pick now goes through one `selectSlot()` that writes
+     the store, asks the runtime to show the slot and bumps; showing and
+     highlighting cannot disagree again.
+  2. chips that ran past the right edge were **clipped** (`.dst-chips` was
+     `overflow:hidden`), with `+` inside that same clipped strip. The strip is now
+     a horizontally scrolling box with the `+` beside it, arrows that appear only
+     while it really overflows (one page per click, dimmed at each end), a bare
+     wheel that moves it, and a scroll-into-view for the active chip.
 - **alpha.3** — collapsing or expanding the left bar left the dock at its old left
   edge. The left bar is animated: one grid rewrite, then a CSS transition, so the
   `MutationObserver` on that rewrite reports the *pre-transition* track and is

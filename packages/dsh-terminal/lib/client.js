@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
     // Constants
     // ---------------------------------------------------------------------
     /** Shown on the dock's bar so a freshly loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.3'
+    const PLUGIN_VERSION = '0.1.0-alpha.4'
     /** The header list this control joins (Open In... is -10). */
     const HEADER_SLOT = 'conversation.session.header.utilities'
     /** The root-scoped overlay list the layout package renders inside the frame. */
@@ -93,7 +93,10 @@ window.__ModuleLoader__.load({
 .dst-bar{flex:none;display:flex;align-items:center;gap:8px;min-width:0;padding:2px 8px 6px 10px;border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.16))}
 .dst-brand{flex:none;display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary,#666);font-weight:500}
 .dst-glyph{flex:none;display:inline-flex;color:var(--dsw-alias-label-tertiary,#999)}
-.dst-chips{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow:hidden}
+.dst-chips{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:none;-ms-overflow-style:none}
+.dst-chips::-webkit-scrollbar{height:0;width:0}
+.dst-nav{flex:none;display:inline-flex;align-items:center;gap:2px}
+.dst-chev{font-size:13px;line-height:1}
 .dst-chip{flex:none;display:inline-flex;align-items:center;gap:6px;height:24px;box-sizing:border-box;padding:0 4px 0 9px;border:.5px solid transparent;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#666);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap;max-width:190px}
 .dst-chip:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
 .dst-chip[data-active]{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.16));border-color:var(--dsw-alias-border-l3,rgba(127,127,127,.28));color:var(--dsw-alias-label-primary,#1f1f1f)}
@@ -169,6 +172,23 @@ window.__ModuleLoader__.load({
 
     function clampHeight(value) {
       return Math.min(Math.max(Math.round(value), MIN_HEIGHT), maxHeight())
+    }
+
+    /**
+     * The scroll a strip needs to bring ONE chip into view: the smallest amount
+     * that leaves `margin` px of air, or 0 when it is already there. Both boxes
+     * are `{ left, right }` in the same coordinate space (`getBoundingClientRect`),
+     * and the result is a DELTA for `scrollLeft` - a negative one when the chip is
+     * cut off on the left, a positive one on the right - which the browser clamps
+     * to the scrollable range itself. Pure, so the tracked check can drive it
+     * without a layout engine: a sign error here is the classic way a
+     * scroll-into-view scrolls the wrong way, and no static render would see it.
+     */
+    function revealDelta(box, chip, margin) {
+      const gap = margin === undefined ? 8 : margin
+      if (chip.left < box.left) return chip.left - box.left - gap
+      if (chip.right > box.right) return chip.right - box.right + gap
+      return 0
     }
 
     function bump() {
@@ -886,6 +906,13 @@ window.__ModuleLoader__.load({
       const rootRef = useRef(null)
       const hostsRef = useRef(new Map())
       const runtimeRef = useRef(null)
+      // The chip strip scrolls sideways once the terminals outgrow it. The
+      // arrows are part of that: they exist only while it really overflows, and
+      // they are the affordance the strip wears INSTEAD of a scrollbar - a
+      // classic scrollbar on a 24px row costs more height than it explains.
+      const chipsRef = useRef(null)
+      const chipRefs = useRef(new Map())
+      const [chipNav, setChipNav] = useState({ over: false, atStart: true, atEnd: true })
       const [health, setHealth] = useState(null)
       const [engineError, setEngineError] = useState(null)
       // Mirrored onto the dock element as `data-appearance`: the terminal's own
@@ -1086,6 +1113,108 @@ window.__ModuleLoader__.load({
       )
 
       const active = dock.active.get(sessionId) ?? 0
+
+      // Picking a chip goes through the STORE, always. `runtime.show()` writes
+      // `dock.active` straight into the map and re-fits the visible emulator, but
+      // it does not publish: with the pick routed through it alone, React never
+      // re-rendered, so `data-active` stayed on the chip the reader had just left
+      // - the terminal being shown changed, the highlight did not (reported
+      // against alpha.3). One revision bump is what makes the two agree, and it
+      // is harmless on the path where no runtime exists yet.
+      const selectSlot = useCallback(
+        (index) => {
+          dock.active.set(sessionId, index)
+          const runtime = runtimeRef.current
+          if (runtime !== null) runtime.show(index)
+          bump()
+        },
+        [sessionId],
+      )
+
+      /** Re-read the strip's overflow. State is left untouched when unchanged. */
+      const syncChips = useCallback(() => {
+        const box = chipsRef.current
+        if (box === null) return
+        const max = Math.max(0, box.scrollWidth - box.clientWidth)
+        const next = {
+          over: max > 1,
+          atStart: box.scrollLeft <= 1,
+          atEnd: box.scrollLeft >= max - 1,
+        }
+        setChipNav((prev) =>
+          prev.over === next.over && prev.atStart === next.atStart && prev.atEnd === next.atEnd ? prev : next,
+        )
+      }, [])
+
+      /** One page of the strip, in either direction. */
+      const scrollChips = useCallback((direction) => {
+        const box = chipsRef.current
+        if (box === null) return
+        const step = Math.max(96, Math.round(box.clientWidth * 0.7))
+        const max = Math.max(0, box.scrollWidth - box.clientWidth)
+        const left = Math.max(0, Math.min(max, box.scrollLeft + direction * step))
+        if (typeof box.scrollTo === 'function') box.scrollTo({ left, behavior: 'smooth' })
+        else box.scrollLeft = left
+      }, [])
+
+      // What overflows is geometry, not state: it is re-read on a scroll, on a
+      // resize of the strip (the dock opening, the window, the left bar moving)
+      // and whenever the chip count changes.
+      useEffect(() => {
+        const box = chipsRef.current
+        if (box === null) return undefined
+        const onScroll = () => syncChips()
+        box.addEventListener('scroll', onScroll, { passive: true })
+        let observer = null
+        if (typeof ResizeObserver === 'function') {
+          observer = new ResizeObserver(() => syncChips())
+          observer.observe(box)
+        }
+        syncChips()
+        return () => {
+          box.removeEventListener('scroll', onScroll)
+          if (observer !== null) observer.disconnect()
+        }
+      }, [open, slots.length, syncChips])
+
+      // A bare wheel over the strip moves it SIDEWAYS, which is this pane's axis
+      // (the pack's other scrollable surfaces do the same). The listener is
+      // NATIVE and `{passive:false}`: React's own wheel listener is passive, so a
+      // `preventDefault()` inside it would do nothing and the wheel would scroll
+      // the terminal's own scrollback at the same time.
+      useEffect(() => {
+        const box = chipsRef.current
+        if (box === null) return undefined
+        const onWheel = (event) => {
+          if (event.ctrlKey || event.metaKey) return
+          const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+          if (delta === 0) return
+          const max = box.scrollWidth - box.clientWidth
+          if (max <= 0) return
+          const next = Math.max(0, Math.min(max, box.scrollLeft + delta))
+          if (next === box.scrollLeft) return
+          box.scrollLeft = next
+          event.preventDefault()
+        }
+        box.addEventListener('wheel', onWheel, { passive: false })
+        return () => box.removeEventListener('wheel', onWheel)
+      }, [])
+
+      // The chip on screen is always ON screen: a pick, or a terminal just added,
+      // scrolls the strip by the smallest amount that reveals it. The strip's own
+      // box is the reference (`getBoundingClientRect`), never a page scroll.
+      useEffect(() => {
+        const box = chipsRef.current
+        const chip = chipRefs.current.get(active)
+        if (box === null || chip === undefined || chip === null) return
+        const boxRect = box.getBoundingClientRect()
+        const chipRect = chip.getBoundingClientRect()
+        if (chipRect.width === 0 && chipRect.height === 0) return
+        const delta = revealDelta(boxRect, chipRect)
+        if (delta !== 0) box.scrollLeft += delta
+        syncChips()
+      }, [active, open, slots.length, syncChips])
+
       const activeSlot = slots.find((slot) => slot.index === active) || slots[0] || null
       const facts = activeSlot && activeSlot.detail ? activeSlot.detail : ''
       const notice = health !== null && health.available !== true ? health : engineError === null ? null : { reason: engineError }
@@ -1108,22 +1237,19 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dst-brand' }, h('span', { className: 'dst-glyph' }, h(TerminalGlyph, { size: 14 })), 'Terminal'),
           h(
             'div',
-            { className: 'dst-chips' },
+            { className: 'dst-chips', ref: chipsRef },
             slots.map((slot) =>
               h(
                 'div',
                 {
                   key: slot.index,
+                  ref: (el) => {
+                    if (el === null) chipRefs.current.delete(slot.index)
+                    else chipRefs.current.set(slot.index, el)
+                  },
                   className: 'dst-chip',
                   'data-active': slot.index === active ? '' : undefined,
-                  onClick: () => {
-                    const runtime = runtimeRef.current
-                    if (runtime !== null) runtime.show(slot.index)
-                    else {
-                      dock.active.set(sessionId, slot.index)
-                      bump()
-                    }
-                  },
+                  onClick: () => selectSlot(slot.index),
                 },
                 h('span', { className: 'dst-dot', 'data-state': slot.status }),
                 h('span', { className: 'dst-chipName' }, 'Terminal ' + String(slot.index + 1)),
@@ -1143,18 +1269,51 @@ window.__ModuleLoader__.load({
                 ),
               ),
             ),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dst-btn dst-btnIcon',
-                title: 'New terminal',
-                'aria-label': 'New terminal',
-                disabled: slots.length >= MAX_TERMINALS,
-                onClick: addTerminal,
-              },
-              h(PlusGlyph, { size: 12 }),
-            ),
+          ),
+          // The way along the strip, shown only while there IS one. Both the
+          // strip and the "+" live outside this group, so the control that opens
+          // a terminal can never scroll out of reach.
+          chipNav.over
+            ? h(
+                'div',
+                { className: 'dst-nav' },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dst-btn dst-btnIcon',
+                    title: 'Scroll the terminals left',
+                    'aria-label': 'Scroll the terminals left',
+                    disabled: chipNav.atStart,
+                    onClick: () => scrollChips(-1),
+                  },
+                  h('span', { className: 'dst-chev' }, '\u2039'),
+                ),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dst-btn dst-btnIcon',
+                    title: 'Scroll the terminals right',
+                    'aria-label': 'Scroll the terminals right',
+                    disabled: chipNav.atEnd,
+                    onClick: () => scrollChips(1),
+                  },
+                  h('span', { className: 'dst-chev' }, '\u203a'),
+                ),
+              )
+            : null,
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dst-btn dst-btnIcon',
+              title: 'New terminal',
+              'aria-label': 'New terminal',
+              disabled: slots.length >= MAX_TERMINALS,
+              onClick: addTerminal,
+            },
+            h(PlusGlyph, { size: 12 }),
           ),
           h(
             'span',
@@ -1249,6 +1408,9 @@ window.__ModuleLoader__.load({
 
     exports.apply = apply
     exports.inject = inject
+    // The bundle's PURE half, for the tracked check: the strip's scroll-into-view
+    // arithmetic, which a static render cannot exercise (see `revealDelta`).
+    exports.__internals = { revealDelta }
     return module.exports
   },
 })

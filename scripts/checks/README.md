@@ -44,7 +44,13 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
   - `dsh-terminal` - the bundle id, both seats, order 30, and the geometry
     invariants the dock must keep at the source level (never the frame's height,
     inset the two columns, re-fit on resize, follow the left bar through the
-    mutation observer *and* the column `ResizeObserver`);
+    mutation observer *and* the column `ResizeObserver`), plus the bar itself:
+    every chip pick publishes to the store (store + show + `bump()`, or the
+    highlight stays on the terminal you just left), the strip is a horizontally
+    scrolling box with `+` outside it, the arrows are gated on measured overflow
+    and the wheel listener is native and non-passive - and the strip's
+    scroll-into-view arithmetic is DRIVEN, through the bundle's pure
+    `__internals.revealDelta`;
   - `dsh-rightbar` - the forked bar's own source invariants (module-table id,
     the module-table surface other bundles inject);
   - `dsh-diagrams` - both tab types and their seats, all six tool cards, and the

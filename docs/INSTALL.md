@@ -325,6 +325,14 @@ from the web profile, plus any retired bundle name (`dsh-files`, `dsh-focus`).
   left bar is *animated*, so it reported the pre-transition width and never fired
   again). alpha.3 follows the columns' size instead. Confirm the dock's bar prints
   `dsh-terminal 0.1.0-alpha.3` or later and hard-refresh (Ctrl+F5).
+- **A terminal chip you just left keeps the selected dress, and terminals past the
+  right edge of the bar cannot be reached** — both were alpha.3: the pick went
+  through `runtime.show()` alone, which writes the store without publishing a
+  revision, and the chip strip was `overflow:hidden` (which also trapped the `+`).
+  alpha.4 routes every pick through one `selectSlot()` (store, show, bump) and
+  makes the strip a scrolling box with the `+` beside it, `‹`/`›` arrows that
+  appear only while it really overflows, and a bare wheel that moves it. Confirm
+  the dock's bar prints `dsh-terminal 0.1.0-alpha.4` and hard-refresh (Ctrl+F5).
 - **The left bar still shows the fish and the "deepseek" wordmark** — the branding
   override arrives with `dsh-themes` alpha.6; reinstall (`install.bat` /
   `./install.sh`, or `-Force`) so that version is in the profile, then restart and
