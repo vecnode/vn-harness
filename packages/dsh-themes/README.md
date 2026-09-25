@@ -1,6 +1,6 @@
-# dsh-themes (alpha.14)
+# dsh-themes (alpha.15)
 
-**The pack's conversation-header package.** It owns three controls on that header
+**The pack's conversation-header package.** It owns four controls on that header
 and the appearance overrides that dress it.
 
 **1. Themes** — one small control in the web GUI's conversation header: a button,
@@ -30,6 +30,14 @@ package's own host route. Since alpha.11 the picture is **the interface as it
 stands**, the header's own buttons included; only an open tooltip bubble is kept
 out of the frame. See [The screenshot control](#the-screenshot-control-alpha10).
 
+**4. The Page-zoom control** (alpha.15) — the leftmost button of the four. It drops
+a menu holding the level in force plus the two steps, **Zoom in** and **Zoom out**,
+and those two do what the browser's own **Ctrl+ / Ctrl- page zoom** does: `zoom` on
+the document element, along Chrome's own ladder, remembered per origin. It exists
+because that keyboard gesture belongs to the browser — a Chrome tab has it, and the
+native window the desktop launcher opens (a Tauri shell over the very same
+`dsh web`) does not. See [The page-zoom control](#the-page-zoom-control-alpha15).
+
 It also carries the pack's **appearance overrides** — rules that hold one surface
 on a fixed palette or a fixed shape whatever the app theme is. The first is the
 **Markdown paper** (alpha.2): the rendered Markdown view stays white in the dark
@@ -43,7 +51,7 @@ fish and wordmark. The fourth (alpha.9) is the **header ring**: the right bar's
 own collapse/expand toggle in the header corner is the one icon button on that bar
 that could not be given the group's round outline where it lives (it belongs to a
 GENERATED forked bundle), so one rule keyed on the header's stable corner marker
-gives it the same ring this package's three header buttons draw themselves. See
+gives it the same ring this package's own header buttons draw themselves. See
 below. All of them are plain engine-neutral CSS, so they hold in whichever browser
 the Web GUI is opened in.
 
@@ -401,6 +409,89 @@ padding, a 15px glyph, `border-radius: 28px` and the group's hairline ring. The
 glyph is the shipped `IconDownloadOutline16` — the icon the removed menu item
 carried.
 
+## The page-zoom control (alpha.15)
+
+The **leftmost** button of the four (order `-40`, one step left of the capture
+control). It drops a small menu holding **the level in force** and the two steps,
+**Zoom in** and **Zoom out** — the same act as the browser's own **Ctrl+ / Ctrl-**
+(and Ctrl+wheel) **page zoom**.
+
+**Why it exists.** That zoom is the *browser's*, and no page can invoke it. A
+Chrome tab has the keyboard gesture; the **native window the desktop launcher
+opens** — `run-desktop.bat`, a Tauri shell over the very same `dsh web` — has no
+such gesture at all. So the pack draws it.
+
+**How a page zooms itself.** One declaration on the document element:
+
+```js
+document.documentElement.style.setProperty('zoom', String(percent / 100))
+// ...and at the resting level, the declaration is REMOVED rather than set to 1,
+// so a page nobody has zoomed keeps exactly the style attribute the harness shipped
+document.documentElement.style.removeProperty('zoom')
+```
+
+`zoom` is **engine-neutral CSS** — Chromium and WebKit have carried it for years,
+Firefox since 126 — so **one code path** zooms a Chrome tab and the shell's
+WebView, with no host half, no Tauri API, no permission and no dependency: the
+bundle stays browser-only. Chromium divides the initial containing block by the
+root's zoom, so the shell's own dress (`html,body,#root{height:100%}`) still fills
+the window exactly and the layout viewport it sees really is the narrower one. That
+reflow is what makes this a *page zoom* rather than a magnifier — and it is also
+the reason the ladder is cut where it is, below.
+
+**The ladder is Chrome's own, cut at 50% and 200%**, and the cut at the top is
+**measured, not guessed**:
+
+| level | this button's right edge at a 1378×802 window | |
+|---|---|---|
+| 200% | 877 | inside |
+| 250% | 870 | inside |
+| 300% | 1044 | inside |
+| 400% | 1392 | **past the right edge** |
+
+The button lives **inside the page it zooms**, and a page zoom shrinks the layout
+viewport, so the header's utilities row — a crumb plus four 28px buttons, roughly
+400px of min-content — eventually needs more room than the window has left. A rung
+whose top hides the way back down is not offered: without it the only rescues would
+be Ctrl+- in a browser (which the shell does not have) or clearing `localStorage`
+by hand. The bottom rung is 50% for the same kind of reason, one of degree — this
+is a shell an agent works in, and 25% renders its text unreadable. Everything in
+between is Chrome's own rung.
+
+**The level is remembered per origin**, in `localStorage` under
+`dsh-themes.page-zoom`, and **re-applied before the control's first render**:
+in a browser tab the browser remembers its own zoom, and in the shell this is the
+only memory there is. A value that is not on the ladder is ignored rather than
+applied, and a browser that refuses storage (private mode, a locked-down WebView)
+still zooms — the level is simply not remembered.
+
+**It never listens for a key.** Swallowing Ctrl+ and Ctrl- in the page would
+**double** the zoom in a browser, where the gesture already works, and the shell is
+the only place the button is needed.
+
+**The menu stays open over a step** — the browser's own zoom submenu behaves the
+same way, and a level is usually walked to — and the shipped `Menu` closes it on a
+pointer press outside the anchor and its list, or on Escape. The button carries the
+level in `data-dsh-page-zoom` and in its tooltip (`Page zoom: 125%`) the way the
+Themes button carries the active preference.
+
+**Two honest limits, both measured rather than assumed.** `vh` is resolved against
+the real viewport and CSS `zoom` does not change it, while `window.innerWidth` keeps
+reporting unscaled pixels — the shell is laid out in percentages, so nothing in the
+frame is affected, but the few `max-height: calc(100vh - X)` rules on portalled
+menus and dialogs (shipped CSS, not this package's) are a little more generous than
+a browser zoom at the same level. Nothing overflows the window: `position: fixed;
+inset: 0` surfaces still span it. And **pointer coordinates stay unscaled too**: a
+real `mousedown` at x=100 inside a page zoomed to 200% still reports
+`clientX === 100`, while `getBoundingClientRect()` on the element under it reports
+the doubled values. Clicking, scrolling, hit-testing and every menu are exact (the
+browser maps the pointer itself), but a drag that compares pointer deltas against a
+rect — a pane's drag-to-pan, the terminal dock's grip — moves by the zoom factor
+off the pointer. At the levels people actually use (110–150%) that is a small
+offset on a secondary gesture, and it is the price of the one mechanism that works
+in both hosts; the alternative, a webview API that zooms the engine itself, would
+be desktop detection in a bundle that must stay plain.
+
 ## The screenshot control (alpha.10)
 
 One more button on the same header row, **left of the Themes control** (order
@@ -436,7 +527,7 @@ the open tab, the editor buffer and the dock are *this client's* state, not the
 server's.
 
 The stream is stopped the instant the frame is grabbed. The picture is **the
-interface as it stands — this package's three header controls included**: they are
+interface as it stands — this package's header controls included**: they are
 part of the header being photographed, and alpha.10's rule that took them out of
 the frame (so the shot would be "the app rather than the buttons that took it")
 left a hole in the record, which alpha.11 closes.
@@ -516,17 +607,19 @@ occupant of the **utilities** list:
 
 | Occupant | Order | Position |
 |---|---|---|
-| **Screenshot** (this package) | `-30` | first — left of the Themes control |
+| **Page zoom** (this package) | `-40` | first — left of the capture control |
+| **Screenshot** (this package) | `-30` | next — left of the Themes control |
 | **Themes** (this package) | `-20` | next — left of Open In |
 | Open In… (`open-in-app` / the pack's `dsh-open-in-app`) | `-10` | next |
 | **Session log download** (this package, shadowing the shipped seat) | `0` | after that — was the three-dot button |
 | Terminal (`dsh-terminal`) | `30` | last |
 
-`-30` and `-20` are the whole placement: the utilities list renders in ascending
-order, so a lower order simply renders further left. Nothing shipped is patched and
-no existing row's order is changed. The download seat is the one place this package
-takes OVER an occupant instead of adding one, and it does that by the registry's
-priority rule (same `id`, lower `priority`) rather than by hiding anything.
+`-40`, `-30` and `-20` are the whole placement: the utilities list renders in
+ascending order, so a lower order simply renders further left. Nothing shipped is
+patched and no existing row's order is changed. The download seat is the one place
+this package takes OVER an occupant instead of adding one, and it does that by the
+registry's priority rule (same `id`, lower `priority`) rather than by hiding
+anything.
 
 ## Layout
 
@@ -535,7 +628,9 @@ cordis.patch.yml   bundle layer: inserts the 'themes' row (nothing else patched)
 lib/index.js       Node half: one authenticated route, POST /api/dsh-themes/screenshot,
                    which writes the client's PNG to this machine's Desktop (the
                    browser bundle needs no host otherwise)
-lib/client.js      Browser half: the Screenshot button (capture + save), the Themes
+lib/client.js      Browser half: the Page-zoom button + menu (one inline `zoom` on
+                   <html>, Chrome's ladder cut at 50/200, remembered per origin),
+                   the Screenshot button (capture + save), the Themes
                    button + menu, the registered themes (THEME_EXTENSIONS: Nord's
                    and Monokai's token maps and menu glyphs, registered through
                    ctx.theme), the Session-log download seat (same slot, shipped id
@@ -585,6 +680,18 @@ lib/client.js      Browser half: the Screenshot button (capture + save), the The
   route names the file, resolves the Desktop itself, and validates the PNG before
   writing it create-exclusively. A missing host row costs the Desktop shortcut,
   not the feature — the browser download still saves the picture.
+- **The zoom is one declaration, and it goes away at 100%.** No wrapper element, no
+  transform, no per-surface CSS: a level that is not the resting one is a single
+  inline `zoom` on `<html>`, and the resting level removes it, so an unzoomed page
+  is byte-for-byte the page the harness shipped. That is also why the control needs
+  no host half and no Tauri API — the same code zooms a browser tab and the shell's
+  WebView.
+- **The ladder's top rung is a safety property, not a preference.** The control
+  lives inside the page it zooms, and a page zoom reflows the shell, so a rung high
+  enough to push the header's utilities row past the (shrunken) layout viewport
+  would hide the only way back down. 200% is where the measurement says the row
+  still fits with room to spare; a future edit that widens the ladder has to argue
+  with `check-client-bundles.mjs`, which pins it.
 
 ## Install / uninstall
 

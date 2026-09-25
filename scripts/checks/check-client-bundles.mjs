@@ -51,6 +51,9 @@ function loadReact() {
 const { React, jsxRuntime, renderToStaticMarkup } = loadReact()
 const h = React.createElement
 let failures = 0
+// The last Menu the stand-in primitives rendered, so a check can read the props
+// a bundle handed it (its items and its onSelect) instead of only the markup.
+let lastMenuProps = null
 function check(label, actual, expected) {
   const ok = expected === undefined ? Boolean(actual) : actual === expected
   if (!ok) failures += 1
@@ -58,11 +61,34 @@ function check(label, actual, expected) {
   return ok
 }
 
+/**
+ * A CSSOM-shaped inline style: a browser's own element style object answers
+ * `setProperty` / `removeProperty` and reflects the value as a property, which
+ * is how the page-zoom control writes (and the check reads) the level.
+ */
+function fakeInlineStyle() {
+  const style = {}
+  Object.defineProperty(style, 'setProperty', {
+    value: (name, value) => {
+      style[name] = String(value)
+    },
+  })
+  Object.defineProperty(style, 'removeProperty', {
+    value: (name) => {
+      delete style[name]
+    },
+  })
+  Object.defineProperty(style, 'getPropertyValue', {
+    value: (name) => (Object.prototype.hasOwnProperty.call(style, name) ? style[name] : ''),
+  })
+  return style
+}
+
 /** A DOM stand-in: enough for the style-tag injection and detached elements. */
 function fakeDocument() {
   const element = () => ({
     dataset: {},
-    style: {},
+    style: fakeInlineStyle(),
     children: [],
     textContent: '',
     value: '',
@@ -94,6 +120,8 @@ function fakeDocument() {
       },
     },
     body: element(),
+    // The page-zoom control writes its level here (and nowhere else).
+    documentElement: element(),
     // The theme package's own stylesheets; a check fills this in (CSSOM shape).
     styleSheets: [],
     querySelector: () => null,
@@ -108,7 +136,22 @@ function fakeDocument() {
 /** Capture one module-table bundle's factory and run it. */
 function loadBundle(relative, extraRequire) {
   const file = path.join(repo, relative)
-  const window = { __ModuleLoader__: {} }
+  // A stand-in for the browser's own storage. The page-zoom control remembers
+  // its level there (per origin, exactly like the browser zoom it mirrors), so
+  // the harness has to be able to hand one back and read what was written.
+  const storage = {
+    map: {},
+    getItem(key) {
+      return Object.prototype.hasOwnProperty.call(this.map, key) ? this.map[key] : null
+    },
+    setItem(key, value) {
+      this.map[key] = String(value)
+    },
+    removeItem(key) {
+      delete this.map[key]
+    },
+  }
+  const window = { __ModuleLoader__: {}, localStorage: storage }
   const document = fakeDocument()
   let entry = null
   window.__ModuleLoader__.load = (value) => {
@@ -130,8 +173,12 @@ function loadBundle(relative, extraRequire) {
     if (name === '@deepseek-ai/dsh-client-ui-primitives') {
       const Null = () => null
       // Menu renders its anchor (the trigger); Tooltip renders its child. Both
-      // are enough for a static render to reach the markup a bundle builds.
-      const Anchor = (props) => (props && props.anchor !== undefined ? props.anchor : null)
+      // are enough for a static render to reach the markup a bundle builds, and
+      // the Menu's props are kept so a check can drive its entries.
+      const Anchor = (props) => {
+        lastMenuProps = props
+        return props && props.anchor !== undefined ? props.anchor : null
+      }
       const Child = (props) => (props && props.children !== undefined ? props.children : null)
       // MarkdownText renders its text: the editor's rendered-view body draws it.
       const Text = (props) => props.text
@@ -163,7 +210,7 @@ function loadBundle(relative, extraRequire) {
     }
     throw new Error('unexpected require in a client bundle: ' + name)
   }
-  return { id: entry.id, exports: entry.factory(require), document }
+  return { id: entry.id, exports: entry.factory(require), document, window, storage }
 }
 
 // ---------------------------------------------------------------- dsh-modal
@@ -504,9 +551,10 @@ const themeService = {
   },
 }
 const themeEvents = []
-// The package registers THREE occupants of the same list slot (the screenshot
-// control, the Themes control and the Session-log download seat), so the
-// stand-in keys by slot#id.
+// The package registers FOUR occupants of the same list slot (the page-zoom
+// control, the screenshot control, the Themes control and the Session-log
+// download seat), so the stand-in keys by slot#id and the order below is the
+// order the package registers them in.
 const themesSeats = {}
 const themeLocales = {}
 // A stand-in for the shipped export controller's store - the shape the renderer
@@ -547,7 +595,7 @@ themes.exports.apply({
 check(
   'themes header seats',
   Object.keys(themesSeats).join(','),
-  'conversation.session.header.utilities#dsh-themes,conversation.session.header.utilities#dsh-themes-screenshot,conversation.session.header.utilities#session-log-download',
+  'conversation.session.header.utilities#dsh-themes,conversation.session.header.utilities#dsh-themes-screenshot,conversation.session.header.utilities#dsh-themes-zoom,conversation.session.header.utilities#session-log-download',
 )
 const themesSpec = themesSeats['conversation.session.header.utilities#dsh-themes'].spec
 check('themes seat id', themesSpec.id, 'dsh-themes')
@@ -581,6 +629,10 @@ const themesCopy = {
   'screenshot.failed': 'The screenshot failed',
   'screenshot.unsupported': 'This browser cannot capture the page here (HTTPS or localhost is required)',
   'screenshot.cancelled': 'The screenshot was cancelled',
+  'zoom.current': 'Page zoom: {percent}%',
+  'zoom.level': 'Current {percent}%',
+  'zoom.in': 'Zoom in',
+  'zoom.out': 'Zoom out',
 }
 const themesT = (key, vars) => {
   const text = themesCopy[key] === undefined ? key : themesCopy[key]
@@ -743,6 +795,99 @@ check('screenshot copy is registered', themeLocales.themes.en['screenshot.title'
 check(
   'screenshot copy carries the saved path',
   themeLocales.themes.en['screenshot.saved'].includes('{path}') && themeLocales.themes.zh['screenshot.saved'].includes('{path}'),
+)
+
+// ------------------------------------------------------ the page-zoom control
+// alpha.15: the fourth occupant of the same list, one more order step LEFT. It
+// is the pack's own PAGE ZOOM - `zoom` on the document element, Chrome's own
+// ladder, the level remembered in localStorage - because the keyboard gesture it
+// mirrors (Ctrl+ / Ctrl-) belongs to the browser, and the desktop launcher's
+// native window (a Tauri shell over the same `dsh web`) has none. The stepping
+// is driven through the Menu's own props, which the stand-in records, and the
+// document element it writes is the fake one.
+const zoomSpec = themesSeats['conversation.session.header.utilities#dsh-themes-zoom'].spec
+check('zoom seat id', zoomSpec.id, 'dsh-themes-zoom')
+check('zoom sits left of the capture control', zoomSpec.order < shotSpec.order, true)
+check('zoom shares the header locale namespace', zoomSpec.locale, 'themes')
+const ZoomAction = themesSeats['conversation.session.header.utilities#dsh-themes-zoom'].component
+const zoomRoot = themes.document.documentElement
+const ZOOM_STORE = 'dsh-themes.page-zoom'
+themes.storage.removeItem(ZOOM_STORE)
+const zoomMarkup = renderToStaticMarkup(h(ZoomAction, { t: themesT }))
+check('zoom button renders', zoomMarkup.includes('class="dst-button"') && zoomMarkup.includes('data-dsh-page-zoom="100"'))
+check('zoom button opens a menu', zoomMarkup.includes('aria-haspopup="menu"'))
+check('zoom button is labelled with its level', zoomMarkup.includes('aria-label="Page zoom: 100%"'))
+check('zoom button draws the magnifier', zoomMarkup.includes('M10.1 10.1 14.3 14.3'))
+check('zoom writes no declaration at rest', zoomRoot.style.zoom === undefined)
+check('zoom btn sits left of the theme btn', zoomSpec.order < themesSpec.order, true)
+check(
+  'zoom menu holds the level and two steps',
+  lastMenuProps.items.map((item) => item.id).join(','),
+  'zoom-level,zoom-in,zoom-out',
+)
+check('zoom menu names the level', lastMenuProps.items[0].text, 'Current 100%')
+check(
+  'zoom menu labels the two steps',
+  lastMenuProps.items[1].label + '/' + lastMenuProps.items[2].label,
+  'Zoom in/Zoom out',
+)
+check(
+  'the steps are live in the middle of the ladder',
+  lastMenuProps.items[1].disabled === false && lastMenuProps.items[2].disabled === false,
+)
+check('zoom menu asks for no selection pill', lastMenuProps.selectedId === undefined)
+// One step, the way a reader takes it: render (which reads the remembered
+// level), then select from THAT render. The ladder is Chrome's own, the
+// declaration is one inline `zoom` on <html>, and the level is remembered.
+/** The level the button is showing, read out of its own markup. */
+function zoomLevel() {
+  const markup = renderToStaticMarkup(h(ZoomAction, { t: themesT }))
+  const found = /data-dsh-page-zoom="(\d+)"/.exec(markup)
+  return found === null ? null : Number(found[1])
+}
+function zoomStep(id) {
+  zoomLevel()
+  lastMenuProps.onSelect(id)
+}
+zoomStep('zoom-in')
+check('zoom in paints the document element', zoomRoot.style.zoom, '1.1')
+check('zoom in remembers the level', themes.storage.getItem(ZOOM_STORE), '110')
+check('zoom button reports the new level', zoomLevel(), 110)
+zoomStep('zoom-in')
+check('a second step reaches 125%', zoomRoot.style.zoom, '1.25')
+zoomStep('zoom-out')
+// Back to the resting level: the DECLARATION IS REMOVED rather than written as
+// `zoom:1`, so a page nobody has zoomed keeps the style attribute the harness
+// shipped.
+zoomStep('zoom-out')
+check('the resting level removes the declaration', zoomRoot.style.zoom === undefined)
+check('the resting level is remembered', themes.storage.getItem(ZOOM_STORE), '100')
+for (let step = 0; step < 5; step += 1) zoomStep('zoom-out')
+check('the bottom of the ladder is 50%', zoomRoot.style.zoom, '0.5')
+zoomStep('zoom-out')
+check('the bottom of the ladder is the clamp', zoomLevel(), 50)
+check('the clamp greys out the step that cannot move', lastMenuProps.items[2].disabled === true && lastMenuProps.items[1].disabled === false)
+themes.storage.setItem(ZOOM_STORE, '200')
+zoomStep('zoom-in')
+check('the top of the ladder is the clamp', zoomLevel(), 200)
+check('the top greys out Zoom in only', lastMenuProps.items[1].disabled === true && lastMenuProps.items[2].disabled === false)
+// A level that is not on the ladder (nothing this control writes) is refused
+// rather than applied: the button reads the resting level instead.
+themes.storage.setItem(ZOOM_STORE, '123')
+check('an off-ladder stored level is ignored', zoomLevel(), 100)
+themes.storage.removeItem(ZOOM_STORE)
+check('zoom copy is registered', themeLocales.themes.en['zoom.in'], 'Zoom in')
+check('zoom copy is in both dictionaries', themeLocales.themes.zh['zoom.in'], '放大')
+check(
+  'zoom labels carry the level',
+  themeLocales.themes.en['zoom.current'].includes('{percent}') && themeLocales.themes.zh['zoom.level'].includes('{percent}'),
+)
+// The two zoom dictionaries describe the same control: a key in one and not the
+// other is copy the interface would render as a raw key.
+check(
+  'the zoom copy agrees across languages',
+  JSON.stringify(Object.keys(themeLocales.themes.en).filter((key) => key.startsWith('zoom.')).sort()) ===
+    JSON.stringify(Object.keys(themeLocales.themes.zh).filter((key) => key.startsWith('zoom.')).sort()),
 )
 
 // A profile that never mounts ui-theme: the control still renders (disabled,
@@ -967,6 +1112,19 @@ check(
 check(
   'the clicked button closes its own tooltip while it captures',
   themesSource.includes("{ label: label, side: 'bottom', delayMs: 500, disabled: busy }"),
+)
+// The zoom ladder is Chrome's own rungs CUT AT BOTH ENDS, and the cut is the
+// point: the control lives inside the page it zooms, so a rung high enough to
+// push the header's utilities row past the (shrunken) layout viewport would hide
+// the only way back down - measured on the real shell, where 300% still fits and
+// 400% does not. A later edit that widens it fails here and has to argue.
+check(
+  'the zoom ladder is Chrome\'s rungs cut at 50 and 200',
+  themesSource.includes('const ZOOM_STEPS = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200]'),
+)
+check(
+  'the resting level unsets the declaration',
+  themesSource.includes("root.style.removeProperty('zoom')") && themesSource.includes("root.style.setProperty('zoom', String(percent / 100))"),
 )
 const ringTag = themes.document.head.children.filter((tag) => tag.dataset && tag.dataset.pluginCss === 'dsh-themes/header-ring.css').pop()
 const headerRing = ringTag ? ringTag.textContent : ''

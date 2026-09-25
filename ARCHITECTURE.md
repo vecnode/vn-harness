@@ -73,11 +73,12 @@ packages/dsh-modal/               # sub-plugin: the shared dialog surface
   cordis.patch.yml    # inserts the 'modal' row (nothing else patched)
   lib/index.js        # Node half: no-op row (the overlay is browser-only)
   lib/client.js       # browser half: body-level overlay + the `modals` client service
-packages/dsh-themes/              # sub-plugin: the header's Themes control
+packages/dsh-themes/              # sub-plugin: the header's page-zoom, capture, theme and download controls
   package.json        # dsh.bundle + dsh.client
   cordis.patch.yml    # inserts the 'themes' row (nothing else patched)
-  lib/index.js        # Node half: no-op row (the control is browser-only)
-  lib/client.js       # browser half: the Light/Dark/System button over `ctx.get('theme')`
+  lib/index.js        # Node half: the screenshot route (writes the client's PNG to this machine's Desktop)
+  lib/client.js       # browser half: page zoom (one `zoom` on <html>), the Screenshot button, the Light/Dark/System
+                      # button + registered themes over ctx.get('theme'), and the Session-log download seat
 packages/dsh-open-in-app/         # the file-manager half of the Open In button
   package.json        # dsh.bundle + dsh.client (forks the shipped client bundle)
   cordis.patch.yml    # disables ui-open-in-app, inserts 'native-open-in-app'
@@ -553,18 +554,19 @@ Design points worth keeping:
 
 ## 9. The conversation header (dsh-themes)
 
-`dsh-themes` is the pack's **conversation-header package**: it owns the three
-controls described below — the Themes button, the Session-log download seat and
-the Screenshot control — plus the appearance overrides that dress the bar and the
-frame.
+`dsh-themes` is the pack's **conversation-header package**: it owns the four
+controls described below — the Themes button, the Session-log download seat, the
+Screenshot control and the Page-zoom control — plus the appearance overrides that
+dress the bar and the frame.
 
 The conversation header's right-hand group is a slot list
 (`conversation.session.header.utilities`): the shipped **Open In…** split button
 registers there at `order: -10`, the Session-log download seat at the default `0`
-(that seat used to draw a three-dot button — see the download seat below) and the
-**Screenshot** control at **`-30`**, one step left of the Themes occupant, which
-registers at **`order: -20`** and therefore renders first of the pack's three —
-immediately left of Open In. Nothing shipped is patched or reordered.
+(that seat used to draw a three-dot button — see the download seat below), the
+**Screenshot** control at **`-30`**, the Themes control at **`-20`** and the
+**Page-zoom** control at **`-40`**, the leftmost of the pack's four. The list
+renders in ascending order, so the row reads zoom | capture | themes | download
+next to Open In. Nothing shipped is patched or reordered.
 
 **The Themes control.** One icon button with a `Menu`:
 
@@ -572,7 +574,7 @@ immediately left of Open In. Nothing shipped is patched or reordered.
 |---|---|
 | `id` | `dsh-themes` (the occupant's slot id) |
 | slot | `conversation.session.header.utilities` (list, session scope) |
-| `order` | `-20` — first in the group, left of Open In (-10) |
+| `order` | `-20` — left of Open In (-10), right of the capture and zoom controls |
 | body | one icon button (28×28, 28px radius, 6px padding, 15px glyph, and the group's `.5px` hairline ring since alpha.9) opening a `Menu` of Light / Dark / System plus **every theme registered into the shipped registry** (alpha.12). The button wears one static appearance mark (a half-filled disc), not the active preference's sun/moon |
 | state | the shipped `theme` client service's snapshot, read through `ctx.get('theme')` |
 | write | `theme.setTheme(id)` — the same call the Settings → General → Appearance row makes |
@@ -813,16 +815,16 @@ unavailable". The inject face hands the renderer a CONSTANT observable source in
 that case, so the component's Hook call order is identical either way.
 
 **The Screenshot control (alpha.10).** One more occupant of the same list, at
-**`order: -30`** — the leftmost of the pack's three header controls — which
-captures the whole window and saves the PNG to the **Desktop of the machine
-running the app**. It is the first control in the pack whose behavior is split
-across both faces of its bundle, so `lib/index.js` is no longer a no-op row.
+**`order: -30`**, which captures the whole window and saves the PNG to the
+**Desktop of the machine running the app**. It is the first control in the pack
+whose behavior is split across both faces of its bundle, so `lib/index.js` is no
+longer a no-op row.
 
 | Piece | Value |
 |---|---|
 | slot | `conversation.session.header.utilities` (list, session scope) |
 | `id` | `dsh-themes-screenshot` |
-| `order` | `-30` — the list's first occupant, left of the Themes control (`-20`) |
+| `order` | `-30` — left of the Themes control (`-20`), right of the Page-zoom control (`-40`) |
 | capture | `navigator.mediaDevices.getDisplayMedia({preferCurrentTab:true, selfBrowserSurface:'include', video:{displaySurface:'browser'}, audio:false})`, one frame `drawImage`'d into a canvas and encoded as `image/png` |
 | save | `POST /api/dsh-themes/screenshot` (this package's host row) → `%USERPROFILE%\Desktop` / `~/Desktop` / XDG desktop / home, as `vn-harness-<timestamp>.png` |
 | fallback | the browser's own download, when the host route answers nothing |
@@ -851,10 +853,18 @@ alternatives were rejected for the same reason:
 
 `getDisplayMedia` with `preferCurrentTab` is the one API that hands the page its
 own pixels, so the browser's share prompt is the price of a truthful shot. The
-stream is stopped the instant the frame is grabbed, and the pack's three controls
-— plus whatever tooltip hangs off them — are hidden for that one frame by
-`html[data-dsh-screenshot]` (the injected `themes.css` rule), so the picture is
-the app rather than the buttons that took it.
+stream is stopped the instant the frame is grabbed. The picture is **the interface
+as it stands, this package's own header controls included**: they are part of the
+header being photographed, and alpha.10's rule that took them out of the frame left
+a hole in the record, which alpha.11 closes. The one thing the injected
+`themes.css` rule keeps out (`html[data-dsh-screenshot] [role=tooltip]`) is the
+**open tooltip bubble** — a hover card is not part of the interface, and the
+pointer is usually still on the button that started the capture. That button also
+passes `disabled` to its own `Tooltip` while the capture runs (the shipped
+primitive's close-and-stay-closed switch, keyed on a prop), so its bubble is gone
+rather than merely invisible; the CSS rule is the safety net that covers every
+other `Tooltip` in the app, and it is keyed on the tooltip's semantic
+`role="tooltip"` marker rather than a hashed class.
 
 **The file lands on the host's Desktop, not in the download folder.** The PNG is
 POSTed to this package's own authenticated route
@@ -882,6 +892,73 @@ answers a typed failure (`500` + code) rather than throwing. When the host row i
 absent — an older profile, or `-Plugin dsh-themes` against a partial install —
 `deliverPng` falls back to an `<a download>` of the blob, so the control always
 produces a picture; the toast says which of the two paths happened.
+
+**The Page-zoom control (alpha.15).** The fourth occupant of the same list, at
+**`order: -40`** — one more step left, so it is the first control in the group —
+which drops a `Menu` holding the level in force plus the two steps, **Zoom in** and
+**Zoom out**.
+
+It exists because the gesture it mirrors is the *browser's*: `Ctrl+` / `Ctrl-`
+(and Ctrl+wheel) page zoom belongs to Chrome, and the **native window**
+`run-desktop.bat` opens — a Tauri shell over the very same `dsh web` — has no such
+gesture at all. No page can invoke the browser's own zoom, so this control writes
+the equivalent itself.
+
+| Piece | Value |
+|---|---|
+| slot | `conversation.session.header.utilities` (list, session scope) |
+| `id` | `dsh-themes-zoom` |
+| `order` | `-40` — the group's leftmost occupant, left of the Screenshot control (`-30`) |
+| what it writes | ONE inline declaration on `document.documentElement`: `zoom: <percent/100>`, and `removeProperty('zoom')` at the resting level |
+| ladder | Chrome's own zoom steps, cut at **50%** and **200%** |
+| memory | `localStorage['dsh-themes.page-zoom']`, per origin, re-applied before the control's first render |
+| gesture | the mode click opens the menu; a step keeps it open (the shipped `Menu` still closes on a press outside or on Escape) |
+
+**Why `zoom` on the root, and not a transform.** `zoom` is engine-neutral CSS —
+Chromium and WebKit have carried it for years, Firefox since 126 — so ONE code path
+zooms a Chrome tab and the shell's WebView: no host half, no Tauri API, no
+permission, and the bundle stays browser-only. Chromium divides the initial
+containing block by the root's zoom, so the shell's own dress
+(`html,body,#root{height:100%}`) still fills the window exactly and the **layout
+viewport really does become the narrower one** — media queries and fl/grid
+reflow — which is what makes this a page zoom rather than a magnifier. A CSS
+`transform: scale()` would have moved pixels without reflowing anything, and a
+page laid out at full width but drawn at 200% has to be scrolled sideways to be
+read.
+
+**The ceiling is measured, not stylistic.** The control lives inside the page it
+zooms, and the utilities row it sits in is a crumb plus four 28px buttons (~400px
+of min-content). Since a root `zoom` shrinks the layout viewport, a high enough
+rung pushes that row — this button included — past the window's right edge, and
+the shell does not scroll, so the only way back down would be gone. Measured on
+the real shell at a 1378×802 window: 200% and 250% leave the button at x≈870,
+300% at 1044, **400% at 1392 (past the edge)** and 500% pushes the whole header
+out. The ladder therefore stops at 200%, a rung that still fits with room to
+spare, and the bottom stops at 50% (25% renders a shell an agent works in
+unreadable). Everything between is Chrome's own rung, so a click lands on the
+levels the keyboard gesture would. `check-client-bundles.mjs` pins the array.
+
+**What it deliberately does not do.** It never listens for a key: swallowing
+`Ctrl+` / `Ctrl-` in the page would **double** the zoom in a browser, where the
+gesture already works. It writes nothing at 100% — the declaration is removed, not
+set to `1` — so an unzoomed page keeps exactly the `style` attribute the harness
+shipped. And a stored level that is not on the ladder is ignored rather than
+applied, because the ladder is the only thing this control ever writes.
+
+**Two honest limits, both measured.** `vh` is resolved against the real viewport
+and CSS `zoom` does not change it, while `window.innerWidth` keeps reporting
+unscaled pixels — nothing in the frame is affected (it is laid out in
+percentages), but the few `max-height: calc(100vh - X)` rules on the shipped menus
+and dialogs are a little more generous than a browser zoom at the same level, and
+`position: fixed; inset: 0` surfaces still span the window exactly. Pointer
+coordinates are the other half: a real `mousedown` at x=100 in a page zoomed to
+200% still reports `clientX === 100` while the rect of the element under it
+doubles, so a drag that compares pointer deltas against `getBoundingClientRect()`
+(a pane's drag-to-pan, the terminal dock's grip) moves by the zoom factor off the
+pointer. Clicking, scrolling, hit-testing and every menu are exact. Both limits are
+the price of ONE mechanism that works in a Chrome tab and in the shell's WebView
+alike; branching on a webview zoom API would be desktop detection inside a bundle
+that has to stay plain.
 
 ## 10. The file-manager half of Open In (dsh-open-in-app)
 
@@ -1221,6 +1298,8 @@ passes that through as the batch's own exit code).
 | Save answers "Changed on disk" | the file moved under you; use **Reload** (take the disk copy) or **Save anyway** (overwrite it) in the banner |
 | Code text is black-on-dark in the light theme | the editor did not follow the scheme: confirm the bundle is alpha.5+ (`dsh-editor` prints its version in the tab's file bar) and that ui-layout still writes `body[data-ds-dark-theme]` |
 | No Themes button in the header | `dsh-themes` is not mounted (a new package needs one install run: `install.bat` / `./install.sh`, or `-Force`), or the row did not land: check the console for `[dsh-themes]` |
+| No Page-zoom button in the header | the same row as the Themes button — all four controls are one bundle. Inside the native window it is the only way to zoom at all (the shell has no Ctrl+ / Ctrl- page zoom); confirm the served `dsh-themes` bundle prints alpha.15+ |
+| The page is stuck at a zoom level in the native window | the level is remembered per origin in `localStorage['dsh-themes.page-zoom']`; the button walks it back (it is the leftmost of the four, and the ladder stops at 200% precisely so it cannot go off-screen), and clearing that key resets it to 100% |
 | The Themes button is greyed out | the `theme` service never appeared, so `@deepseek-ai/dsh-client-ui-theme` (row `ui-theme`) is not in the boot graph; the tooltip says "The theme service is unavailable" |
 | Fork drift after a harness update | `scripts/sync-vendored.ps1 -Check` exits 1; run it without `-Check` and review the diff |
 | No "History" capsule on the "+" / Start page | `dsh-gittree` is not mounted (a new package needs one install run: `install.bat` / `./install.sh`, or `-Force`), or its client bundle did not activate - check the console for `[dsh-gittree]` |

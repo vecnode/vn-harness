@@ -1,7 +1,7 @@
 /**
  * dsh-themes - browser half: the pack's CONVERSATION HEADER package.
  *
- * It owns three controls on that header and the appearance overrides that go
+ * It owns four controls on that header and the appearance overrides that go
  * with them.
  *
  * 1. THE THEMES CONTROL. One small button, the same size and dress as the
@@ -71,6 +71,29 @@
  *    fallback, and the toast says which of the two happened. See the screenshot
  *    section below.
  *
+ * 4. THE PAGE-ZOOM CONTROL (alpha.15). The fourth occupant of the same list, one
+ *    order step LEFT of the Screenshot control (order -40 against its -30). One
+ *    magnifier button that drops a small menu holding the CURRENT level and two
+ *    entries, `Zoom in` and `Zoom out` - the same act as the browser's own
+ *    Ctrl+ / Ctrl- (and Ctrl+wheel) PAGE zoom, which is why the control exists:
+ *    a Chrome tab has that keyboard gesture, and the native window the desktop
+ *    launcher (`run-desktop.bat`, a Tauri shell over the very same `dsh web`)
+ *    opens does not.
+ *
+ *    HOW IT ZOOMS. `zoom` on the document element - one inline declaration on
+ *    <html>, removed again at 100% so a page nobody has zoomed is byte-for-byte
+ *    the page the harness shipped. That is engine-neutral CSS (Chromium/WebKit
+ *    have always had it, Firefox since 126), so the SAME code path zooms a
+ *    Chrome tab and the shell's WebView, with no host half, no Tauri API and no
+ *    permission: the bundle stays browser-only. Chromium divides the initial
+ *    containing block by the zoom, so `html,body,#root{height:100%}` - the
+ *    shell's own dress - still fills the window exactly, and the ladder is
+ *    Chrome's own rungs CUT AT 50% AND 200%, because the button is inside the
+ *    page it zooms: see the ladder's own note for the measurement behind that
+ *    ceiling. The level is remembered in `localStorage` and re-applied before
+ *    this row's first render, because in the shell there is no browser zoom to
+ *    remember it instead. See the zoom section below.
+ *
  * It also carries the pack's appearance OVERRIDES - rules that hold one surface
  * on a fixed palette regardless of the app theme, or give a core surface the
  * frame's own dress. The first (alpha.2) is the
@@ -117,7 +140,7 @@ window.__ModuleLoader__.load({
     /** The slot id of the Themes occupant in the header utilities list. */
     const THEMES_ID = 'dsh-themes'
     /** Version marker, logged at activation so a fresh bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.10'
+    const PLUGIN_VERSION = '0.1.0-alpha.15'
     /** The client service (@deepseek-ai/dsh-client-ui-theme) that owns the preference. */
     const THEME_SERVICE = 'theme'
     /** The Session header's utilities slot (the group the Open In control sits in). */
@@ -156,6 +179,47 @@ window.__ModuleLoader__.load({
     const SCREENSHOT_ROUTE = '/api/dsh-themes/screenshot'
     /** The saved file's name pattern, the same one the Node half falls back to. */
     const SCREENSHOT_PREFIX = 'vn-harness-'
+    /**
+     * The page-zoom control (alpha.15): its occupant id in the same utilities
+     * list, and its order - one step LEFT of the Screenshot control, one more
+     * step of the same rule (a list slot renders lowest order first).
+     */
+    const ZOOM_ID = 'dsh-themes-zoom'
+    const ZOOM_ORDER = SCREENSHOT_ORDER - 10
+    /**
+     * The LADDER the control walks, as percentages: Chrome's own zoom steps,
+     * so a click lands on the same levels the Ctrl+ / Ctrl- keyboard gesture
+     * does - CUT AT BOTH ENDS.
+     *
+     * THE TOP RUNG IS 200% ON PURPOSE, and it is measured, not guessed. The
+     * button lives INSIDE the page it zooms, and a browser zoom shrinks the
+     * layout viewport (`zoom` on the root divides the initial containing block
+     * by the factor - that reflow is what makes it a page zoom rather than a
+     * magnifier), so the header's utilities row - a crumb plus four 28px
+     * buttons, ~400px of min-content - eventually needs more room than the
+     * window has left. Measured on the real shell at 1378x802: 300% still puts
+     * this button at x=1044 inside the window, 400% puts it at x=1392, i.e.
+     * past the right edge, and 500% pushes the whole header out. A rung whose
+     * top hides the way back down is not offered: without it the only rescues
+     * would be Ctrl+- in a browser (which the shell does not have) or clearing
+     * localStorage by hand.
+     *
+     * THE BOTTOM RUNG IS 50% for the same kind of reason, one of degree: this
+     * is a shell an agent works in, and 25% renders its text unreadable. The
+     * levels in between are Chrome's own.
+     */
+    const ZOOM_STEPS = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200]
+    /** The resting level: no declaration at all is written at this one. */
+    const ZOOM_DEFAULT = 100
+    /**
+     * Where the level is remembered. `localStorage` and not a settings
+     * namespace: this pack ships no persistence of its own, the preference is
+     * per-ORIGIN exactly like the browser zoom it mirrors, and the shell the
+     * control was built for has a WebView with one stable origin - so the level
+     * survives a restart there, which the keyboard gesture it replaces does not
+     * offer at all.
+     */
+    const ZOOM_KEY = 'dsh-themes.page-zoom'
     /**
      * The app mark, from `assets/vn-harness.svg` at the pack root: a black circle
      * centred on (12,12) in its own 24px box, with a 1px transparent margin.
@@ -255,6 +319,10 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       'screenshot.failed': '截图失败',
       'screenshot.unsupported': '当前环境不支持网页截图（需要 HTTPS 或 localhost）',
       'screenshot.cancelled': '截图已取消',
+      'zoom.current': '页面缩放：{percent}%',
+      'zoom.level': '当前 {percent}%',
+      'zoom.in': '放大',
+      'zoom.out': '缩小',
     }
     /** English dictionary, key-identical to the Chinese source of truth. */
     const en = {
@@ -284,6 +352,10 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       'screenshot.failed': 'The screenshot failed',
       'screenshot.unsupported': 'This browser cannot capture the page here (HTTPS or localhost is required)',
       'screenshot.cancelled': 'The screenshot was cancelled',
+      'zoom.current': 'Page zoom: {percent}%',
+      'zoom.level': 'Current {percent}%',
+      'zoom.in': 'Zoom in',
+      'zoom.out': 'Zoom out',
     }
 
     /** The three preferences ui-theme owns, in the Settings row's order. */
@@ -1820,12 +1892,227 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
     }
 
     // ---------------------------------------------------------------------
+    // The page-zoom control (alpha.15).
+    //
+    // WHAT IT IS FOR. A Chrome tab zooms the page itself with Ctrl+ / Ctrl- and
+    // Ctrl+wheel - the BROWSER's own page zoom, which no page can invoke. The
+    // native window the desktop launcher opens (`run-desktop.bat`, a Tauri shell
+    // over the very same `dsh web`) has no such gesture at all. So the pack
+    // draws the gesture: one magnifier button in the header that drops the level
+    // in force and the two steps, `+` and `-`.
+    //
+    // HOW A PAGE CAN ZOOM ITSELF. `zoom` on the document element. It is
+    // engine-neutral CSS - Chromium and WebKit have carried it for years,
+    // Firefox since 126 - so ONE code path zooms a Chrome tab and the shell's
+    // WebView, with no host half, no Tauri API, no permission and no
+    // dependency: the bundle stays browser-only. Chromium divides the initial
+    // containing block by the root's zoom, so the shell's own dress
+    // (`html,body,#root{height:100%}`) still fills the window exactly, and the
+    // layout viewport it sees really is the narrower one - a page zoom, not a
+    // transform of a picture.
+    //
+    // WHAT IT IS NOT. Not the keyboard: the control never listens for a key.
+    // Swallowing Ctrl+ and Ctrl- in the page would DOUBLE the zoom in a browser,
+    // where the gesture already works, and the shell is the only place the
+    // button is needed. Not a guess either: the ladder is Chrome's own rungs,
+    // cut at 50% and 200% for the reason recorded with it (a browser zoom
+    // reflows the shell, so a high enough rung pushes this very button out of
+    // the window - measured, not assumed), and 100% REMOVES the declaration
+    // instead of writing `zoom:1`, so a page nobody has zoomed keeps exactly the
+    // style attribute the harness shipped.
+    //
+    // ONE HONEST LIMIT, stated rather than hidden: `vh` is resolved against the
+    // real viewport and CSS `zoom` does not change it, while `window.innerWidth`
+    // keeps reporting unscaled pixels. The shell is laid out in percentages, so
+    // nothing in the frame is affected, but the few `max-height:calc(100vh - X)`
+    // rules on portalled menus and dialogs (shipped CSS, not this package's) are
+    // a little more generous than a browser zoom at the same level. Nothing
+    // overflows the window: `position:fixed;inset:0` surfaces still span it.
+    // ---------------------------------------------------------------------
+    /**
+     * The zoom glyphs: one magnifier for the button, the same lens carrying the
+     * sign for each menu entry. Drawn here - a 16px box and a 1.2px
+     * `currentColor` outline, the weight of the icons beside them - because the
+     * shipped primitive set has no zoom glyph, the same reason the screenshot
+     * camera and the appearance mark are drawn here.
+     */
+    function magnifier(size, mark) {
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': 'true',
+          focusable: 'false',
+        },
+        h('circle', { cx: '6.9', cy: '6.9', r: '4.3' }),
+        h('path', { d: 'M10.1 10.1 14.3 14.3' }),
+        mark,
+      )
+    }
+
+    function IconZoomOutline16(props) {
+      return magnifier(props && typeof props.size === 'number' ? props.size : 16, null)
+    }
+
+    function IconZoomInOutline16(props) {
+      return magnifier(
+        props && typeof props.size === 'number' ? props.size : 16,
+        h('path', { d: 'M6.9 4.9v4M4.9 6.9h4' }),
+      )
+    }
+
+    function IconZoomOutOutline16(props) {
+      return magnifier(props && typeof props.size === 'number' ? props.size : 16, h('path', { d: 'M4.9 6.9h4' }))
+    }
+
+    /** The document element, or `null` where there is no document (the checks). */
+    function zoomRoot() {
+      return typeof document !== 'undefined' && document.documentElement ? document.documentElement : null
+    }
+
+    /**
+     * The remembered level, or 100. A value that is not on the ladder is
+     * ignored - the ladder is the only thing this control ever writes, so
+     * anything else was put there by hand and is not a level to honour.
+     */
+    function readZoom() {
+      try {
+        const store = typeof window !== 'undefined' ? window.localStorage : undefined
+        if (!store || typeof store.getItem !== 'function') return ZOOM_DEFAULT
+        const saved = Number(store.getItem(ZOOM_KEY))
+        return ZOOM_STEPS.indexOf(saved) === -1 ? ZOOM_DEFAULT : saved
+      } catch (err) {
+        // A browser that refuses storage (private mode, a locked-down WebView)
+        // still zooms - the level is simply not remembered.
+        return ZOOM_DEFAULT
+      }
+    }
+
+    /** Remember a level, for the next load. Failure to store is not a failure. */
+    function rememberZoom(percent) {
+      try {
+        const store = typeof window !== 'undefined' ? window.localStorage : undefined
+        if (store && typeof store.setItem === 'function') store.setItem(ZOOM_KEY, String(percent))
+      } catch (err) {}
+    }
+
+    /**
+     * Put a level on the document. This is the whole zoom: one inline
+     * declaration on <html>, removed again at the resting level.
+     */
+    function applyZoom(percent) {
+      const root = zoomRoot()
+      if (root === null || !root.style) return
+      if (percent === ZOOM_DEFAULT) root.style.removeProperty('zoom')
+      else root.style.setProperty('zoom', String(percent / 100))
+    }
+
+    /**
+     * One step along the ladder. An unknown level steps from the resting one,
+     * and either end of the ladder is the clamp (the button stays available; the
+     * level simply does not move).
+     */
+    function stepZoom(percent, direction) {
+      const found = ZOOM_STEPS.indexOf(percent)
+      const index = found === -1 ? ZOOM_STEPS.indexOf(ZOOM_DEFAULT) : found
+      const next = index + (direction > 0 ? 1 : -1)
+      return next < 0 || next >= ZOOM_STEPS.length ? percent : ZOOM_STEPS[next]
+    }
+
+    /**
+     * The zoom button and its dropdown.
+     *
+     * THE MENU STAYS OPEN over a step, which is the browser's own zoom submenu
+     * (three-dot > Zoom): a level is usually walked to, and closing after every
+     * click would make four steps four open-menu gestures. The shipped Menu
+     * closes itself on a pointer press outside the anchor and its list and on
+     * Escape, so leaving it open costs the reader nothing - both of those call
+     * the `onClose` this control renders.
+     */
+    function ZoomAction(props) {
+      const t = props.t
+      const [percent, setPercent] = React.useState(readZoom)
+      const [open, setOpen] = React.useState(false)
+      const label = t('zoom.current', { percent: percent })
+      const step = (direction) => {
+        const next = stepZoom(percent, direction)
+        if (next === percent) return
+        setPercent(next)
+        applyZoom(next)
+        rememberZoom(next)
+      }
+      return h(Menu, {
+        open: open,
+        align: 'end',
+        dense: true,
+        onClose: () => setOpen(false),
+        items: [
+          { type: 'label', id: 'zoom-level', text: t('zoom.level', { percent: percent }) },
+          // The ends of the ladder are DISABLED rather than silently inert, the
+          // way a browser greys out its own Zoom in / Zoom out at 25% and 500%.
+          {
+            id: 'zoom-in',
+            label: t('zoom.in'),
+            icon: h(IconZoomInOutline16, { size: 16 }),
+            disabled: percent === ZOOM_STEPS[ZOOM_STEPS.length - 1],
+          },
+          {
+            id: 'zoom-out',
+            label: t('zoom.out'),
+            icon: h(IconZoomOutOutline16, { size: 16 }),
+            disabled: percent === ZOOM_STEPS[0],
+          },
+        ],
+        onSelect: (id) => {
+          if (id === 'zoom-in') step(1)
+          else if (id === 'zoom-out') step(-1)
+        },
+        anchor: h(
+          'div',
+          { className: 'dst-slot' },
+          h(
+            Tooltip,
+            { label: label, side: 'bottom', delayMs: 500 },
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dst-button',
+                // The level the button is showing, the way the Themes button
+                // carries the active preference: readable from the DOM.
+                'data-dsh-page-zoom': String(percent),
+                'aria-label': label,
+                'aria-haspopup': 'menu',
+                'aria-expanded': open,
+                onClick: () => setOpen((value) => !value),
+              },
+              h(IconZoomOutline16, { size: 15 }),
+            ),
+          ),
+        ),
+      })
+    }
+
+    // ---------------------------------------------------------------------
     // Plugin entry
     // ---------------------------------------------------------------------
     /** Services required to register copy and take a seat in the header. */
     const inject = ['slots', 'locale']
 
     function apply(ctx) {
+      // alpha.15: the remembered PAGE ZOOM goes on before this row's first
+      // render, so the app mounts at the level the reader left it at - in a
+      // browser tab the browser remembers its own zoom, but the shell the
+      // control was built for has none of its own, so this is the only memory
+      // there is. Nothing is written back here: a fresh profile stays untouched.
+      applyZoom(readZoom())
       const state = createThemeState(ctx)
       ctx.effect(
         () =>
@@ -1922,6 +2209,28 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
             ),
           'dsh-themes: screenshot control',
         )
+        // The page-zoom control (alpha.15): the fourth occupant of the same
+        // list, one more order step LEFT (lower renders first), so the row reads
+        // zoom | capture | themes | download next to Open In. It is the one
+        // control here that replaces a browser GESTURE rather than a shipped
+        // control, which is why it exists at all: the desktop launcher's native
+        // window has no Ctrl+ / Ctrl- page zoom to fall back on.
+        ctx.effect(
+          () =>
+            ctx.slots.inject(HEADER_SLOT, () =>
+              ctx.slots.register(
+                {
+                  name: HEADER_SLOT,
+                  id: ZOOM_ID,
+                  order: ZOOM_ORDER,
+                  locale: LOCALE_NS,
+                  inject: () => ({}),
+                },
+                ZoomAction,
+              ),
+            ),
+          'dsh-themes: page-zoom control',
+        )
         // The Session-log download seat (alpha.9): the SHIPPED occupant's id one
         // priority lower, which in a list slot is what makes this registration the
         // rendered one - the three-dot button with its one-item menu stops
@@ -1960,7 +2269,9 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
         ctx.logger?.debug?.(
           '[dsh-themes] header controls registered (' +
             PLUGIN_VERSION +
-            '): screenshot at order ' +
+            '): zoom at order ' +
+            ZOOM_ORDER +
+            ', screenshot at order ' +
             SCREENSHOT_ORDER +
             ', themes at order ' +
             HEADER_ORDER +
