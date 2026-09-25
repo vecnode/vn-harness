@@ -1156,6 +1156,73 @@ try {
   await fsp.rm(diagramsProfile, { recursive: true, force: true })
 }
 
+// ------------------------------------------------------------ dsh-ui-state
+// The pack's durable UI state has no route to capture: its whole host surface is
+// ONE settings registration plus the page-zoom bootstrap row, so this block
+// drives `apply` against a stub and reads what it registered. Two things are
+// load-bearing and pinned here - the schema really resolves the defaults the
+// browser half's DEFAULTS mirror (drift between the two is what would make a
+// fresh install read a field nobody set), and a value the schema accepts is the
+// only thing that can reach the inlined boot script.
+const uiStateModule = await import(pathToFileURL(path.join(repo, 'packages/dsh-ui-state/lib/index.js')).href)
+const uiStateNamespaces = []
+const uiStateInjected = []
+const uiStateIndexHandlers = []
+let uiStateSection
+uiStateModule.apply({
+  logger: { debug() {}, warn() {} },
+  get: (name) => (name === 'settings' ? { get: (ns) => (ns === 'vn-harness' ? uiStateSection : undefined) } : undefined),
+  inject: (deps, callback) => {
+    uiStateInjected.push(deps.join(','))
+    callback({ settings: { register: (ns, schema) => uiStateNamespaces.push({ ns, schema }) } })
+  },
+  on: (event, handler) => {
+    if (event === 'webserver/index-inject') uiStateIndexHandlers.push(handler)
+  },
+})
+check('ui-state: registers exactly one namespace', uiStateNamespaces.map((entry) => entry.ns).join(','), 'vn-harness')
+check('ui-state: asks for the optional settings service', uiStateInjected.join(','), 'settings')
+const uiStateSchema = uiStateNamespaces[0].schema
+check(
+  'ui-state: the schema resolves the documented defaults',
+  JSON.stringify(uiStateSchema({})),
+  JSON.stringify({ theme: '', pageZoom: 100, dockHeight: 280, sidebarWidth: -1, rightbarWidth: -1 }),
+)
+check('ui-state: no field remembers the dock being open', Object.hasOwn(uiStateSchema({}), 'dockOpen'), false)
+check('ui-state: an extension theme id is kept', uiStateSchema({ theme: 'nord' }).theme, 'nord')
+let zoomRefusal = 'accepted'
+try {
+  uiStateSchema({ pageZoom: 900 })
+} catch (err) {
+  zoomRefusal = 'refused'
+}
+check('ui-state: a zoom outside the ladder is refused', zoomRefusal, 'refused')
+let heightRefusal = 'accepted'
+try {
+  uiStateSchema({ dockHeight: 4 })
+} catch (err) {
+  heightRefusal = 'refused'
+}
+check('ui-state: an unusable dock height is refused', heightRefusal, 'refused')
+// The bootstrap row: silent at the resting level (a page nobody has zoomed keeps
+// the markup the harness shipped), the remembered level otherwise.
+const bootRows = (section) => {
+  uiStateSection = section
+  const table = []
+  for (const handler of uiStateIndexHandlers) handler(table)
+  return table
+}
+check('ui-state: the boot row is silent at the resting level', bootRows({ pageZoom: 100 }).length, 0)
+const booted = bootRows({ pageZoom: 125 })
+check('ui-state: the boot row carries the remembered level', booted.length === 1 && booted[0].kind === 'script' && booted[0].placement === 'body', true)
+check('ui-state: the boot row sets the zoom and its seam marker', booted[0].text.includes("style.zoom = String(level) + '%'") && booted[0].text.includes('data-dsh-page-zoomed'), true)
+check('ui-state: the boot row is silent with no settings service', (() => {
+  const table = []
+  const bare = { logger: { warn() {}, debug() {} }, get: () => undefined, inject: (deps, cb) => cb({ settings: { register: () => {} } }), on: (event, handler) => { if (event === 'webserver/index-inject') handler(table) } }
+  uiStateModule.apply(bare)
+  return table.length
+})(), 0)
+
 console.log('')
 console.log(failures === 0 ? 'all node-route checks passed' : failures + ' check(s) FAILED')
 process.exitCode = failures === 0 ? 0 : 1

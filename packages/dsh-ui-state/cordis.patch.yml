@@ -1,0 +1,12 @@
+# dsh-ui-state bundle layer (alpha).
+#
+# One extra row: the Node half registers the pack's `vn-harness` settings
+# namespace (and inlines the remembered page zoom into the page before the shell
+# mounts), and the browser half binds that namespace, restores the two column
+# widths, and publishes the `uiState` service the pack's other halves write
+# through. Nothing shipped is patched, no core row is disabled: this row owns a
+# namespace of its own and reaches the layout's store through the public slot
+# registry, which is the same surface ui-layout's own AppFrame reads.
+- insert:
+    - id: ui-state
+      name: 'dsh-ui-state'

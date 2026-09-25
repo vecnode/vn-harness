@@ -19,7 +19,7 @@ import path from 'node:path'
 const repo = path.resolve(fileURLToPath(new URL('../../', import.meta.url)))
 
 /** A React + react-dom pair to render with: the profile's, else any npm cache's. */
-function loadReact() {
+function moduleRoots() {
   const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
   const roots = [path.join(home, 'profiles', 'node_modules')]
   // npm's on-demand cache: the Local/AppData folders on Windows, ~/.npm/_npx
@@ -33,6 +33,25 @@ function loadReact() {
     for (const entry of readdirSync(cache)) roots.push(path.join(cache, entry, 'node_modules'))
   }
   roots.push('/usr/local/lib/node_modules', '/usr/lib/node_modules')
+  return roots
+}
+
+/**
+ * One file inside the HARNESS's own installed packages, or `null` when this host
+ * has none (the checks then skip that section loudly instead of passing).
+ * @param relative - path inside a node_modules root, e.g. `@scope/pkg/lib/x.js`.
+ * @returns the absolute path, or null.
+ */
+function findCoreFile(relative) {
+  for (const root of moduleRoots()) {
+    const candidate = path.join(root, relative)
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+function loadReact() {
+  const roots = moduleRoots()
   for (const root of roots) {
     try {
       const requireFrom = createRequire(path.join(root, 'index.js'))
@@ -153,7 +172,10 @@ function fakeDocument() {
 
 /** Capture one module-table bundle's factory and run it. */
 function loadBundle(relative, extraRequire) {
-  const file = path.join(repo, relative)
+  // An absolute path is honoured so a check can load one of the HARNESS's own
+  // client bundles (see the extension-theme section: the real ui-theme runtime is
+  // what proves an extension theme is not discarded by its `adopt()`).
+  const file = path.isAbsolute(relative) ? relative : path.join(repo, relative)
   // A stand-in for the browser's own storage. The page-zoom control remembers
   // its level there (per origin, exactly like the browser zoom it mirrors), so
   // the harness has to be able to hand one back and read what was written.
@@ -185,6 +207,17 @@ function loadBundle(relative, extraRequire) {
     if (name === '@deepseek-ai/dsh-client-store') {
       return {
         createSnapshotStore: (initial) => ({ get: () => initial, set() {}, subscribe: () => () => {} }),
+        // The real ui-theme builds its two Settings rows from this (see the
+        // extension-theme section, which loads that bundle); a handle-shaped
+        // stub is enough because those rows are never mounted here.
+        defineStore: (spec) => ({
+          ...spec,
+          create: () => ({
+            getSnapshot: () => (typeof spec.init === 'function' ? spec.init() : {}),
+            subscribe: () => () => {},
+            actions: {},
+          }),
+        }),
         notifySubscribers() {},
       }
     }
@@ -1377,7 +1410,7 @@ check('terminal reveal: a chip already inside does not move', reveal(strip, { le
 check('terminal reveal: a chip just inside the edge stays put', reveal(strip, { left: 108, right: 392 }), 0)
 check('terminal reveal: a chip flush with the left edge stays put', reveal(strip, { left: 100, right: 120 }), 0)
 check('terminal reveal: no margin means no air', reveal(strip, { left: 60, right: 120 }, 0), -40)
-check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.4'))
+check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.5'))
 
 // -------------------------------------------------------------- dsh-rightbar
 // The right bar is a GENERATED fork, so these are source-level checks (like the
@@ -2861,6 +2894,505 @@ check(
     audioViewerInfoMarkup.includes('Test') &&
     audioViewerInfoMarkup.includes('256 samples/bucket'),
 )
+
+// ----------------------------------------------------------- dsh-ui-state
+// The pack's durable UI state (alpha.1). Its Node half owns the `vn-harness`
+// settings namespace and the pre-paint zoom row (driven in check-node-routes.mjs);
+// THIS half binds that namespace once, publishes the `uiState` service, and puts
+// the two COLUMN WIDTHS back - the one piece of interface state no other bundle
+// owns, because ui-layout keeps them in a transient store ("transient layout
+// preferences", in its own words) and `ctx.layout` exposes no width setter. The
+// store is reached through the `root` slot registration's own store handle, which
+// is the same shared instance the frame renders from, so every scenario below
+// drives a double of exactly that shape.
+const uiStateBundle = loadBundle('packages/dsh-ui-state/lib/client.js', {})
+check('ui-state bundle id', uiStateBundle.id, 'dsh-ui-state')
+check('ui-state inject', JSON.stringify(uiStateBundle.exports.inject), '["slots","remote","settingsScope"]')
+check(
+  'ui-state contract defaults',
+  JSON.stringify(uiStateBundle.exports.__internals.DEFAULTS),
+  JSON.stringify({ theme: '', pageZoom: 100, dockHeight: 280, sidebarWidth: -1, rightbarWidth: -1 }),
+)
+
+/** A layout store double: the state, and every action a restore asked of it. */
+function fakeLayoutStore(info) {
+  const calls = []
+  const state = {
+    panelInfo: { activePanelId: null },
+    layoutInfo: Object.assign(
+      {
+        sidebar: 280,
+        viewportWidth: 1440,
+        narrowExpanded: false,
+        rightbar: null,
+        rightbarShown: false,
+        rightbarTrack: false,
+        rightbarFullscreen: false,
+        rightbarInstant: false,
+      },
+      info || {},
+    ),
+  }
+  return {
+    calls,
+    state,
+    instance: {
+      actions: {
+        setSidebar: (px) => {
+          calls.push(['setSidebar', px])
+          state.layoutInfo.sidebar = Math.min(Math.max(Math.round(px), 264), 420)
+        },
+        toggleSidebar: () => {
+          calls.push(['toggleSidebar'])
+          state.layoutInfo.sidebar = state.layoutInfo.sidebar === 0 ? 280 : 0
+        },
+        setRightbar: (px) => {
+          calls.push(['setRightbar', px])
+          state.layoutInfo.rightbar = px
+        },
+      },
+      getSnapshot: () => state,
+      subscribe: () => () => {},
+    },
+  }
+}
+
+/** A settings-scope double: one section, the write log, and a manual notify. */
+function fakeUiScope(value) {
+  const writes = []
+  const listeners = new Set()
+  let snapshot = {
+    status: value === undefined ? 'loading' : 'ready',
+    value,
+    base: undefined,
+    user: undefined,
+    revision: 1,
+    writable: true,
+    mode: 'host',
+  }
+  return {
+    writes,
+    accept(next) {
+      snapshot = Object.assign({}, snapshot, { status: 'ready', value: next })
+      for (const listener of [...listeners]) listener()
+    },
+    scope: {
+      getSnapshot: () => snapshot,
+      subscribe(listener) {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      set: (field, next) => {
+        writes.push([field, next])
+        return Promise.resolve()
+      },
+      unset: (field) => {
+        writes.push([field, 'UNSET'])
+        return Promise.resolve()
+      },
+      mutate: () => Promise.resolve(),
+    },
+  }
+}
+
+/**
+ * Activate a FRESH copy of the bundle against a root slot carrying `layout`.
+ * A fresh load per scenario is not tidiness: the bundle keeps the bound scope and
+ * the found layout in module state (a page loads the module once), so reusing one
+ * instance would carry the first scenario's store into the next.
+ */
+function activateUiState(value, layout, options) {
+  const settings = fakeUiScope(value)
+  const provided = new Map()
+  const slotListeners = new Set()
+  let entry = options && options.entry !== undefined ? options.entry : layout === null ? [] : [{ store: { create: () => layout.instance } }]
+  const ctx = {
+    slots: {
+      entries: () => (options && options.foreign ? [{ store: { create: () => ({}) } }] : entry),
+      subscribe: (key, listener) => {
+        slotListeners.add(listener)
+        return () => slotListeners.delete(listener)
+      },
+    },
+    settingsScope: { bind: () => settings.scope },
+    reflect: { provide: (name, api) => (provided.set(name, api), () => provided.delete(name)) },
+    effect: () => {},
+    logger: { debug() {}, warn() {} },
+  }
+  const bundle = options && options.bundle !== undefined ? options.bundle : loadBundle('packages/dsh-ui-state/lib/client.js', {})
+  bundle.exports.apply(ctx)
+  return {
+    settings,
+    provided,
+    calls: layout === null ? [] : layout.calls,
+    layout,
+    api: provided.get('uiState'),
+    slotListeners,
+    setEntry: (next) => {
+      entry = next
+      for (const listener of [...slotListeners]) listener()
+    },
+  }
+}
+
+const sharedWidths = { theme: 'nord', pageZoom: 125, dockHeight: 340, sidebarWidth: 300, rightbarWidth: 480 }
+const widthScenario = activateUiState(sharedWidths, fakeLayoutStore())
+check('ui-state provides the service', typeof widthScenario.api.get, 'function')
+check(
+  'ui-state restores the remembered column widths',
+  JSON.stringify(widthScenario.calls),
+  JSON.stringify([['setSidebar', 300], ['setRightbar', 480]]),
+)
+check('ui-state reads a remembered field', widthScenario.api.get('pageZoom'), 125)
+check('ui-state reads the extension theme', widthScenario.api.get('theme'), 'nord')
+check('ui-state reads the remembered sidebar width', widthScenario.api.get('sidebarWidth'), 300)
+check('ui-state answers for an unknown field', widthScenario.api.get('nope') === undefined, true)
+check('ui-state reports its status', widthScenario.api.status(), 'ready')
+
+// A remembered 0 is the sidebar COLLAPSED, and it cannot go through the width
+// setter: ui-layout clamps that to its 264..420 drag range, so 0 is not in it.
+// Collapse is the toggle's own transition, which is why the restore uses it.
+const collapsedScenario = activateUiState({ sidebarWidth: 0, rightbarWidth: -1 }, fakeLayoutStore())
+check('ui-state collapses through the toggle', JSON.stringify(collapsedScenario.calls), JSON.stringify([['toggleSidebar']]))
+check('ui-state leaves the sidebar collapsed', collapsedScenario.layout.state.layoutInfo.sidebar, 0)
+
+// -1 means "this host has never recorded a width", which is NOT 0: nothing is
+// touched and the layout keeps its own contract default.
+const freshScenario = activateUiState({ sidebarWidth: -1, rightbarWidth: -1 }, fakeLayoutStore())
+check('ui-state leaves a never-recorded layout alone', freshScenario.calls.length, 0)
+
+// Below ui-layout's own auto-collapse width the rail is the layout's decision.
+const narrowScenario = activateUiState({ sidebarWidth: 300, rightbarWidth: -1 }, fakeLayoutStore({ viewportWidth: 800 }))
+check('ui-state keeps the rail on a narrow frame', narrowScenario.calls.length, 0)
+
+// Both orders have to work: the section is a wire read, and the layout store is
+// another row's registration.
+const lateSection = activateUiState(undefined, fakeLayoutStore())
+check('ui-state restores nothing while loading', lateSection.calls.length, 0)
+lateSection.settings.accept({ sidebarWidth: 280, rightbarWidth: 500 })
+check(
+  'ui-state restores when the section lands',
+  JSON.stringify(lateSection.calls),
+  JSON.stringify([['setSidebar', 280], ['setRightbar', 500]]),
+)
+const lateLayout = activateUiState({ sidebarWidth: 360, rightbarWidth: -1 }, null, { entry: [] })
+const lateLayoutStore = fakeLayoutStore()
+lateLayout.setEntry([{ store: { create: () => lateLayoutStore.instance } }])
+check('ui-state restores when the root slot appears', JSON.stringify(lateLayoutStore.calls), JSON.stringify([['setSidebar', 360]]))
+
+// This is core surface, so a handle that is not a layout store means "remember
+// nothing" rather than "run blind".
+check('ui-state refuses a foreign store shape', activateUiState({ sidebarWidth: 300 }, null, { foreign: true }).calls.length, 0)
+// And with no transport the service still exists, so a consumer can ask and get
+// the contract defaults instead of a crash.
+const bare = loadBundle('packages/dsh-ui-state/lib/client.js', {})
+const bareProvided = new Map()
+bare.exports.apply({
+  get: () => undefined,
+  slots: { entries: () => [], subscribe: () => () => {} },
+  reflect: { provide: (name, api) => (bareProvided.set(name, api), () => {}) },
+  effect: () => {},
+  logger: { debug() {}, warn() {} },
+})
+const bareApi = bareProvided.get('uiState')
+check('ui-state survives without a transport', bareApi.status(), 'absent')
+check('ui-state falls back to defaults without a transport', bareApi.get('dockHeight'), 280)
+// `unset` is what clears a field rather than overwriting it with the default: a
+// built-in theme replacing a remembered extension one must leave the user's own
+// document free of the stale id.
+const unsetScope = fakeUiScope({ theme: 'nord' })
+const unsetBundle = loadBundle('packages/dsh-ui-state/lib/client.js', {})
+const unsetProvided = new Map()
+unsetBundle.exports.apply({
+  slots: { entries: () => [], subscribe: () => () => {} },
+  settingsScope: { bind: () => unsetScope.scope },
+  reflect: { provide: (name, api) => (unsetProvided.set(name, api), () => {}) },
+  effect: () => {},
+  logger: { debug() {}, warn() {} },
+})
+unsetProvided.get('uiState').unset('theme')
+check('ui-state clears a field', JSON.stringify(unsetScope.writes), JSON.stringify([['theme', 'UNSET']]))
+
+// --------------------------------------- the shared state, from dsh-themes
+// alpha.17: the page zoom and an EXTENSION theme now ride the same section, and
+// the two things that make that safe are pinned here - localStorage stays the
+// fallback (so this bundle still remembers its level without dsh-ui-state), and
+// the service is resolved LAZILY, never declared in `inject` (or a profile with
+// this bundle and without that one would lose the control entirely).
+const themedSource = themesSource
+check(
+  'themes resolves the shared state lazily',
+  themedSource.includes("ctx.get('uiState')") && themedSource.includes("const inject = ['slots', 'locale']"),
+)
+check(
+  'themes keeps localStorage under the shared state',
+  themedSource.includes('sharedReady()') && themedSource.includes('store.getItem(ZOOM_KEY)'),
+)
+check(
+  'themes writes both stores on a step',
+  themedSource.includes("sharedState.set('pageZoom', percent)") && themedSource.includes('store.setItem(ZOOM_KEY, String(percent))'),
+)
+// alpha.18: an extension theme is a DESIRED STATE the control keeps applied,
+// because ui-theme re-adopts its durable built-in on every settings-document
+// change. The three parts of that are pinned at the source level here (the
+// behaviour itself is proven against the real ui-theme runtime above).
+check(
+  'themes tracks the extension theme it wants in force',
+  themedSource.includes('let desiredTheme') && themedSource.includes('function reconcileTheme(state)') && themedSource.includes('applyDesiredTheme(state, desiredTheme)'),
+)
+check(
+  'themes tells a re-adopt from a deliberate built-in by the durable revision',
+  themedSource.includes("const THEME_SERVICE_NAMESPACE = 'ui-theme'") && themedSource.includes('durableRevisionSeen') && themedSource.includes('revision !== durableRevisionSeen'),
+)
+check(
+  'themes clears the field only for a built-in chosen in its own menu',
+  themedSource.includes('function chooseBuiltInTheme(state, id)') && themedSource.includes('forgetRememberedTheme()') && themedSource.includes('sharedState.unset'),
+)
+check(
+  'themes re-applies a theme that arrives after its first render',
+  themedSource.includes('sharedState.subscribe(adopt)') && themedSource.includes('setPercent(saved)'),
+)
+// Driven: a fresh copy bound to a section that remembers Nord applies it, and
+// one that remembers a built-in preference applies nothing.
+function activateThemesWithShared(section) {
+  const writes = []
+  let snapshot = { preference: 'light', active: { id: 'light', colorScheme: 'light' }, themes: [], revision: 1 }
+  const applied = []
+  const bundle = loadBundle('packages/dsh-themes/lib/client.js', {})
+  const listeners = new Set()
+  const scope = {
+    getSnapshot: () => ({ status: 'ready', value: section, revision: 1, writable: true, mode: 'host' }),
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    set: (field, value) => {
+      writes.push([field, value])
+      return Promise.resolve()
+    },
+    unset: (field) => {
+      writes.push([field, 'UNSET'])
+      return Promise.resolve()
+    },
+  }
+  const themeService = {
+    getTheme: () => snapshot,
+    register: (definition) => {
+      snapshot = Object.assign({}, snapshot, { themes: [...snapshot.themes, definition], revision: snapshot.revision + 1 })
+      return () => {}
+    },
+    setTheme: (id) => {
+      applied.push(id)
+      snapshot = Object.assign({}, snapshot, { preference: id, revision: snapshot.revision + 1 })
+    },
+  }
+  bundle.exports.apply({
+    get: (name) => (name === 'theme' ? themeService : name === 'uiState' ? Object.assign({}, scope, { status: () => 'ready', get: (field) => (section ? section[field] : undefined) }) : undefined),
+    on: () => () => {},
+    slots: { inject: (name, fn) => fn(), register: () => () => {} },
+    locale: { register: () => () => {} },
+    effect: (fn) => fn(),
+    logger: { debug() {}, warn() {} },
+  })
+  return { writes, applied }
+}
+check('themes restores a remembered extension theme', JSON.stringify(activateThemesWithShared({ theme: 'nord' }).applied), JSON.stringify(['nord']))
+check('themes restores nothing for a built-in preference', JSON.stringify(activateThemesWithShared({ theme: '' }).applied), '[]')
+
+// ------------------------------------- the shared state, from dsh-terminal
+// alpha.5: the dock's HEIGHT rides the same section, with localStorage kept
+// underneath. Its OPEN state deliberately does not: the panel is the window onto
+// a process, and after a reload the client holds no slots, so reopening it would
+// either show an empty panel or - once the server's five minute PTY retention has
+// lapsed - start a shell nobody asked for.
+check(
+  'terminal resolves the shared state lazily',
+  termSource.includes("ctx.get('uiState')") && termSource.includes("const inject = ['slots']"),
+)
+check(
+  'terminal reads the shared height first',
+  termSource.includes('sharedReady()') && termSource.includes("sharedState.get('dockHeight')"),
+)
+check(
+  'terminal writes both stores on a resize',
+  termSource.includes("sharedState.set('dockHeight', next)") && termSource.includes('STORAGE_KEY, String(next)'),
+)
+check(
+  'terminal adopts a height that arrives after load',
+  termSource.includes('sharedState.subscribe(adoptShared)') && termSource.includes('setHeight(shared)'),
+)
+check('terminal remembers no open state', termSource.includes('dockOpen') === false)
+
+// -------------------------- extension themes, against the REAL ui-theme runtime
+// The bug this section exists for (found in the field, alpha.17): choosing Nord or
+// Monokai appeared to do nothing, while Light and Dark worked. The cause was not
+// the persistence - it was ui-theme's own `ThemeRuntime.adopt()`, which assigns its
+// preference from its DURABLE section whenever its settings scope notifies, and
+// that scope notifies whenever the settings DOCUMENT changes. An extension theme is
+// never written to that durable section (ui-theme's schema accepts light/dark/system
+// only), so choosing Nord applied it and the next settings write - this pack's own
+// zoom, dock and width writes included - snapped the app back to the durable
+// built-in. It predated alpha.17: ANY Settings change reverted an extension theme.
+//
+// The fix (alpha.18) makes an extension theme a DESIRED STATE the pack keeps
+// applied, with ui-theme's namespace REVISION as the tie-break: revision unmoved
+// means nobody chose anything (a re-adopt, so put the theme back), revision moved
+// means a surface that writes durably chose a built-in (the shipped Settings >
+// Appearance row, whose decision wins).
+//
+// A stub theme service cannot see any of this, which is exactly why the tracked
+// check asserted a working registration against a fake and shipped a broken
+// feature. So this section runs the REAL ui-theme bundle, and skips loudly when
+// this host has no copy of it.
+const coreThemeBundle = findCoreFile(path.join('@deepseek-ai', 'dsh-client-ui-theme', 'lib', 'client.js'))
+if (coreThemeBundle === null) {
+  console.log('skip extension themes hold through a real ui-theme runtime (no core bundle on this host)')
+} else {
+  const themeChangeListeners = []
+  const emitThemeChange = (snapshot) => {
+    for (const listener of [...themeChangeListeners]) {
+      try {
+        listener(snapshot)
+      } catch (err) {
+        console.log('  ..   a theme/change listener threw: ' + (err && err.message))
+      }
+    }
+  }
+  const sharedSeats = {}
+  const sharedProvided = new Map()
+  // ui-theme's durable section: the only thing `adopt()` reads.
+  let durableSection = { preference: 'light', fontSize: 14 }
+  let durableRevision = 1
+  const durableListeners = new Set()
+  const realThemeScope = {
+    getSnapshot: () => ({
+      status: 'ready',
+      value: durableSection,
+      base: undefined,
+      user: { preference: durableSection.preference },
+      revision: durableRevision,
+      writable: true,
+      mode: 'host',
+    }),
+    subscribe(listener) {
+      durableListeners.add(listener)
+      return () => durableListeners.delete(listener)
+    },
+    set(field, value) {
+      durableSection = { ...durableSection, [field]: value }
+      durableRevision += 1
+      return Promise.resolve()
+    },
+    unset: () => Promise.resolve(),
+    mutate: () => Promise.resolve(),
+  }
+  /** What ANY settings-document change does: the trigger ui-theme re-adopts on. */
+  const settingsDocumentMoved = () => {
+    for (const listener of [...durableListeners]) listener()
+  }
+  const packWrites = []
+  let packSection = {}
+  const packUiState = {
+    get: (name) => (Object.prototype.hasOwnProperty.call(packSection, name) ? packSection[name] : undefined),
+    set: (name, value) => {
+      packWrites.push([name, value])
+      packSection = { ...packSection, [name]: value }
+      return Promise.resolve()
+    },
+    unset: (name) => {
+      packWrites.push([name, 'UNSET'])
+      const next = { ...packSection }
+      delete next[name]
+      packSection = next
+      return Promise.resolve()
+    },
+    status: () => 'ready',
+    subscribe: () => () => {},
+  }
+  // ONE host for both bundles: a shared theme/change bus, one slot table, one
+  // provider map - so the pack's control really drives the real service.
+  const realCtx = {
+    effect: (fn) => fn(),
+    on: (event, listener) => {
+      if (event === 'theme/change') themeChangeListeners.push(listener)
+      return () => {}
+    },
+    emit: (event, payload) => {
+      if (event === 'theme/change') emitThemeChange(payload)
+    },
+    provide: (name, value) => (sharedProvided.set(name, value), () => sharedProvided.delete(name)),
+    reflect: { provide: (name, value) => (sharedProvided.set(name, value), () => sharedProvided.delete(name)) },
+    locale: { register: () => () => {} },
+    slots: {
+      inject: (name, fn) => fn(),
+      register(spec, component) {
+        sharedSeats[spec.name + '#' + spec.id] = { spec, component }
+        return () => {}
+      },
+    },
+    get: (name) =>
+      name === 'theme'
+        ? sharedProvided.get('theme')
+        : name === 'uiState'
+          ? packUiState
+          : name === 'settingsScope'
+            ? { bind: () => realThemeScope }
+            : undefined,
+    settingsScope: { bind: () => realThemeScope },
+    logger: { debug() {}, warn() {} },
+  }
+
+  const realTheme = loadBundle(coreThemeBundle, {})
+  realTheme.exports.apply(realCtx)
+  const realThemeService = sharedProvided.get('theme')
+  check('the real ui-theme provides its service', typeof realThemeService, 'object')
+
+  const themedPack = loadBundle('packages/dsh-themes/lib/client.js', {})
+  themedPack.exports.apply(realCtx)
+  // The control reads the registry on the microtask after activation.
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  check(
+    'the pack registered both extension themes into the real registry',
+    realThemeService.getTheme().themes.filter((theme) => theme.id === 'nord' || theme.id === 'monokai').length,
+    2,
+  )
+  const realSeat = sharedSeats['conversation.session.header.utilities#dsh-themes']
+  check('the Themes seat took the header', realSeat !== undefined, true)
+  const realControlState = realSeat.spec.inject().themeState
+  check(
+    'the control sees them in the registry',
+    realControlState.getSnapshot().themes.filter((theme) => theme.id === 'nord').length,
+    1,
+  )
+  // Rendering is only how the Menu's own `onSelect` is reached; a server render
+  // uses `getServerSnapshot`, so the list is asserted from the state above.
+  renderToStaticMarkup(React.createElement(realSeat.component, { t: themesT, themeState: realControlState }))
+  check('the Themes menu exposes a selection handler', typeof lastMenuProps.onSelect, 'function')
+
+  lastMenuProps.onSelect('nord')
+  check('choosing Nord applies it through the real service', realThemeService.getTheme().preference, 'nord')
+  check('choosing Nord remembers it', JSON.stringify(packWrites), JSON.stringify([['theme', 'nord']]))
+  // THE REGRESSION: any settings-document change used to discard it here.
+  settingsDocumentMoved()
+  check('Nord SURVIVES a settings-document change', realThemeService.getTheme().preference, 'nord')
+  check('and its remembered id is kept', JSON.stringify(packWrites), JSON.stringify([['theme', 'nord']]))
+  settingsDocumentMoved()
+  check('it survives the next one too', realThemeService.getTheme().preference, 'nord')
+  // A surface that WRITES THE DURABLE PREFERENCE (Settings > Appearance) still
+  // wins: its decision moved ui-theme's own namespace revision.
+  realThemeScope.set('preference', 'light')
+  settingsDocumentMoved()
+  check('a built-in chosen elsewhere wins', realThemeService.getTheme().preference, 'light')
+  check('and the remembered extension is cleared', JSON.stringify(packWrites), JSON.stringify([['theme', 'nord'], ['theme', 'UNSET']]))
+  settingsDocumentMoved()
+  check('the extension does not come back afterwards', realThemeService.getTheme().preference, 'light')
+  // ...and this control's own menu can always go back to a built-in.
+  lastMenuProps.onSelect('dark')
+  check('the pack menu switches to a built-in', realThemeService.getTheme().preference, 'dark')
+  settingsDocumentMoved()
+  check('and that sticks', realThemeService.getTheme().preference, 'dark')
+}
 
 console.log('')
 console.log(failures === 0 ? 'all client-bundle checks passed' : failures + ' check(s) FAILED')

@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
     // Constants
     // ---------------------------------------------------------------------
     /** Shown on the dock's bar so a freshly loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.4'
+    const PLUGIN_VERSION = '0.1.0-alpha.5'
     /** The header list this control joins (Open In... is -10). */
     const HEADER_SLOT = 'conversation.session.header.utilities'
     /** The root-scoped overlay list the layout package renders inside the frame. */
@@ -81,6 +81,58 @@ window.__ModuleLoader__.load({
     const DEFAULT_HEIGHT = 280
     const MAX_HEIGHT_RATIO = 0.7
     const STORAGE_KEY = 'dsh-terminal.dockHeight'
+
+    // ---------------------------------------------------------------------
+    // The pack's own durable state (alpha.5)
+    //
+    // The dock's height used to live in localStorage only, which is per ORIGIN
+    // and per browser PROFILE: a Chrome tab and the desktop window's WebView
+    // never shared it, and the desktop shell prefers port 3080 and falls back to
+    // a free one, so even one host lost it by moving a port. It now goes through
+    // the pack's `uiState` service (dsh-ui-state) - one section of
+    // `$DSH_HOME/settings.yaml` both hosts read - with localStorage kept as the
+    // fallback, so the dock still remembers its height in a profile that
+    // installed this bundle without that one. Resolved lazily, never declared in
+    // `inject`, for that same reason.
+    //
+    // The dock's OPEN state is deliberately NOT remembered: the panel is the
+    // window onto a PROCESS, and after a reload the client holds no slots, so
+    // reopening it would either show an empty panel or - once the server's five
+    // minute PTY retention has lapsed - start a shell nobody asked for. A height
+    // is a preference; "a shell was running" is not.
+    // ---------------------------------------------------------------------
+    /** The `uiState` service once `apply` has found it, or `null`. */
+    let sharedState = null
+
+    /**
+     * Resolve the pack's shared-state service.
+     * @param ctx - the client context.
+     * @returns the service, or `null` when this profile does not install it.
+     */
+    function uiStateService(ctx) {
+      try {
+        const service = ctx && typeof ctx.get === 'function' ? ctx.get('uiState') : undefined
+        const usable = service && typeof service.get === 'function' && typeof service.set === 'function'
+        return usable ? service : null
+      } catch (err) {
+        return null
+      }
+    }
+
+    /**
+     * Whether the shared state has accepted a section yet. Until it has, every
+     * field reads as its schema default, so adopting one would fight the
+     * localStorage value this dock has always used.
+     * @returns {boolean} readiness.
+     */
+    function sharedReady() {
+      if (sharedState === null || typeof sharedState.status !== 'function') return false
+      try {
+        return sharedState.status() === 'ready'
+      } catch (err) {
+        return false
+      }
+    }
 
     // ---------------------------------------------------------------------
     // Styles — the pack's tab dress, under this package's own `dst-` prefix.
@@ -155,6 +207,15 @@ window.__ModuleLoader__.load({
     const subscribers = new Set()
 
     function readStoredHeight() {
+      // alpha.5: the pack's shared state answers first. It is the one store both
+      // hosts read, so the dock keeps its height when a Chrome tab and the
+      // desktop window (different browser profiles, and possibly different
+      // ports) are the two things being opened; localStorage stays underneath as
+      // the fallback for a profile without dsh-ui-state.
+      if (sharedReady()) {
+        const shared = Number(sharedState.get('dockHeight'))
+        if (Number.isFinite(shared)) return clampHeight(shared)
+      }
       try {
         const raw = window.localStorage ? window.localStorage.getItem(STORAGE_KEY) : null
         const value = Number.parseInt(raw === null ? '' : raw, 10)
@@ -267,6 +328,16 @@ window.__ModuleLoader__.load({
       const next = clampHeight(value)
       if (next === dock.height) return
       dock.height = next
+      // Both stores, on purpose: the shared section is what the two hosts agree
+      // on, and the localStorage copy keeps the dock remembering its height if
+      // dsh-ui-state is uninstalled while this bundle stays.
+      if (sharedState !== null) {
+        try {
+          sharedState.set('dockHeight', next)
+        } catch (err) {
+          /* not persisting is not a failure */
+        }
+      }
       try {
         if (window.localStorage) window.localStorage.setItem(STORAGE_KEY, String(next))
       } catch (err) {
@@ -1377,6 +1448,22 @@ window.__ModuleLoader__.load({
      */
     function apply(ctx) {
       try {
+        // alpha.5: the pack's durable section, when this profile installs it.
+        // `readStoredHeight` already ran at module load (this dock keeps its
+        // geometry in a module-level store), so the shared value is adopted
+        // here, once it lands: the section is a wire read, and until it answers
+        // the localStorage copy is the only height there has ever been.
+        sharedState = uiStateService(ctx)
+        if (sharedState !== null && typeof sharedState.subscribe === 'function') {
+          const adoptShared = () => {
+            if (!sharedReady()) return
+            const shared = Number(sharedState.get('dockHeight'))
+            if (!Number.isFinite(shared)) return
+            setHeight(shared)
+          }
+          adoptShared()
+          sharedState.subscribe(adoptShared)
+        }
         ctx.effect(
           () =>
             ctx.slots.inject(HEADER_SLOT, () =>

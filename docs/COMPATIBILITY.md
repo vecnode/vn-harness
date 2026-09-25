@@ -191,6 +191,33 @@ the details.
   with the layout's own fish as fallback) are hidden and redrawn as a plain
   **24px black disc** and the text **VN Harness**, in the wide row and in the
   collapsed rail.
+- **dsh-ui-state** keeps the UI state that a reload used to forget, **on the
+  host**, so the web profile and the desktop window share one picture: one
+  settings namespace (`vn-harness` in `$DSH_HOME/settings.yaml`) holding the page
+  zoom, an extension theme, the dock height and the two column widths. It
+  registers the namespace through the harness's own settings service and inlines
+  the remembered zoom into the page **before the shell mounts**, so a level never
+  costs a reflow; its browser half binds that namespace once and publishes the
+  `uiState` service the pack's other halves write through. `localStorage` is kept
+  underneath as the fallback, so a profile that installed `dsh-themes` or
+  `dsh-terminal` without this package behaves exactly as before.
+  - **Why not `localStorage`**: it is per origin and per browser profile, so a
+    Chrome tab and the desktop WebView2 are two stores that can never agree, and
+    the desktop shell prefers port 3080 and falls back to a free one.
+  - **Why not a session event or a projection**: `dsh-session-persistence`
+    refuses an unknown event type unless the envelope carries `ignorable: true`
+    (which `Session.append()` cannot set), so a plugin-owned event would make the
+    conversation unreadable; a projection unit needs `zod` schemas, and this pack
+    ships zero npm dependencies.
+  - It owns **no route** and adds no file format: the harness's settings document
+    is already user-editable, atomic, schema-validated and hot-reloaded.
+    Schemastery (which `settings.register` wants) is resolved at runtime through
+    the same `$DSH_HOME/profiles` anchor `dsh-terminal` uses for `node-pty`, never
+    imported — a bare import resolves from the repo folder and fails there.
+  - It **does not** remember the terminal dock being open: see the notes under
+    `dsh-terminal` and in the changelog below.
+  - **New package**, so the first install after this change needs a plain
+    `install.bat` / `./install.sh` run or `-Force`.
 - The shipped `@deepseek-ai/dsh-client-ui-sidebar-documentpreview` row stays
   enabled: it only consumes `sidebarRightTabs` and the keyed seat, so the
   code/image/PDF/HTML previews keep working inside the pack's bar, and the editor
@@ -486,6 +513,87 @@ the details.
   double-clickable) and the POSIX half is POSIX sh. Nothing in the profile changes
   and no bundle was added: the launcher is repo tooling, and an installed profile
   needs nothing to use it.
+
+- **ui-state alpha.1 (new package)**: the pack gained **`dsh-ui-state`** — the
+  state a reload used to forget. The interface's own state was remembered in the
+  wrong place: everything that survived lived on the HOST (`$DSH_HOME/sessions`,
+  `storages/workspace.json`, `settings.yaml`) while the page zoom and the dock
+  height sat in `localStorage`, which is per **origin** and per browser
+  **profile** — so a Chrome tab and the desktop window's WebView never shared it,
+  and the desktop shell lost it whenever port 3080 was taken. This package makes
+  that state host state: ONE settings namespace, `vn-harness`, in
+  `$DSH_HOME/settings.yaml`, holding `pageZoom`, `theme`, `dockHeight`,
+  `sidebarWidth` and `rightbarWidth`. Its Node half owns the namespace and
+  inlines the remembered zoom into the page before the shell mounts; its browser
+  half binds the namespace **once** (three independent bindings would fence each
+  other's writes on a stale revision, and the recovery for that drops the write),
+  restores the two COLUMN WIDTHS through ui-layout's own root-slot store handle
+  (its `ctx.layout` exposes no width setter), and publishes the **`uiState`**
+  client service the other two halves write through. Every field carries a schema
+  default, so a fresh install grows **no** `vn-harness` section at all. New
+  package, so the first install after this change needs a plain
+  `install.bat` / `./install.sh` run or `-Force`.
+
+- **ui-state is shared by both hosts, and that is the point**: `localStorage`
+  cannot do this job. Even at the same port, a Chrome tab and the desktop
+  window's WebView2 are two different browser profiles with two different stores,
+  and the desktop shell prefers 3080 and falls back to a free port, so one host
+  could lose its own state by moving a port. A settings section is one document
+  both launchers read. Anything a profile wants remembered across both should go
+  there, not into storage.
+
+- **themes alpha.18 - the extension themes were broken, and this fixes them**: in
+  the field, clicking **Nord** or **Monokai** appeared to do nothing while Light
+  and Dark worked. The cause was **not** the persistence. ui-theme's
+  `ThemeRuntime.adopt()` assigns its `preference` from its **durable** section
+  whenever its settings scope notifies, and that scope notifies whenever the
+  settings **document** changes - which any write to any namespace causes,
+  including this pack's own zoom, dock and width writes. An extension theme is
+  never written to that durable section (ui-theme's schema accepts
+  `light`/`dark`/`system` only), so choosing Nord applied it and the very next
+  settings write snapped the app back to the durable built-in. It predated
+  alpha.17: **any** Settings change reverted an extension theme, and the new
+  persistence simply made the revert immediate and visible.
+  Fixed by treating an extension theme as a **desired state the control keeps
+  applied** rather than a one-shot choice, with ui-theme's own namespace
+  **revision** as the tie-break: revision unmoved means nobody chose anything (a
+  re-adopt, so the theme goes straight back on), revision moved means a surface
+  that writes durably chose a built-in - the shipped **Settings > Appearance**
+  row - and that decision wins. Picking the built-in that was *already* durable is
+  the one case the revision cannot see, so the extension is re-applied; that means
+  setting the durable built-in to the extension's own base scheme (`dark` for
+  Nord) is the one shape of "leave Nord" that has to be done from this control's
+  menu instead. Version changed: a plain install run (or `-Force`) re-adds the
+  bundle, then restart and hard-refresh.
+  The new tracked check runs the **real** ui-theme bundle (not a stub, which is
+  what let this ship) and skips loudly on a host with no copy of it.
+- **themes alpha.17**: the page zoom and an **extension theme** become durable.
+  `light` / `dark` / `system` always persisted (ui-theme owns them); **Nord** and
+  **Monokai** did not — ui-theme's durable schema accepts the built-in three
+  only, so they were an in-process choice a reload threw away. They now ride the
+  `vn-harness` section, with the per-origin `localStorage` copy kept UNDERNEATH as
+  the fallback, so the control still remembers its level in a profile that
+  installed this bundle without `dsh-ui-state`. Picking a built-in theme **clears**
+  the field rather than overwriting it, so the document keeps no stale theme id.
+  Version changed: a plain install run (or `-Force`) re-adds the bundle, then
+  restart and hard-refresh.
+
+- **terminal alpha.5**: the dock's **height** rides the same section, on the same
+  terms (localStorage kept underneath). Its **open** state is deliberately NOT
+  remembered: the panel is the window onto a PROCESS, and after a reload the
+  client holds no slots, so reopening it would either show an empty panel or —
+  once the server's five-minute PTY retention has lapsed — start a shell nobody
+  asked for. A height is a preference; "a shell was running" is not.
+  Version changed: a plain install run (or `-Force`) re-adds the bundle.
+
+- **desktop window geometry (app/)**: the Tauri shell now remembers its own
+  window size and position in `$DSH_HOME/vn-harness/window.json`, read before the
+  window is built (a browser round trip could not answer in time) and written on
+  a coalesced resize/move plus once at exit, with a monitor check that centres the
+  window when the remembered point is on no screen. It is desktop-only state by
+  nature — a Chrome tab has no window geometry to share. `app/` is not a plugin
+  and no installer touches it: `run-desktop.bat` rebuilds it on the next launch
+  (close any running vn-harness window first, or the release binary is locked).
 
 ## Alpha policy
 

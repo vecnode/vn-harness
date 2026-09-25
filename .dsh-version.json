@@ -134,7 +134,7 @@
       ]
     },
     "dsh-terminal": {
-      "version": "0.1.0-alpha.4",
+      "version": "0.1.0-alpha.5",
       "rows": [
         "terminal"
       ],
@@ -159,8 +159,27 @@
       ],
       "rowOverrides": []
     },
+    "dsh-ui-state": {
+      "version": "0.1.0-alpha.1",
+      "rows": [
+        "ui-state"
+      ],
+      "rowOverrides": [],
+      "provides": [
+        "uiState"
+      ],
+      "owns": [
+        "$DSH_HOME/settings.yaml -> the `vn-harness` namespace (pageZoom, theme, dockHeight, sidebarWidth, rightbarWidth)"
+      ],
+      "role": "the state that outlives the process, shared by the web profile and the desktop window because it lives on the HOST. Node half registers ONE settings namespace (`vn-harness`) through ctx.settings.register - schemastery resolved at runtime through the `$DSH_HOME/profiles` anchor dsh-terminal established for node-pty, because a bare import would resolve from the repo folder and fail (measured) - and answers webserver/index-inject with one inline script carrying the remembered page zoom, marker included, so a level never costs a reflow after boot. Browser half binds that namespace ONCE (three independent bindings would fence each other's writes on a stale revision, and the recovery for that is a reload that silently drops the write), restores the two COLUMN WIDTHS through ui-layout's own root-slot store handle because ctx.layout exposes no width setter, and publishes the `uiState` service (get/set/unset/subscribe/snapshot/status) that dsh-themes and dsh-terminal reach lazily and live without. Nothing is written until a value differs from the schema default, so a fresh install grows no section; no route, no fork, no core row disabled, and no npm dependency (schemastery is loaded through createRequire, never imported)",
+      "uses": [
+        "@deepseek-ai/dsh-settings (ctx.settings, the namespace provider)",
+        "@deepseek-ai/dsh-client-ui-settings (ctx.settingsScope on the browser side)",
+        "@deepseek-ai/schemastery, resolved at runtime through $DSH_HOME/profiles"
+      ]
+    },
     "dsh-themes": {
-      "version": "0.1.0-alpha.16",
+      "version": "0.1.0-alpha.18",
       "rows": [
         "themes"
       ],

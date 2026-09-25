@@ -35,8 +35,9 @@ way and what it touches; the table below is the map.
 | [`dsh-audio`](packages/dsh-audio/README.md) | [`README.md`](packages/dsh-audio/README.md) | alpha `0.1.0-alpha.2` |
 | [`dsh-diagrams`](packages/dsh-diagrams/README.md) | [`README.md`](packages/dsh-diagrams/README.md) | alpha `0.1.0-alpha.6` |
 | [`dsh-pdf`](packages/dsh-pdf/README.md) | [`README.md`](packages/dsh-pdf/README.md) | alpha `0.1.0-alpha.3` |
-| [`dsh-terminal`](packages/dsh-terminal/README.md) | [`README.md`](packages/dsh-terminal/README.md) | alpha `0.1.0-alpha.4` |
-| [`dsh-themes`](packages/dsh-themes/README.md) | [`README.md`](packages/dsh-themes/README.md) | alpha `0.1.0-alpha.16` |
+| [`dsh-terminal`](packages/dsh-terminal/README.md) | [`README.md`](packages/dsh-terminal/README.md) | alpha `0.1.0-alpha.5` |
+| [`dsh-themes`](packages/dsh-themes/README.md) | [`README.md`](packages/dsh-themes/README.md) | alpha `0.1.0-alpha.18` |
+| [`dsh-ui-state`](packages/dsh-ui-state/README.md) | [`README.md`](packages/dsh-ui-state/README.md) | alpha `0.1.0-alpha.1` |
 | [`dsh-modal`](packages/dsh-modal/README.md) | [`README.md`](packages/dsh-modal/README.md) | alpha `0.1.0-alpha.1` |
 | [`dsh-open-in-app`](packages/dsh-open-in-app/README.md) | [`README.md`](packages/dsh-open-in-app/README.md) | alpha `0.1.0-alpha.1` |
 

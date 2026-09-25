@@ -25,6 +25,15 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
   profile or an npx cache (`react-dom/server`, so browser-only hooks such as
   `useEffect` are skipped, like any server render). Bundles covered:
   - `dsh-modal` - the `modals` service and its queue;
+  - `dsh-ui-state` - the pack's durable UI state: the contract defaults the host
+    schema mirrors, the `uiState` service (`get`/`set`/`unset`/`subscribe`), and
+    the two COLUMN WIDTHS it restores through the `root` slot registration's own
+    store handle - driven against a store double in every order that matters (the
+    section first, the layout first, neither, a narrow frame, a remembered `0`
+    collapsed through the toggle, and a store shape it must REFUSE rather than
+    run blind). It also pins the same wiring from the other side: that
+    `dsh-themes` and `dsh-terminal` resolve the service lazily, never declare it
+    in `inject`, and keep their `localStorage` copies underneath;
   - `dsh-editor` - the tab type, `canOpen` (Markdown claimed, previews vetoed),
     the guide contract, the **Preview** hand-off naming the registry's kind (and
     the fallback when the preview type is absent), the blank-document save path,
@@ -38,7 +47,15 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
     snapshot, the Nord/Monokai extensions (their token maps and glyphs), the
     Session-log download seat, the screenshot control, the **Markdown paper**
     (the light declarations it copies out of fake theme stylesheets, and the
-    dark ones it must skip), the left-top-bar branding and the header ring;
+    dark ones it must skip), the left-top-bar branding and the header ring; plus -
+    the one section that loads a HARNESS bundle rather than a pack one - the
+    **extension-theme regression** against the **real ui-theme runtime**: choosing
+    Nord applies it through the real service, `adopt()`'s re-adopt of the durable
+    built-in (triggered by ANY settings-document change) no longer discards it, a
+    built-in chosen on a surface that writes durably still wins, and this
+    control's own menu always goes back to a built-in. It skips loudly when the
+    host has no copy of ui-theme, because a stub theme service is exactly what
+    let that bug ship;
   - `dsh-gittree` - registration, guide order, the history-only body, the chip
     title;
   - `dsh-terminal` - the bundle id, both seats, order 30, and the geometry
@@ -103,6 +120,14 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
     refused);
   - **themes** - the screenshot route's type/signature/size refusals and the
     create-exclusive write onto a redirected Desktop;
+  - **ui-state** - the pack's settings namespace with no route to capture: the
+    row is driven against a stub so the check can assert what `apply` registered
+    (the `vn-harness` namespace, asked for through the OPTIONAL settings service)
+    and that the schema really resolves the defaults the browser half mirrors -
+    drift between those two is what would make a fresh install read a field
+    nobody set - plus the ladder and height refusals and the pre-paint zoom row
+    (silent at the resting level, carrying level and seam marker otherwise, and
+    silent when no settings service is composed);
   - **diagrams** - the route table, the vendored-engine hash, a real Mermaid
     parse, a real TikZ compile when the host has an engine, the lint warnings,
     the empty-source refusals, `diagram_verify` leaving the revision alone, the

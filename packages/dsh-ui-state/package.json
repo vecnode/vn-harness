@@ -1,0 +1,30 @@
+{
+  "name": "dsh-ui-state",
+  "version": "0.1.0-alpha.1",
+  "description": "UI state that outlives the process, for the vn-harness Web GUI and its desktop window alike. One host-owned settings namespace (`vn-harness` in $DSH_HOME/settings.yaml) holds the state a reload would otherwise forget - the page zoom, an extension theme (Nord/Monokai, which the shipped durable preference schema cannot hold), the terminal dock's height and open state, and the left/right column widths - and one browser half binds that namespace once, restores the two column widths into ui-layout's own store, and publishes the `uiState` client service the pack's other halves write their own fields through. It is host-side on purpose: localStorage is per browser profile, so a Chrome tab and the desktop window's WebView can never share it, while a settings section is one picture both hosts read. Alpha.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "license": "MIT"
+}

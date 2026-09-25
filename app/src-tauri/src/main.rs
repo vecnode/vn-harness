@@ -39,6 +39,15 @@
 //! in [`readyline`]: it is read in memory, never written to a file, printed
 //! only redacted, and handed to the webview as one value.
 //!
+//! The window also remembers ITSELF: `<harness home>/vn-harness/window.json` is
+//! read before the window is built and written back on every resize and move
+//! (coalesced, so a drag costs one write) and once more on the way out, so a
+//! window the reader placed once comes back where they put it. Every rule about
+//! that file - what may be restored, what is discarded, what is clamped, and
+//! why a maximized window's size is not what gets recorded - lives in
+//! [`windowstate`], and a record this build cannot vouch for costs the default
+//! geometry and nothing else.
+//!
 //! A window opens IMMEDIATELY, on the shell's own splash (`app/ui/index.html`),
 //! because the first run of the pinned CLI can spend a minute inside `npx`
 //! before a server exists. On failure the window is retitled and the reason is
@@ -46,21 +55,32 @@
 //! crate has two dependencies.
 
 mod readyline;
+mod windowstate;
 
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use windowstate::WindowState;
 
 /// The harness process, kept here so the exit hook can find it. It is `None`
 /// until the child is spawned and again once it has been reaped.
 static CHILD: Mutex<Option<Child>> = Mutex::new(None);
+
+/// The last geometry this shell observed, folded through the rules in
+/// [`windowstate`].
+///
+/// It lives in a static because a window event callback receives nothing but
+/// `&WindowEvent`: it cannot own the state its reading has to be merged against.
+/// The exit hook reads it when the window is already gone, which is why it is
+/// kept up to date on every observation rather than only at the end.
+static LAST_GEOMETRY: Mutex<Option<WindowState>> = Mutex::new(None);
 
 /// How long to wait for the ready line. Generous: the first run of a dsh
 /// version downloads it through npx, and that is the slow path, not a hang.
@@ -83,10 +103,13 @@ const DEFAULT_PORT: u16 = 3080;
 /// The one window, and the label the exit hook and the supervisor share.
 const WINDOW_LABEL: &str = "main";
 
-const WINDOW_WIDTH: f64 = 1440.0;
-const WINDOW_HEIGHT: f64 = 900.0;
-const WINDOW_MIN_WIDTH: f64 = 960.0;
-const WINDOW_MIN_HEIGHT: f64 = 640.0;
+/// How long a resize or a move must go quiet before the geometry is written.
+///
+/// A drag emits an event per pixel and every write is a file plus a rename on
+/// the reader's own disk, so the writer COALESCES: it keeps the newest geometry
+/// and writes once the burst stops. This is far below the time it takes to
+/// notice anything, and it turns a whole drag into a single write.
+const GEOMETRY_WRITE_DELAY: Duration = Duration::from_millis(400);
 
 // ---------------------------------------------------------------------------
 // Flags
@@ -415,22 +438,241 @@ fn open_external(url: &str) {
 /// Built here rather than declared in `tauri.conf.json` so the navigation
 /// filter can live with it: `on_navigation` is the only thing standing between
 /// a link in a rendered document and the app being replaced by a web page.
-fn build_window(app: &AppHandle) -> tauri::Result<()> {
-    WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::App(PathBuf::from("index.html")))
-        .title("vn-harness")
-        .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-        .min_inner_size(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
-        .center()
-        .resizable(true)
-        .on_navigation(|url| {
-            if is_internal(url) {
-                return true;
+///
+/// The remembered geometry is restored here too, and only the OS work happens
+/// here: WHICH geometry may be restored - and every rule about when a saved
+/// record can be trusted - lives in [`windowstate`], so all of it is decided by
+/// a `cargo test` rather than by reading this function.
+fn build_window(app: &AppHandle, state_path: Option<&Path>) -> tauri::Result<()> {
+    let remembered = match state_path.map(windowstate::load) {
+        // No harness home could be resolved, so there is nowhere honest to
+        // read from or write to: this window simply has no memory (see
+        // `reported_home`, which is the only home resolver here).
+        None => WindowState::first_launch(),
+        // The ordinary first launch: nothing to say, and nothing to fix.
+        Some(Err(windowstate::Unusable::Absent)) => WindowState::first_launch(),
+        Some(Err(reason)) => {
+            // One line, never a refusal: a record this build cannot vouch for
+            // costs the reader the default geometry and nothing else.
+            println!("[vn-harness] ignoring the remembered window geometry: {reason}.");
+            WindowState::first_launch()
+        }
+        Some(Ok(remembered)) => remembered,
+    };
+
+    // A remembered position is honoured only when it names a monitor this
+    // machine HAS right now: a window restored onto a display that is no longer
+    // plugged in is a window nobody can see, which is worse than a centred one.
+    // The pure half owns "both numbers are present, numeric and finite"; only
+    // this side can ask the monitor list whether the point is real.
+    let position = remembered
+        .position()
+        .filter(|point| point_is_on_a_monitor(app, point.0, point.1));
+
+    let mut builder =
+        WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::App(PathBuf::from("index.html")))
+            .title("vn-harness")
+            .inner_size(remembered.width, remembered.height)
+            .min_inner_size(windowstate::MIN_WIDTH, windowstate::MIN_HEIGHT)
+            .resizable(true)
+            .on_navigation(|url| {
+                if is_internal(url) {
+                    return true;
+                }
+                open_external(url.as_str());
+                false
+            });
+    builder = match position {
+        Some((x, y)) => builder.position(x, y),
+        None => builder.center(),
+    };
+    let window = builder.build()?;
+
+    // A maximized window is built at its RESTORED size and maximized after, and
+    // that order is the point: the record still holds a size worth
+    // un-maximizing to, instead of the size of the display.
+    if remembered.maximized {
+        let _ = window.maximize();
+    }
+
+    // Nothing is remembered without a resolved harness home, and then there is
+    // no listener and no writer either - never a guessed path.
+    if let Some(path) = state_path {
+        remember(remembered);
+        let sender = spawn_geometry_writer(path.to_path_buf());
+        let listener_window = window.clone();
+        window.on_window_event(move |event| {
+            // Resizes and moves are the whole of "the geometry changed";
+            // everything else (focus, theme, a close request) is not geometry.
+            if !matches!(event, WindowEvent::Resized(_) | WindowEvent::Moved(_)) {
+                return;
             }
-            open_external(url.as_str());
-            false
-        })
-        .build()?;
+            let Some(reading) = snapshot(&listener_window) else {
+                return;
+            };
+            // The write itself is the other thread's job; this only hands the
+            // newest geometry over, and a closed channel means the shell is on
+            // its way out and the exit hook is already writing the last word.
+            let _ = sender.send(remember(reading));
+        });
+    }
     Ok(())
+}
+
+/// Whether a logical point names a monitor this machine has right now.
+///
+/// The point is a LOGICAL coordinate (see [`windowstate`]) while the monitor
+/// list is in PHYSICAL pixels, so the point is mapped through each monitor's
+/// own scale factor before the hit test. This is a best-effort sanity check and
+/// only needs to be that: a wrong answer here costs the restored POSITION, and
+/// the window is centred instead.
+///
+/// A monitor query that FAILS answers "no" as well: without a list this shell
+/// cannot tell an off-screen point from an on-screen one, and centring is the
+/// safe half of that uncertainty.
+fn point_is_on_a_monitor(app: &AppHandle, x: f64, y: f64) -> bool {
+    let monitors = match app.available_monitors() {
+        Ok(monitors) => monitors,
+        Err(error) => {
+            eprintln!("[vn-harness] could not read the monitor list ({error}); centring the window.");
+            return false;
+        }
+    };
+    monitors.iter().any(|monitor| {
+        let scale = monitor.scale_factor();
+        let scale = if scale > 0.0 { scale } else { 1.0 };
+        let left = monitor.position().x as f64;
+        let top = monitor.position().y as f64;
+        let right = left + monitor.size().width as f64;
+        let bottom = top + monitor.size().height as f64;
+        let (physical_x, physical_y) = (x * scale, y * scale);
+        physical_x >= left && physical_x < right && physical_y >= top && physical_y < bottom
+    })
+}
+
+/// Read the live window's geometry the way this shell records it.
+///
+/// The physical readings are divided by the window's own scale factor, because
+/// the record is LOGICAL pixels: the builder takes logical values, so a window
+/// on a 150% display that stored its physical size would come back half again
+/// too large. `None` means the window could not be measured at all, which is
+/// not worth recording.
+///
+/// A window that is MINIMIZED reports 0x0 on Windows, and its position is then
+/// the off-screen parking spot rather than anywhere the reader put it - which
+/// [`WindowState::merge`] is what deals with, so a minimize cannot erase a good
+/// record.
+fn snapshot(window: &WebviewWindow) -> Option<WindowState> {
+    let scale = window
+        .scale_factor()
+        .ok()
+        .filter(|factor| *factor > 0.0)
+        .unwrap_or(1.0);
+    let size = window.inner_size().ok()?;
+    let position = window.outer_position().ok()?;
+    Some(WindowState {
+        width: size.width as f64 / scale,
+        height: size.height as f64 / scale,
+        x: Some(position.x as f64 / scale),
+        y: Some(position.y as f64 / scale),
+        // An unreadable flag reads as "not maximized", which is the safe half:
+        // it records a size rather than silently keeping an old one.
+        maximized: window.is_maximized().unwrap_or(false),
+    })
+}
+
+/// Fold a live reading into the geometry worth remembering, and remember it.
+fn remember(reading: WindowState) -> WindowState {
+    let mut slot = match LAST_GEOMETRY.lock() {
+        Ok(slot) => slot,
+        Err(_) => return reading,
+    };
+    let next = match slot.as_ref() {
+        Some(previous) => previous.merge(&reading),
+        None => reading,
+    };
+    *slot = Some(next.clone());
+    next
+}
+
+/// Own the record file on a thread of its own, one write at a time.
+///
+/// The event callback must not write: a drag emits an event per pixel, and each
+/// write is a create, a write and a rename on the reader's disk. So the
+/// callback only hands the newest geometry over a channel, and this thread
+/// keeps replacing it while events keep arriving and writes when the burst goes
+/// quiet. Losing the sender while a write is still pending - the window being
+/// destroyed, which is the ordinary way to close it - writes that pending value
+/// on the way out rather than dropping it.
+fn spawn_geometry_writer(path: PathBuf) -> Sender<WindowState> {
+    let (sender, receiver) = mpsc::channel::<WindowState>();
+    thread::spawn(move || {
+        loop {
+            // Block until there is something to write at all...
+            let mut latest = match receiver.recv() {
+                Ok(state) => state,
+                Err(_) => return,
+            };
+            // ...then coalesce: every newer reading replaces this one until the
+            // burst is over, so a whole drag costs exactly one write.
+            loop {
+                match receiver.recv_timeout(GEOMETRY_WRITE_DELAY) {
+                    Ok(state) => latest = state,
+                    Err(RecvTimeoutError::Timeout) => break,
+                    // The sender is gone - the window was destroyed - and this
+                    // reading is the last one there will ever be.
+                    Err(RecvTimeoutError::Disconnected) => {
+                        write_geometry(&path, &latest);
+                        return;
+                    }
+                }
+            }
+            write_geometry(&path, &latest);
+        }
+    });
+    sender
+}
+
+/// Write the record, and never make a failure anybody's problem.
+///
+/// A window that cannot remember its geometry still opens; it just opens at the
+/// default size next time. So this prints one line and returns.
+fn write_geometry(path: &Path, state: &WindowState) {
+    if let Err(error) = windowstate::save(path, state) {
+        eprintln!(
+            "[vn-harness] could not remember the window geometry in {}: {error}",
+            path.display()
+        );
+    }
+}
+
+/// Write the geometry one last time, so a clean close always records it.
+///
+/// Synchronous on purpose: this runs on the way out, and a value handed to the
+/// debounced writer might not have reached the disk before the process ends.
+/// The live window is asked first - it is the most accurate answer, and it is
+/// still there on the `ExitRequested` pass - and a window that is already gone
+/// leaves the last observation, which is the same geometry the writer had
+/// pending. Writing twice is harmless: both writes carry the same record.
+fn record_final_geometry(app: &AppHandle, state_path: Option<&Path>) {
+    let Some(path) = state_path else {
+        // No resolved harness home: there is nowhere honest to write.
+        return;
+    };
+    let state = match app
+        .get_webview_window(WINDOW_LABEL)
+        .and_then(|window| snapshot(&window))
+    {
+        Some(reading) => remember(reading),
+        None => match LAST_GEOMETRY.lock() {
+            Ok(slot) => match slot.as_ref() {
+                Some(state) => state.clone(),
+                None => return,
+            },
+            Err(_) => return,
+        },
+    };
+    write_geometry(path, &state);
 }
 
 /// Report a failure in the two places a person can actually see: this console,
@@ -727,10 +969,18 @@ fn main() {
         return;
     }
 
+    // The record's path is resolved ONCE, here, through the same home resolver
+    // the rest of this shell uses, and handed to both halves that need it: the
+    // window that restores it and the exit hook that writes it. `None` means no
+    // harness home could be resolved at all, and then the window simply has no
+    // memory - a path is never invented (see `reported_home`).
+    let state_path = reported_home(&options).map(|home| windowstate::state_path(&home));
+
+    let setup_path = state_path.clone();
     let app = match tauri::Builder::default()
         .setup(move |app| {
             // The window first, so something is on screen while npx works.
-            build_window(app.handle())?;
+            build_window(app.handle(), setup_path.as_deref())?;
             let handle = app.handle().clone();
             let options = options.clone();
             thread::spawn(move || supervise(handle, options));
@@ -745,10 +995,18 @@ fn main() {
         }
     };
 
-    app.run(|_handle, event| {
-        if let RunEvent::Exit = event {
+    app.run(move |handle, event| match event {
+        // The last chance to read the window: `ExitRequested` still has it, so
+        // the final geometry is measured rather than remembered from an event.
+        RunEvent::ExitRequested { .. } => record_final_geometry(handle, state_path.as_deref()),
+        RunEvent::Exit => {
+            // `Exit` is unconditional and `ExitRequested` is not always seen
+            // (a window destroyed by the system, say), so the record is written
+            // on the way out either way - and both writes carry the same state.
+            record_final_geometry(handle, state_path.as_deref());
             kill_child_tree();
         }
+        _ => {}
     });
 }
 
@@ -826,6 +1084,23 @@ mod tests {
         assert_eq!(pick_home_variable(Some(""), None, true), None);
         assert_eq!(pick_home_variable(Some("   "), None, true), None);
         assert_eq!(pick_home_variable(None, None, false), None);
+    }
+
+    #[test]
+    fn the_geometry_record_lives_under_the_resolved_harness_home() {
+        // The seam the window geometry hangs off: one home resolution, the
+        // pack's own folder under it, and the record inside that. `-DshHome`
+        // wins over anything inherited, so this pins the wiring without
+        // touching the real environment.
+        let options = Options {
+            dsh_home: Some("/tmp/some-dsh-home".to_string()),
+            ..Options::default()
+        };
+        let path = reported_home(&options).map(|home| windowstate::state_path(&home));
+        let expected = PathBuf::from("/tmp/some-dsh-home")
+            .join("vn-harness")
+            .join("window.json");
+        assert_eq!(path, Some(expected));
     }
 
     #[test]

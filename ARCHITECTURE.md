@@ -79,6 +79,11 @@ packages/dsh-themes/              # sub-plugin: the header's page-zoom, capture,
   lib/index.js        # Node half: the screenshot route (writes the client's PNG to this machine's Desktop)
   lib/client.js       # browser half: page zoom (one `zoom` on <html>), the Screenshot button, the Light/Dark/System
                       # button + registered themes over ctx.get('theme'), and the Session-log download seat
+packages/dsh-ui-state/            # sub-plugin: the state a reload would otherwise forget (see section 17)
+  package.json        # dsh.bundle + dsh.client
+  cordis.patch.yml    # inserts the 'ui-state' row (nothing else patched)
+  lib/index.js        # Node half: registers the `vn-harness` settings namespace, inlines the remembered page zoom
+  lib/client.js       # browser half: binds that namespace once, restores the two column widths, provides `uiState`
 packages/dsh-open-in-app/         # the file-manager half of the Open In button
   package.json        # dsh.bundle + dsh.client (forks the shipped client bundle)
   cordis.patch.yml    # disables ui-open-in-app, inserts 'native-open-in-app'
@@ -1868,3 +1873,151 @@ pdf_* card, or by an address of either shape.
 | The PDFs page lists nothing | the workspace has no `*.pdf` inside 6 levels - or the walk is looking at the wrong folder, which `GET /api/dsh-pdf/list?session=<id>` answers directly (`root` is in the response) |
 | A workspace PDF is missing from the index | it is deeper than 6 levels, past the 200-file cap, inside a skipped directory (`node_modules`, `.git`, ...), or it is a symlink - the walk does not follow those on purpose |
 | "Count pages" reports fewer documents than rows | the count pass is capped at 12 documents per request, and a locked or damaged PDF reports `null` rather than failing the list |
+
+-----
+
+## 17. UI state that outlives the process (dsh-ui-state)
+
+**The problem, stated precisely.** Everything the interface remembered before
+this package existed was remembered in the wrong place. Three tiers were in play,
+and only the first is shared:
+
+| Tier | Where | Survives a restart | Shared by a Chrome tab and the desktop window |
+|---|---|---|---|
+| Host files | `$DSH_HOME/sessions`, `storages/workspace.json`, `settings.yaml` | yes | **yes** - one file, one picture |
+| Browser storage | `localStorage` (page zoom, dock height) | same browser only | **never** - two browser profiles are two stores, even at the same port |
+| Nothing | the layout store, the open right-bar tab, the extension theme | no | no |
+
+That is why a new chat opens the last one (tier 1) while the column widths, the
+page zoom and a Nord theme did not (tiers 2 and 3). `localStorage` is the trap:
+it *looks* like persistence, but it is per **origin** and per browser **profile**,
+and the desktop shell prefers port 3080 and falls back to a free one, so even a
+single host can lose it by moving a port.
+
+**The answer is a settings namespace, not a new file format.** `dsh-ui-state`'s
+Node half registers ONE namespace - `vn-harness` - in the harness's own settings
+document, `$DSH_HOME/settings.yaml`, through `ctx.settings.register`. That seam
+already provides everything this needs and nothing it does not: one document both
+launchers read, atomic writes, schema validation, hot reload on a hand edit, and
+a user layer that stays empty until a value actually differs from the contract.
+A plugin-owned **session event** was not an option (`dsh-session-persistence`
+refuses an unknown event type unless the envelope carries `ignorable: true`, which
+`Session.append()` cannot set - the conversation would become unreadable), and
+`ctx.storageDomain` needs a projection the browser cannot read.
+
+The namespace's fields and owners:
+
+| Field | Default | Written by |
+|---|---|---|
+| `pageZoom` | `100` | `dsh-themes` (the header's Page-zoom control) |
+| `theme` | `''` | `dsh-themes` (an **extension** theme id only) |
+| `dockHeight` | `280` | `dsh-terminal` |
+| `sidebarWidth` | `-1` | `dsh-ui-state` itself |
+| `rightbarWidth` | `-1` | `dsh-ui-state` itself |
+
+Two conventions carry weight. **A negative width means "never recorded"**, which
+is deliberately not `0`: for the sidebar `0` is a real state (collapsed), so a
+sentinel is the only way to say "leave the layout's contract default alone"
+without lying about a width nobody chose. And **`theme` holds an extension id
+only** - `light` / `dark` / `system` are already durable in ui-theme's own
+namespace, and a setting with two owners is a setting that can disagree.
+
+**One binder, and why.** `settingsScope` writes are fenced on the LATEST KNOWN
+namespace revision, and each bound scope owns its own queue. Three bundles
+binding `vn-harness` independently could therefore refuse each other's writes,
+and the contract's recovery for a stale revision is a reload of host state -
+which would silently drop the write. So the browser half binds the namespace
+once and publishes the **`uiState`** client service (`get` / `set` / `unset` /
+`subscribe` / `snapshot` / `status`) that the other two packages reach lazily.
+`unset` exists because clearing is not the same as overwriting: picking a built-in
+theme after Nord must REMOVE the field so it reads as inherited again, not write
+the default into the user's document.
+
+**An extension theme is a desired state, not a one-shot choice.** This is the
+part that had a real bug in the field, and it is worth recording because the
+mechanism is not obvious. ui-theme's `ThemeRuntime.adopt()` assigns its
+`preference` from its DURABLE section whenever its settings scope notifies, and
+that scope notifies whenever the settings DOCUMENT changes - which any write to
+any namespace causes, this pack's own zoom and dock writes included. An extension
+theme is never written to that durable section (ui-theme's schema accepts
+`light` / `dark` / `system` only), so choosing Nord applied it and the next
+settings write snapped the app back to the durable built-in. That predates the
+persistence: ANY Settings change reverted an extension theme.
+So the control keeps a `desiredTheme` and `reconcileTheme` puts it back on every
+`theme/change`, with ui-theme's own namespace **revision** as the tie-break
+between the two things that look identical from the outside - a re-adopt
+(revision unmoved: nobody chose anything, so re-apply) and a deliberate built-in
+chosen in the shipped **Settings > Appearance** row (revision moved: that
+decision wins, and the remembered id is cleared). Re-picking the built-in that was
+already durable is the one case the revision cannot see, so the extension is
+re-applied; the escape is this control's own menu. The tracked check runs the
+REAL ui-theme bundle for exactly this reason - a stub theme service accepted the
+registration and hid the bug.
+**The zoom is applied before the first paint.** A zoom that lands after the client
+boots is a visible reflow of the whole shell, so - exactly as ui-theme bootstraps
+its own palette - the Node half answers `webserver/index-inject` with one inline
+script carrying the remembered level, and writes both the `zoom` declaration and
+the `data-dsh-page-zoomed` marker. The marker is a contract, not decoration:
+`dsh-themes`' right-bar seam fix (alpha.16) is gated on it, and a boot script that
+set the zoom without it would leave the seam 288px off the right column's edge at
+80% on a 1440px frame for the whole interval before the client applies the same
+level again.
+
+**The column widths are this package's own job.** ui-layout keeps them in a
+transient store - its own words - so a reload returns the sidebar to 280px and the
+right bar to 45% of the frame, and closing the sidebar forgets its drag width by
+design. `ctx.layout` exposes `selectPanel` / `toggleSidebar` / `openRightbar` /
+`closeRightbar` and **no width setter**, so the store is reached the way
+ui-layout's own `AppFrame` reaches it: the store handle is carried by the `root`
+slot registration, and `store.create()` answers the same shared instance the frame
+renders from. That is the one core store this pack writes, so it is guarded
+twice - the handle must look like a layout store before anything is touched, and a
+shape it does not recognise means "remember nothing" rather than "run blind".
+Both widths go to the store's own setters **unclamped**, because the store already
+clamps to its drag range and to 70% of the frame. A remembered `0` is restored
+through `toggleSidebar()`: `setSidebar(0)` clamps to 264, so collapse can only be
+the toggle's own transition. Below ui-layout's 1024px auto-collapse width nothing
+is restored at all - there the rail is the layout's decision, not a preference.
+
+**Why schema is resolved and not imported.** This pack ships zero npm
+dependencies and every other Node half imports only `node:*` builtins: the profile
+installs each bundle as a live link into the repo, so a bare
+`import '@deepseek-ai/schemastery'` resolves from the repo folder and fails with
+`ERR_MODULE_NOT_FOUND` (measured). `settings.register` wants a schemastery schema,
+so the module is loaded at runtime instead through the anchors
+`packages/dsh-terminal/lib/pty.js` established for the harness's own `node-pty`:
+the running entry, then `$DSH_HOME/profiles`, which `dsh-app-boot` keeps as a
+mirror of the installation's dependency closure, so Node's ordinary parent walk
+finds the very same copy the harness loaded. The CJS build is what makes
+`createRequire` work (`schemastery` is `type: module` but publishes
+`exports.require`), and duck typing is what makes it safe: `dsh-settings` treats
+the schema as a function and reads `schema.toJSON()`, so it never compares class
+identity across the two module graphs. With no reachable copy the row WARNS and
+degrades - nothing is remembered, and every consumer falls back to the local
+behaviour it had before - rather than failing the boot.
+
+**Degradation is designed, not accidental.** `dsh-themes` and `dsh-terminal`
+resolve `uiState` with `ctx.get` and never declare it in `inject`, and each keeps
+writing its `localStorage` copy alongside the shared field. So a profile with one
+of those bundles and not this one behaves exactly as before, and the shared
+section always wins when both exist. Nothing is written at all until a value
+actually changes, which is why a fresh install grows no `vn-harness` section.
+
+**The desktop window remembers its own geometry, separately.** The window's size
+and position must be known BEFORE the window is built, so they cannot come from a
+browser round trip: `app/src-tauri/src/windowstate.rs` (the pure half, `cargo
+test`-pinned) reads and writes `$DSH_HOME/vn-harness/window.json`, and
+`main.rs` does only the Tauri work - read before build, a coalescing writer on
+`Resized`/`Moved`, a synchronous write at exit, and a monitor check that falls
+back to centring when the remembered point is on no screen. It is desktop-only
+state by nature: a Chrome tab has no window geometry to share. A maximized
+recording keeps the previously known size and position and flips only the flag,
+because a maximized window reports the screen's size and recording it would lose
+the window worth un-maximizing to.
+
+**What is deliberately NOT remembered.** The terminal dock's **open** state: the
+panel is the window onto a PROCESS, and after a reload the client holds no slots,
+so reopening it would either show an empty panel or - once the server's five
+minute PTY retention has lapsed - start a shell nobody asked for. A height is a
+preference; "a shell was running" is not. The right bar's open tab is per
+conversation and belongs to the bar's own store; it is left for a later pass.

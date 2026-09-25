@@ -152,9 +152,17 @@ window.__ModuleLoader__.load({
     /** The slot id of the Themes occupant in the header utilities list. */
     const THEMES_ID = 'dsh-themes'
     /** Version marker, logged at activation so a fresh bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.15'
+    const PLUGIN_VERSION = '0.1.0-alpha.18'
     /** The client service (@deepseek-ai/dsh-client-ui-theme) that owns the preference. */
     const THEME_SERVICE = 'theme'
+    /**
+     * The settings namespace ui-theme OWNS, read-only here and for one purpose:
+     * its revision tells a deliberate built-in choice apart from ui-theme
+     * re-adopting its durable value (see `reconcileTheme`).
+     */
+    const THEME_SERVICE_NAMESPACE = 'ui-theme'
+    /** A read-only binding to that namespace, resolved lazily by `apply`. */
+    let durableScope = null
     /** The Session header's utilities slot (the group the Open In control sits in). */
     const HEADER_SLOT = 'conversation.session.header.utilities'
     /** Order of the shipped Open In control in that slot; this one sits to its left. */
@@ -1505,7 +1513,13 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
           onSelect: (id) => {
             setOpen(false)
             try {
-              state.setTheme(id)
+              // An extension theme becomes a DESIRED STATE this control keeps in
+              // force (ui-theme will re-adopt its durable built-in the next time
+              // the settings document moves, and `reconcileTheme` puts this back);
+              // a built-in is ui-theme's own to persist, so choosing one only has
+              // to stop wanting an extension and clear the remembered id.
+              if (THEME_EXTENSIONS.some((item) => item.id === id)) chooseExtensionTheme(state, id)
+              else chooseBuiltInTheme(state, id)
             } catch (err) {
               // eslint-disable-next-line no-console
               console.warn('[dsh-themes] could not switch the theme', err && err.message ? err.message : err)
@@ -2083,17 +2097,273 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       return magnifier(props && typeof props.size === 'number' ? props.size : 16, h('path', { d: 'M4.9 6.9h4' }))
     }
 
+    // ---------------------------------------------------------------------
+    // The pack's own durable state (alpha.17)
+    //
+    // Two things on this package used to be remembered per BROWSER: the page
+    // zoom in localStorage, and the extension theme not at all. localStorage is
+    // per ORIGIN and per browser PROFILE, so a Chrome tab and the desktop
+    // window's WebView never shared it - and the desktop shell prefers port 3080
+    // and falls back to a free one, so even one host lost it by moving a port.
+    // The extension theme was worse: ui-theme's durable preference schema
+    // accepts `light` / `dark` / `system` only, so Nord and Monokai were an
+    // in-process choice a reload threw away.
+    //
+    // Both now go through the pack's `uiState` service (dsh-ui-state), which is
+    // one section of `$DSH_HOME/settings.yaml` that BOTH hosts read. localStorage
+    // stays as the fallback, so this control still remembers its level in a
+    // profile that installed this bundle without that one, and the service is
+    // resolved lazily and never declared in `inject` for exactly that reason.
+    // ---------------------------------------------------------------------
+    /** The `uiState` service once `apply` has found it, or `null`. */
+    let sharedState = null
+    /** Whether the remembered extension theme has been put back this load. */
+    let themeRestored = false
+    /**
+     * The extension theme this control WANTS in force, or `''` for none.
+     *
+     * This is the fix for the bug that made Nord and Monokai look broken
+     * (alpha.18), and it is worth stating plainly, because the mechanism is not
+     * obvious and it was NOT caused by the persistence: ui-theme's
+     * `ThemeRuntime.adopt()` assigns its `preference` from its DURABLE section
+     * every time its settings scope notifies, and its scope notifies whenever
+     * the settings DOCUMENT changes - which any write to any namespace causes,
+     * including this pack's own zoom and dock writes. An extension theme is
+     * never written to that durable section (the schema does not accept it), so
+     * choosing Nord applied it and the very next settings write snapped the app
+     * back to the durable built-in. Measured against the real ui-theme runtime:
+     * `setTheme('nord')` takes effect, one scope notification later the
+     * preference is `light` again.
+     *
+     * So an extension theme is not a one-shot choice here, it is a DESIRED STATE
+     * this control keeps applied, and `reconcileTheme` below is what keeps it.
+     */
+    let desiredTheme = ''
+    /** ui-theme's durable revision when {@link desiredTheme} was last applied. */
+    let durableRevisionSeen = undefined
+    /** Re-entrancy guard: applying a theme publishes, which re-enters the listener. */
+    let reconciling = false
+
+    /**
+     * Resolve the pack's shared-state service.
+     * @param ctx - the owning client context.
+     * @returns the service, or `null` when this profile does not install it.
+     */
+    function uiStateService(ctx) {
+      try {
+        const service = ctx && typeof ctx.get === 'function' ? ctx.get('uiState') : undefined
+        const usable = service && typeof service.get === 'function' && typeof service.set === 'function'
+        return usable ? service : null
+      } catch (err) {
+        return null
+      }
+    }
+
+    /**
+     * Whether the shared state has accepted a section yet. Until it has, every
+     * field reads as its schema default - which is why nothing may be persisted
+     * or restored from it before this answers true.
+     * @returns {boolean} readiness.
+     */
+    function sharedReady() {
+      if (sharedState === null || typeof sharedState.status !== 'function') return false
+      try {
+        return sharedState.status() === 'ready'
+      } catch (err) {
+        return false
+      }
+    }
+
+    /**
+     * A READ-ONLY binding to ui-theme's own durable section, used for ONE thing:
+     * telling a deliberate built-in choice apart from ui-theme re-adopting its
+     * durable value. Resolved lazily and never declared in `inject`; a profile
+     * without the settings transport simply gets no tie-break.
+     * @param ctx - the owning client context.
+     * @returns the bound scope, or `null`.
+     */
+    function bindDurableThemeScope(ctx) {
+      try {
+        const binder = ctx && typeof ctx.get === 'function' ? ctx.get('settingsScope') : undefined
+        if (!binder || typeof binder.bind !== 'function') return null
+        return binder.bind({ namespace: THEME_SERVICE_NAMESPACE })
+      } catch (err) {
+        return null
+      }
+    }
+
+    /** @returns {number|undefined} ui-theme's durable namespace revision. */
+    function durableRevision() {
+      if (durableScope === null) return undefined
+      try {
+        const snapshot = durableScope.getSnapshot()
+        return snapshot && typeof snapshot.revision === 'number' ? snapshot.revision : undefined
+      } catch (err) {
+        return undefined
+      }
+    }
+
+    /** Clear the remembered extension theme so the namespace reads as inherited. */
+    function forgetRememberedTheme() {
+      if (sharedState === null || typeof sharedState.unset !== 'function' || !sharedReady()) return
+      const remembered = sharedState.get('theme')
+      if (typeof remembered !== 'string' || remembered.length === 0) return
+      try {
+        sharedState.unset('theme')
+      } catch (err) {
+        console.warn('[dsh-themes] could not clear the theme', err && err.message ? err.message : err)
+      }
+    }
+
+    /**
+     * Apply an extension theme without re-entering the reconciler.
+     * @param state - the theme state.
+     * @param id - a registered extension theme id.
+     * @returns {boolean} whether the service accepted it.
+     */
+    function applyDesiredTheme(state, id) {
+      reconciling = true
+      try {
+        state.setTheme(id)
+        durableRevisionSeen = durableRevision()
+        return true
+      } catch (err) {
+        console.warn('[dsh-themes] could not apply the theme', err && err.message ? err.message : err)
+        return false
+      } finally {
+        reconciling = false
+      }
+    }
+
+    /**
+     * The user chose an extension theme in this control's menu.
+     * @param state - the theme state.
+     * @param id - the theme id.
+     */
+    function chooseExtensionTheme(state, id) {
+      desiredTheme = id
+      durableRevisionSeen = durableRevision()
+      if (sharedState !== null && sharedReady()) {
+        try {
+          sharedState.set('theme', id)
+        } catch (err) {
+          console.warn('[dsh-themes] could not remember the theme', err && err.message ? err.message : err)
+        }
+      }
+      applyDesiredTheme(state, id)
+    }
+
+    /**
+     * The user chose a built-in (light / dark / system) in this control's menu.
+     * ui-theme persists that itself, so this only has to stop wanting an
+     * extension and clear the field: the namespace then reads as inherited.
+     * @param state - the theme state.
+     * @param id - the built-in preference.
+     */
+    function chooseBuiltInTheme(state, id) {
+      desiredTheme = ''
+      forgetRememberedTheme()
+      state.setTheme(id)
+    }
+
+    /**
+     * Keep the desired extension theme applied.
+     *
+     * Called on every `theme/change`. When the preference is not the theme this
+     * control wants, one of two things happened, and they must not be confused:
+     *
+     *   - **ui-theme re-adopted its durable value** (the consequence of any
+     *     settings write, this pack's included). The extension theme must go
+     *     straight back on - this is the whole point of the function.
+     *   - **a surface that writes durably chose a built-in** - the shipped
+     *     Settings > Appearance row. That was a person's decision made through
+     *     ui-theme's own interface, and it wins.
+     *
+     * The tie-break is ui-theme's namespace REVISION, which moves only when
+     * somebody writes that namespace: unchanged means nobody chose anything, so
+     * it was a re-adopt; moved means a deliberate built-in choice. It is read
+     * rather than inferred, and when it cannot be read (no settings transport)
+     * the re-adopt reading is used, because losing the theme is the worse
+     * failure of the two.
+     *
+     * Re-picking the built-in that was ALREADY durable is the one case this
+     * cannot see - the revision does not move - so the extension theme is
+     * re-applied. Picking a DIFFERENT built-in, which is what a person does when
+     * leaving an extension theme, is always honoured. Setting the durable
+     * built-in to that extension's own base scheme (`dark` for Nord) is
+     * therefore the one shape of "leave Nord" that has to be done from this
+     * control's menu instead.
+     *
+     * @param state - the theme state.
+     */
+    function reconcileTheme(state) {
+      if (reconciling || desiredTheme === '') return
+      if (!THEME_EXTENSIONS.some((item) => item.id === desiredTheme)) return
+      const current = state.getSnapshot()
+      const preference = current && typeof current.preference === 'string' ? current.preference : null
+      if (preference === null || preference === desiredTheme) return
+      const revision = durableRevision()
+      if (revision !== undefined && durableRevisionSeen !== undefined && revision !== durableRevisionSeen) {
+        desiredTheme = ''
+        forgetRememberedTheme()
+        return
+      }
+      applyDesiredTheme(state, desiredTheme)
+    }
+
+    /**
+     * Put a remembered EXTENSION theme back, once per load.
+     *
+     * Only an id this package actually registered is honoured: `setTheme` throws
+     * for an unknown id, and a registry entry another plugin owns may not be
+     * mounted yet, so a stale id is left alone rather than raced at. The
+     * light/dark/system pair needs nothing here at all - ui-theme restores those
+     * itself from its own durable preference.
+     * @param state - the theme state (its `setTheme` is the only write entry).
+     */
+    function restoreSharedTheme(state) {
+      if (themeRestored || !sharedReady()) return
+      const saved = sharedState.get('theme')
+      if (typeof saved !== 'string' || saved.length === 0) {
+        themeRestored = true
+        return
+      }
+      // An id this package did not register is left alone (setTheme throws for an
+      // unknown id) and not retried: it is not ours to apply.
+      if (!THEME_EXTENSIONS.some((item) => item.id === saved)) {
+        themeRestored = true
+        return
+      }
+      desiredTheme = saved
+      const current = state.getSnapshot()
+      if (current && current.preference === saved) {
+        themeRestored = true
+        durableRevisionSeen = durableRevision()
+        return
+      }
+      // Marked done only once the service ACCEPTED it: ui-theme provides its
+      // service a tick after this row in some orders, and a `setTheme` that threw
+      // must be retried by the next notification rather than lost.
+      if (applyDesiredTheme(state, saved)) themeRestored = true
+    }
+
     /** The document element, or `null` where there is no document (the checks). */
     function zoomRoot() {
       return typeof document !== 'undefined' && document.documentElement ? document.documentElement : null
     }
 
     /**
-     * The remembered level, or 100. A value that is not on the ladder is
-     * ignored - the ladder is the only thing this control ever writes, so
+     * The remembered level, or 100. The pack's shared state answers first - it
+     * is the one store both hosts read - and localStorage is the fallback for a
+     * profile without dsh-ui-state. A value that is not on the ladder is ignored
+     * either way: the ladder is the only thing this control ever writes, so
      * anything else was put there by hand and is not a level to honour.
      */
     function readZoom() {
+      if (sharedReady()) {
+        const shared = Number(sharedState.get('pageZoom'))
+        if (ZOOM_STEPS.indexOf(shared) !== -1) return shared
+      }
       try {
         const store = typeof window !== 'undefined' ? window.localStorage : undefined
         if (!store || typeof store.getItem !== 'function') return ZOOM_DEFAULT
@@ -2106,8 +2376,19 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       }
     }
 
-    /** Remember a level, for the next load. Failure to store is not a failure. */
+    /**
+     * Remember a level, for the next load AND for the other host. Both places
+     * are written on purpose: the shared section is what the two hosts agree on,
+     * and the localStorage copy is what keeps this working if dsh-ui-state is
+     * uninstalled while this bundle stays - dropping it would silently lose the
+     * level on the way back. Failure to store is never a failure to zoom.
+     */
     function rememberZoom(percent) {
+      if (sharedState !== null) {
+        try {
+          sharedState.set('pageZoom', percent)
+        } catch (err) {}
+      }
       try {
         const store = typeof window !== 'undefined' ? window.localStorage : undefined
         if (store && typeof store.setItem === 'function') store.setItem(ZOOM_KEY, String(percent))
@@ -2161,6 +2442,23 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       const t = props.t
       const [percent, setPercent] = React.useState(readZoom)
       const [open, setOpen] = React.useState(false)
+      // The shared level arrives from the HOST a tick after the first render -
+      // the settings mirror is a wire read - so the control adopts it when it
+      // lands: a menu reading "100%" over a page drawn at 125% is a bug, not a
+      // cosmetic delay. `adopt` also runs on subscription, which covers the
+      // other order (a warm mirror that was already ready before this mounted).
+      React.useEffect(() => {
+        if (sharedState === null || typeof sharedState.subscribe !== 'function') return undefined
+        const adopt = () => {
+          if (!sharedReady()) return
+          const saved = Number(sharedState.get('pageZoom'))
+          if (ZOOM_STEPS.indexOf(saved) === -1) return
+          setPercent(saved)
+          applyZoom(saved)
+        }
+        adopt()
+        return sharedState.subscribe(adopt)
+      }, [])
       const label = t('zoom.current', { percent: percent })
       const step = (direction) => {
         const next = stepZoom(percent, direction)
@@ -2228,11 +2526,22 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
     const inject = ['slots', 'locale']
 
     function apply(ctx) {
+      // alpha.17: the pack's durable section, when this profile installs it.
+      // Resolved BEFORE the first zoom read so `readZoom` can prefer it, and
+      // never declared in `inject` - this row must keep working in a profile
+      // that has this bundle without dsh-ui-state, where localStorage is the
+      // only memory there has ever been.
+      sharedState = uiStateService(ctx)
+      // The tie-break for `reconcileTheme`: ui-theme's own durable revision.
+      durableScope = bindDurableThemeScope(ctx)
       // alpha.15: the remembered PAGE ZOOM goes on before this row's first
       // render, so the app mounts at the level the reader left it at - in a
       // browser tab the browser remembers its own zoom, but the shell the
       // control was built for has none of its own, so this is the only memory
       // there is. Nothing is written back here: a fresh profile stays untouched.
+      // (The host ALSO inlines the shared level into the page before the shell
+      // mounts, so in the common case this call is re-applying the same value
+      // rather than causing the reflow the injection exists to avoid.)
       applyZoom(readZoom())
       const state = createThemeState(ctx)
       ctx.effect(
@@ -2251,11 +2560,17 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       const ensureThemes = () => registerThemeExtensions(ctx)
       ensureThemes()
       // Every accepted preference change (from this control, from Settings, or
-      // from the OS while the preference is `system`) arrives here.
+      // from the OS while the preference is `system`) arrives here. It is also
+      // where an EXTENSION theme is KEPT in force (alpha.17/18): ui-theme stores
+      // the built-in three only, and it re-adopts that durable value on every
+      // settings-document change, so a remembered Nord would otherwise be
+      // discarded the moment anything - including this pack's own zoom or dock
+      // write - touched the document.
       if (typeof ctx.on === 'function') {
         ctx.on('theme/change', (snapshot) => {
           ensureThemes()
           state.adopt(snapshot)
+          reconcileTheme(state)
         })
       }
       // ui-theme may provide the service a tick after this row activates; the
@@ -2267,6 +2582,22 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
         ensureThemes()
         state.refresh()
       })
+
+      // The shared section is a wire read, so it lands after this row activates:
+      // adopt it once it does - the remembered extension theme, and the zoom's
+      // own document write (the control's own label is adopted by ZoomAction,
+      // which is the only place that holds it).
+      if (sharedState !== null && typeof sharedState.subscribe === 'function') {
+        const adoptShared = () => {
+          if (sharedReady()) {
+            const saved = Number(sharedState.get('pageZoom'))
+            if (ZOOM_STEPS.indexOf(saved) !== -1) applyZoom(saved)
+          }
+          restoreSharedTheme(state)
+        }
+        adoptShared()
+        sharedState.subscribe(adoptShared)
+      }
 
       // The Markdown paper copies ui-theme's own light declarations, and those
       // stylesheets may land a tick after this row (both are boot plugins): try
