@@ -4,9 +4,9 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![DeepSeek Harness 0.1.5-rc.1](https://img.shields.io/badge/dsh-0.1.5--rc.1-4f8cff)
 
-Plugin pack for **DeepSeek Harness**.
+Agent Application with core [DSH](https://www.deepseek.com/harness/en/).
 
-Everything ships as standard **dsh bundles**. The plugins are
+Native cross-platform app and standard **dsh bundles**. The plugins are
 plain JavaScript, and the launchers run on **Windows, macOS and Linux** — the
 Windows half is PowerShell, the macOS/Linux half is plain POSIX shell.
 
