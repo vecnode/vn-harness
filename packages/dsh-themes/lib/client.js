@@ -94,6 +94,18 @@
  *    this row's first render, because in the shell there is no browser zoom to
  *    remember it instead. See the zoom section below.
  *
+ *    THE ONE PIECE OF FRAME GEOMETRY IT HAD TO PUT BACK (alpha.16). A root
+ *    `zoom` divides the initial containing block, so the frame's own
+ *    `getBoundingClientRect()` comes back SCALED while the right bar's outer
+ *    resize seam is placed by pixel arithmetic in layout pixels. At 100% the
+ *    two are the same number; with a level in force the seam slides away from
+ *    the right column's edge and the bar can no longer be dragged - in the
+ *    desktop window, the one host the control exists for, that reads as "the
+ *    right bar stops being resizable after I zoom". One rule,
+ *    `installZoomSeam`, anchors that seam to the right column instead; it is
+ *    gated on the root marker a live zoom writes, so at the resting level the
+ *    frame's own inline `left` is untouched.
+ *
  * It also carries the pack's appearance OVERRIDES - rules that hold one surface
  * on a fixed palette regardless of the app theme, or give a core surface the
  * frame's own dress. The first (alpha.2) is the
@@ -220,6 +232,24 @@ window.__ModuleLoader__.load({
      * offer at all.
      */
     const ZOOM_KEY = 'dsh-themes.page-zoom'
+    /**
+     * The marker a LIVE zoom puts on the document element (alpha.16), and the
+     * gate the seam override is keyed on.
+     *
+     * It exists for exactly one rule. A root `zoom` divides the initial
+     * containing block, so the frame's own `getBoundingClientRect()` comes back
+     * SCALED while the right bar's outer resize seam is placed by pixel
+     * arithmetic in layout pixels - the one piece of frame geometry that mixes
+     * the two - and the seam lands tens of pixels away from the right column's
+     * edge, where nothing can grab it. `installZoomSeam` puts it back with a
+     * rule that places the seam from the LAYOUT instead.
+     *
+     * The gate is what keeps this honest: at the resting level the attribute is
+     * absent, no rule of this package's matches the seam at all, and the page is
+     * exactly the page the harness shipped. The marker is set and cleared in
+     * `applyZoom`, beside the declaration it belongs to.
+     */
+    const ZOOM_MARKER = 'data-dsh-page-zoomed'
     /**
      * The app mark, from `assets/vn-harness.svg` at the pack root: a black circle
      * centred on (12,12) in its own 24px box, with a 1px transparent margin.
@@ -1238,6 +1268,73 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
     }
 
     // ---------------------------------------------------------------------
+    // The right bar's outer resize seam, under a page zoom (alpha.16).
+    //
+    // THE BUG. `zoom` on <html> divides the initial containing block, so the
+    // frame's `getBoundingClientRect().width` reports the SCALED width while
+    // `offsetWidth` - and every `left` the frame writes on a child - is in
+    // layout pixels. The frame solves its three columns from the measured rect
+    // but places the right bar's outer seam with `left: viewport - rightbar`,
+    // which is the one place the two spaces meet. At 100% they are the same
+    // number and nothing shows; the moment the page-zoom control writes a level
+    // the seam slides towards the middle of the conversation - at 80% on a
+    // 1440px frame it sat 288px left of the right column's edge, so the bar
+    // could no longer be dragged at all, while the LEFT bar's seam stayed
+    // exactly where it belongs (its `left` is a layout-pixel width, with no
+    // measurement folding into it). Measured in the desktop window, where the
+    // control exists precisely because a WebView has no Ctrl+ / Ctrl-: the bug
+    // reads as "the right bar stops being resizable after I zoom".
+    //
+    // THE FIX is to stop deriving the seam from a measured rect and derive it
+    // from the LAYOUT: the right column carries `data-rightbar-col` (ui-layout's
+    // own stable marker, the one dsh-terminal already follows), that column is
+    // named as a CSS ANCHOR while a zoom is in force, and the seam is placed at
+    // the anchor's left edge. Both sides of that are layout pixels, so a zoom
+    // cannot separate them again - verified at 80%, 100% and 125% in the real
+    // window, with the seam on the column's edge to the tenth of a pixel and a
+    // drag still moving the panel.
+    //
+    // WHY CSS AND NOT A FORK. ui-layout is core, and the pack forks a core
+    // bundle only to own a surface it replaces. This is dress: one rule that
+    // holds one core edge in place, the same shape as the header-ring override
+    // above. It is also INERT at the resting level - both rules are gated on the
+    // root marker, so a page nobody has zoomed keeps the frame's own inline
+    // `left` untouched - and a browser without anchor positioning drops the
+    // declarations and leaves exactly the behaviour of today.
+    // ---------------------------------------------------------------------
+    /** The seam override's style-tag identity (idempotent injection). */
+    const SEAM_TAG = 'dsh-themes/zoom-seam.css'
+
+    /**
+     * Install the right-bar seam override (alpha.16).
+     * @returns whether the rule is in place.
+     */
+    function installZoomSeam() {
+      if (typeof document === 'undefined') return false
+      const seam =
+        'html[' +
+        ZOOM_MARKER +
+        '] [data-rightbar-col]{anchor-name:--dsh-themes-rightbar-seam}' +
+        'html[' +
+        ZOOM_MARKER +
+        '] [data-rightbar-col]~[data-side="rightbar"]{left:anchor(--dsh-themes-rightbar-seam left)!important}'
+      let tag = null
+      try {
+        tag = document.querySelector('style[data-plugin-css=' + JSON.stringify(SEAM_TAG) + ']')
+      } catch (e) {
+        tag = null
+      }
+      if (!tag) {
+        tag = document.createElement('style')
+        tag.dataset.plugin = 'dsh-themes'
+        tag.dataset.pluginCss = SEAM_TAG
+        document.head.appendChild(tag)
+      }
+      if (tag.textContent !== seam) tag.textContent = seam
+      return true
+    }
+
+    // ---------------------------------------------------------------------
     // The theme snapshot as a `useSyncExternalStore` source: the service's own
     // snapshot object (stable until it changes) with a fallback, refreshed by
     // the service's `theme/change` event and once more after boot, in case
@@ -1928,6 +2025,20 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
     // rules on portalled menus and dialogs (shipped CSS, not this package's) are
     // a little more generous than a browser zoom at the same level. Nothing
     // overflows the window: `position:fixed;inset:0` surfaces still span it.
+    //
+    // AND THE ONE PIECE OF FRAME GEOMETRY THAT IS NOT A PERCENTAGE (alpha.16).
+    // The frame solves its columns from `getBoundingClientRect().width`, which a
+    // root `zoom` SCALES, while it places the right bar's outer seam with
+    // `left: viewport - rightbar`, which is layout pixels - so a level slid that
+    // seam off the right column's edge and the bar became undraggable. That one
+    // is FIXED rather than documented: `installZoomSeam` names the right column
+    // as a CSS anchor while a zoom is in force and sets the seam to the anchor's
+    // left edge, which is layout pixels on both sides. Measured in the desktop
+    // window at 80%, 100% and 125%: the seam sits on the column to the tenth of
+    // a pixel and a drag still resizes the panel. The frame's other
+    // visual-pixel numbers under a zoom - the 45% first-open width and the 70%
+    // drag ceiling - stay as they are: they are proportions of the window that
+    // a zoom is expected to shrink, not a control that stops working.
     // ---------------------------------------------------------------------
     /**
      * The zoom glyphs: one magnifier for the button, the same lens carrying the
@@ -2006,12 +2117,22 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
     /**
      * Put a level on the document. This is the whole zoom: one inline
      * declaration on <html>, removed again at the resting level.
+     *
+     * The marker rides with it (alpha.16), because the seam override must be
+     * inert at 100%: one attribute write here is what tells that rule a zoom is
+     * in force, and the clean removal beside the declaration is what tells it
+     * the page is back to the one the harness shipped.
      */
     function applyZoom(percent) {
       const root = zoomRoot()
       if (root === null || !root.style) return
-      if (percent === ZOOM_DEFAULT) root.style.removeProperty('zoom')
-      else root.style.setProperty('zoom', String(percent / 100))
+      if (percent === ZOOM_DEFAULT) {
+        root.style.removeProperty('zoom')
+        if (typeof root.removeAttribute === 'function') root.removeAttribute(ZOOM_MARKER)
+      } else {
+        root.style.setProperty('zoom', String(percent / 100))
+        if (typeof root.setAttribute === 'function') root.setAttribute(ZOOM_MARKER, '')
+      }
     }
 
     /**
@@ -2172,6 +2293,10 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       // One-shot (alpha.9): the header's shipped corner toggle joins the round
       // outline the pack's own header icon buttons draw.
       installHeaderRing()
+
+      // One-shot (alpha.16): the right bar's outer seam keeps sitting on the
+      // right column's edge while a page zoom is in force - inert at 100%.
+      installZoomSeam()
 
       try {
         ctx.effect(

@@ -947,7 +947,7 @@ applied, because the ladder is the only thing this control ever writes.
 
 **Two honest limits, both measured.** `vh` is resolved against the real viewport
 and CSS `zoom` does not change it, while `window.innerWidth` keeps reporting
-unscaled pixels — nothing in the frame is affected (it is laid out in
+unscaled pixels — nothing in the frame's own dress is affected (it is laid out in
 percentages), but the few `max-height: calc(100vh - X)` rules on the shipped menus
 and dialogs are a little more generous than a browser zoom at the same level, and
 `position: fixed; inset: 0` surfaces still span the window exactly. Pointer
@@ -959,6 +959,44 @@ pointer. Clicking, scrolling, hit-testing and every menu are exact. Both limits 
 the price of ONE mechanism that works in a Chrome tab and in the shell's WebView
 alike; branching on a webview zoom API would be desktop detection inside a bundle
 that has to stay plain.
+
+**The third one was a broken core control, and it is fixed (alpha.16).** That same
+scaling splits one piece of frame geometry in half: `ui-layout` solves its three
+column widths from the frame's `getBoundingClientRect().width` — **scaled** by a
+root `zoom` — but places the right bar's **outer resize seam** with
+`left: viewport - rightbar`, which is **layout pixels**. At 100% the two are the
+same number and nothing shows; with a level in force the seam slides towards the
+middle of the conversation — 288px off at 80% on a 1440px frame — and the bar can
+no longer be dragged, which in the native window (the one host this control exists
+for) reads as "the right bar stops being resizable after I zoom". The **left** bar
+was never affected, and that asymmetry is the tell: its `left` is a layout-pixel
+width, with no measurement folded into it.
+
+The fix places the seam from the **layout** instead. While a zoom is in force the
+right column is named as a **CSS anchor** and the seam is set to that anchor's left
+edge, so both sides are layout pixels:
+
+```css
+html[data-dsh-page-zoomed] [data-rightbar-col] { anchor-name: --dsh-themes-rightbar-seam }
+html[data-dsh-page-zoomed] [data-rightbar-col] ~ [data-side="rightbar"] {
+  left: anchor(--dsh-themes-rightbar-seam left) !important;
+}
+```
+
+Three properties of that rule are load-bearing, and `check-client-bundles.mjs`
+pins each one: it is **gated on `html[data-dsh-page-zoomed]`** (the marker
+`applyZoom` writes beside the declaration it belongs to), so at the resting level
+no rule of `dsh-themes` matches the seam and the frame's own inline `left` still
+governs; it keys on `[data-rightbar-col]`, `ui-layout`'s own **stable marker** (the
+one `dsh-terminal` already follows) and on the handle's own `data-side` attribute,
+**never a hashed class**; and the `!important` beats the inline `left` the frame
+keeps writing. A browser without CSS anchor positioning drops both declarations and
+keeps the behaviour of before this change. Nothing is forked and no core row is
+disabled — this is dress, the same shape as the header-ring override. Measured in
+the desktop window at 80%, 100% and 125% driving the control's own menu and the
+drag with real pointer input: the seam sits on the column's left edge to 0.00px and
+a drag still resizes the panel, and back at 100% the marker is cleared and the
+computed `left` falls back to the frame's inline value.
 
 ## 10. The file-manager half of Open In (dsh-open-in-app)
 
@@ -1300,6 +1338,7 @@ passes that through as the batch's own exit code).
 | No Themes button in the header | `dsh-themes` is not mounted (a new package needs one install run: `install.bat` / `./install.sh`, or `-Force`), or the row did not land: check the console for `[dsh-themes]` |
 | No Page-zoom button in the header | the same row as the Themes button — all four controls are one bundle. Inside the native window it is the only way to zoom at all (the shell has no Ctrl+ / Ctrl- page zoom); confirm the served `dsh-themes` bundle prints alpha.15+ |
 | The page is stuck at a zoom level in the native window | the level is remembered per origin in `localStorage['dsh-themes.page-zoom']`; the button walks it back (it is the leftmost of the four, and the ladder stops at 200% precisely so it cannot go off-screen), and clearing that key resets it to 100% |
+| The right bar cannot be dragged after zooming | the bug alpha.16 fixed: the frame's own pixel arithmetic placed the right seam from the SCALED rect it measures, so a level in force slid the seam off the column's edge (the LEFT bar was fine, its `left` being layout pixels). Confirm the served `dsh-themes` bundle prints alpha.16+ and that the browser supports CSS anchor positioning (Chrome/Edge 125+); the seam override is inert at 100%, so returning to the resting level also restores the old behaviour |
 | The Themes button is greyed out | the `theme` service never appeared, so `@deepseek-ai/dsh-client-ui-theme` (row `ui-theme`) is not in the boot graph; the tooltip says "The theme service is unavailable" |
 | Fork drift after a harness update | `scripts/sync-vendored.ps1 -Check` exits 1; run it without `-Check` and review the diff |
 | No "History" capsule on the "+" / Start page | `dsh-gittree` is not mounted (a new package needs one install run: `install.bat` / `./install.sh`, or `-Force`), or its client bundle did not activate - check the console for `[dsh-gittree]` |

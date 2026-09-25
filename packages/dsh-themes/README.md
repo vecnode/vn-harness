@@ -1,4 +1,4 @@
-# dsh-themes (alpha.15)
+# dsh-themes (alpha.16)
 
 **The pack's conversation-header package.** It owns four controls on that header
 and the appearance overrides that dress it.
@@ -477,20 +477,77 @@ Themes button carries the active preference.
 
 **Two honest limits, both measured rather than assumed.** `vh` is resolved against
 the real viewport and CSS `zoom` does not change it, while `window.innerWidth` keeps
-reporting unscaled pixels — the shell is laid out in percentages, so nothing in the
-frame is affected, but the few `max-height: calc(100vh - X)` rules on portalled
-menus and dialogs (shipped CSS, not this package's) are a little more generous than
-a browser zoom at the same level. Nothing overflows the window: `position: fixed;
-inset: 0` surfaces still span it. And **pointer coordinates stay unscaled too**: a
-real `mousedown` at x=100 inside a page zoomed to 200% still reports
-`clientX === 100`, while `getBoundingClientRect()` on the element under it reports
-the doubled values. Clicking, scrolling, hit-testing and every menu are exact (the
-browser maps the pointer itself), but a drag that compares pointer deltas against a
-rect — a pane's drag-to-pan, the terminal dock's grip — moves by the zoom factor
-off the pointer. At the levels people actually use (110–150%) that is a small
-offset on a secondary gesture, and it is the price of the one mechanism that works
-in both hosts; the alternative, a webview API that zooms the engine itself, would
-be desktop detection in a bundle that must stay plain.
+reporting unscaled pixels — the shell's own dress is laid out in percentages, so
+nothing there is affected, but the few `max-height: calc(100vh - X)` rules on
+portalled menus and dialogs (shipped CSS, not this package's) are a little more
+generous than a browser zoom at the same level. Nothing overflows the window:
+`position: fixed; inset: 0` surfaces still span it. And **pointer coordinates stay
+unscaled too**: a real `mousedown` at x=100 inside a page zoomed to 200% still
+reports `clientX === 100`, while `getBoundingClientRect()` on the element under it
+reports the doubled values. Clicking, scrolling, hit-testing and every menu are
+exact (the browser maps the pointer itself), but a drag that compares pointer
+deltas against a rect — a pane's drag-to-pan, the terminal dock's grip — moves by
+the zoom factor off the pointer. At the levels people actually use (110–150%) that
+is a small offset on a secondary gesture, and it is the price of the one mechanism
+that works in both hosts; the alternative, a webview API that zooms the engine
+itself, would be desktop detection in a bundle that must stay plain.
+
+One more was found the hard way and is **fixed rather than documented**: the right
+bar's outer resize seam, below.
+
+## The right bar's resize seam, put back (alpha.16)
+
+**The bug the desktop window reported as "the right bar stops being resizable after
+I zoom".** A root `zoom` divides the initial containing block, so the frame's own
+`getBoundingClientRect().width` comes back **scaled** while every `left` the frame
+writes on a child is in **layout pixels**. The frame solves its three column widths
+from that measured rect and then places the right bar's **outer resize seam** with
+`left: viewport - rightbar` — the one piece of frame geometry where the two spaces
+meet. At 100% they are the same number and nothing shows. With a level in force the
+seam slides towards the middle of the conversation: at 80% on a 1440px frame it sat
+**288px** left of the right column's edge, so the bar could no longer be dragged at
+all. The **left** bar's seam stayed exactly where it belongs, and that asymmetry is
+what made the report so specific: its `left` is a layout-pixel width, with no
+measurement folded into it.
+
+**The fix places the seam from the layout instead.** While a zoom is in force the
+right column is named as a CSS **anchor** and the seam is set to that anchor's left
+edge:
+
+```css
+html[data-dsh-page-zoomed] [data-rightbar-col] { anchor-name: --dsh-themes-rightbar-seam }
+html[data-dsh-page-zoomed] [data-rightbar-col] ~ [data-side="rightbar"] {
+  left: anchor(--dsh-themes-rightbar-seam left) !important;
+}
+```
+
+Both sides of that are layout pixels, so a zoom cannot separate them again. The
+`!important` is load-bearing: the frame keeps writing its own `left` inline, and
+this rule is what beats it. `data-rightbar-col` is **ui-layout's own stable
+marker** (the one `dsh-terminal` already follows) and `data-side="rightbar"` is the
+handle's own attribute — never a hashed class — so a harness bump cannot quietly
+turn the rule into one that matches nothing.
+
+**It is inert at the resting level.** Both rules are gated on
+`html[data-dsh-page-zoomed]`, the marker `applyZoom` writes beside the declaration
+it belongs to: at 100% the attribute is absent, no rule of this package's matches
+the seam, and the frame's own inline `left` places it exactly as before. A browser
+without CSS anchor positioning drops both declarations and leaves the behaviour
+that shipped before this change. Nothing is forked and no core row is disabled —
+this is dress, the same shape as the header-ring override above.
+
+**Measured in the desktop window** (WebView2, `run-desktop.bat`, a 1440×900 frame
+with the right bar open), driving the control's own menu and then the drag with
+**real pointer input**:
+
+| zoom | seam vs the right column's left edge | drag |
+|---|---|---|
+| 100% | 0.00px | panel resizes (648px → 488px) |
+| 80% | 0.00px (was −288px) | panel resizes (488px → 328px) |
+| 125% | 0.00px | panel resizes |
+
+Back at 100% the marker is cleared and the computed `left` falls back to the
+frame's inline value, so the override leaves nothing behind.
 
 ## The screenshot control (alpha.10)
 
@@ -692,6 +749,16 @@ lib/client.js      Browser half: the Page-zoom button + menu (one inline `zoom` 
   would hide the only way back down. 200% is where the measurement says the row
   still fits with room to spare; a future edit that widens the ladder has to argue
   with `check-client-bundles.mjs`, which pins it.
+- **The zoom does not get to break a core control** (alpha.16). The frame places
+  the right bar's outer resize seam with pixel arithmetic that mixes the SCALED
+  rect it measures with the layout pixels it writes, so a level in force slid that
+  seam off the column's edge and the bar stopped being draggable — in the desktop
+  window, the one host this control exists for. The seam override puts it back from
+  the layout, and `check-client-bundles.mjs` pins the two things that keep it
+  honest: it is gated on the marker a live zoom writes (so it is inert at 100% and
+  the frame's own inline `left` still governs) and it keys on stable markers rather
+  than hashed classes (so a harness bump cannot turn it into a rule that matches
+  nothing while still looking right).
 
 ## Install / uninstall
 

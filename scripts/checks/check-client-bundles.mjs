@@ -86,30 +86,48 @@ function fakeInlineStyle() {
 
 /** A DOM stand-in: enough for the style-tag injection and detached elements. */
 function fakeDocument() {
-  const element = () => ({
-    dataset: {},
-    style: fakeInlineStyle(),
-    children: [],
-    textContent: '',
-    value: '',
-    classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-    setAttribute() {},
-    addEventListener() {},
-    removeEventListener() {},
-    appendChild(child) {
-      this.children.push(child)
-      return child
-    },
-    insertBefore(child) {
-      this.children.push(child)
-      return child
-    },
-    remove() {},
-    focus() {},
-    select() {},
-    querySelector: () => null,
-    parentNode: null,
-  })
+  const element = () => {
+    // Attributes are RECORDED, not swallowed: the page-zoom control marks the
+    // document element while a level is in force (alpha.16), and the right-bar
+    // seam override is gated on that marker, so a check has to be able to read
+    // it back the way a browser's CSS would.
+    const attributes = {}
+    return {
+      dataset: {},
+      style: fakeInlineStyle(),
+      children: [],
+      textContent: '',
+      value: '',
+      classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+      setAttribute(name, value) {
+        attributes[name] = String(value)
+      },
+      removeAttribute(name) {
+        delete attributes[name]
+      },
+      getAttribute(name) {
+        return Object.prototype.hasOwnProperty.call(attributes, name) ? attributes[name] : null
+      },
+      hasAttribute(name) {
+        return Object.prototype.hasOwnProperty.call(attributes, name)
+      },
+      addEventListener() {},
+      removeEventListener() {},
+      appendChild(child) {
+        this.children.push(child)
+        return child
+      },
+      insertBefore(child) {
+        this.children.push(child)
+        return child
+      },
+      remove() {},
+      focus() {},
+      select() {},
+      querySelector: () => null,
+      parentNode: null,
+    }
+  }
   return {
     // Style tags land here, so a check can inspect what a bundle injected.
     head: {
@@ -851,6 +869,7 @@ function zoomStep(id) {
 }
 zoomStep('zoom-in')
 check('zoom in paints the document element', zoomRoot.style.zoom, '1.1')
+check('zoom in marks the document element', zoomRoot.getAttribute('data-dsh-page-zoomed'), '')
 check('zoom in remembers the level', themes.storage.getItem(ZOOM_STORE), '110')
 check('zoom button reports the new level', zoomLevel(), 110)
 zoomStep('zoom-in')
@@ -858,9 +877,11 @@ check('a second step reaches 125%', zoomRoot.style.zoom, '1.25')
 zoomStep('zoom-out')
 // Back to the resting level: the DECLARATION IS REMOVED rather than written as
 // `zoom:1`, so a page nobody has zoomed keeps the style attribute the harness
-// shipped.
+// shipped. The marker goes with it (alpha.16): the seam override is gated on
+// that attribute, so its absence is what makes the override inert at 100%.
 zoomStep('zoom-out')
 check('the resting level removes the declaration', zoomRoot.style.zoom === undefined)
+check('the resting level clears the marker', zoomRoot.getAttribute('data-dsh-page-zoomed'), null)
 check('the resting level is remembered', themes.storage.getItem(ZOOM_STORE), '100')
 for (let step = 0; step < 5; step += 1) zoomStep('zoom-out')
 check('the bottom of the ladder is 50%', zoomRoot.style.zoom, '0.5')
@@ -1132,6 +1153,28 @@ check('header ring rule injected', headerRing.includes('html [data-conversation-
 check('header ring uses the same hairline', headerRing.includes('border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3))'))
 check('header ring keeps the box 28px', headerRing.includes('border-radius:28px;box-sizing:border-box'))
 check('header ring keys on a stable marker', headerRing.includes('_root') === false && headerRing.includes('.P3OORG_') === false)
+// The right bar's outer resize seam under a page zoom (alpha.16). A root `zoom`
+// scales the rect the frame measures its columns from while the seam's `left` is
+// layout pixels, so with a level in force the seam slid off the right column's
+// edge and the bar could not be dragged - measured in the desktop window at 80%,
+// where it sat 288px away. The override places it from the LAYOUT instead, and
+// the two things that make that safe are pinned here: it is GATED on the marker
+// a live zoom writes (so a page at 100% keeps the frame's own inline `left`), and
+// it keys on ui-layout's stable `data-rightbar-col` marker rather than a hashed
+// class, so a harness bump cannot turn it into a rule that silently matches
+// nothing while still looking right.
+const seamTag = themes.document.head.children.filter((tag) => tag.dataset && tag.dataset.pluginCss === 'dsh-themes/zoom-seam.css').pop()
+const zoomSeam = seamTag ? seamTag.textContent : ''
+check('zoom seam rule injected', zoomSeam.includes('[data-rightbar-col]{anchor-name:--dsh-themes-rightbar-seam}'))
+check(
+  'the seam is placed at the anchor, beating the inline left',
+  zoomSeam.includes('[data-rightbar-col]~[data-side="rightbar"]{left:anchor(--dsh-themes-rightbar-seam left)!important}'),
+)
+check(
+  'the seam override is inert at the resting level',
+  zoomSeam.split('html[data-dsh-page-zoomed]').length - 1 === 2 && zoomSeam.replace(/html\[data-dsh-page-zoomed\]/g, '').includes('html[') === false,
+)
+check('the seam keys on a stable marker', zoomSeam.includes('_handle') === false && zoomSeam.includes('pI_x6G') === false)
 
 // --------------------------------------------------------------- dsh-gittree
 const gitTree = loadBundle('packages/dsh-gittree/lib/client.js', {})
