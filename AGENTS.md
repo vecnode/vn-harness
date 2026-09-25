@@ -119,13 +119,25 @@ and `run.bat` itself has to stay at the root beside `run.sh`.
   `-NoBrowser` here, because the window IS the app
 - `app/` - the desktop shell, and NOT a plugin: nothing in `packages/` knows it
   exists and no installer touches it. `app/src-tauri/src/main.rs` is the
-  supervisor (free port -> spawn the pinned `npx @deepseek-ai/dsh web --no-open`
+  supervisor (`-Port` else the harness's own default 3080 when it is free else a
+  free loopback port -> spawn the pinned `npx @deepseek-ai/dsh web --no-open`
   -> read the ready line -> navigate the window -> kill the tree on exit),
   `app/src-tauri/src/readyline.rs` is the PURE half where the launch-token rules
   are pinned by `cargo test` (ANSI strip, URL extraction, the loopback refusal and
   the `token=REDACTED` printer), and `app/ui/index.html` is the splash the window
-  shows while `npx` works. On Windows the harness is additionally placed in a Job
-  Object with `KILL_ON_JOB_CLOSE`, so force-killing the shell cannot orphan a
+  shows while `npx` works. **The shell never INVENTS a harness home**: it hands
+  `DSH_HOME` to the child only when `-DshHome` or an inherited `DSH_HOME` chose
+  it, and otherwise reports `~/.dsh` - the harness's own default - and lets the
+  harness apply it, so this window and a `run.bat` tab always resolve the SAME
+  profile. `DSH_HOME` names `~/.dsh`, not `~`: alpha.1 fell back to
+  `HOME`/`USERPROFILE`, so the harness found no profile there, bootstrapped a
+  fresh one holding only its own two base bundles - the window opened the plain
+  DeepSeek Harness, with no plugins and none of the user's sessions - and left a
+  whole second home beside `.dsh` (unit tests in `main.rs` pin the rule). The
+  port prefers the harness's own default so the window shares a Chrome tab's
+  origin and its per-origin client state; a taken port costs only that, since the
+  URL loaded is the one the harness prints. On Windows the harness is additionally placed in a
+  Job Object with `KILL_ON_JOB_CLOSE`, so force-killing the shell cannot orphan a
   `node` holding a port (measured: without it, it does). It carries no TypeScript:
   it loads the same server a browser tab does. Rust toolchain needed to build;
   Node.js as usual to run

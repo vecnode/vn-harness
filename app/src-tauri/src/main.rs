@@ -13,10 +13,21 @@
 //! 1. read the pinned dsh version from `.dsh-version.json` at the repository
 //!    root (found by walking up from this executable, so debug and release
 //!    builds both work, wherever the target directory is);
-//! 2. pick a FREE loopback port, so a desktop window never collides with a
-//!    `run.bat` server or with the Web GUI;
+//! 2. pick the port: `-Port` when it was given, else the harness's own default
+//!    (3080 - the same origin a `run.bat` tab opens on, which is what keeps the
+//!    window's per-origin client state) when nothing holds it, else any free
+//!    loopback port, so a desktop window never collides with a `run.bat` server
+//!    or with the Web GUI;
 //! 3. run `npx --yes @deepseek-ai/dsh@<pin> web --no-open --port <port>`, with
-//!    its stdout and stderr streamed to this console;
+//!    its stdout and stderr streamed to this console and exactly one variable
+//!    added to its environment: `DSH_HOME`, and only when `-DshHome` or an
+//!    inherited `DSH_HOME` chose it. The shell never INFERS a harness home, and
+//!    it must not: `DSH_HOME` names `~/.dsh`, NOT `~`, so a shell that passed the
+//!    user's home directory there boots a SECOND, unadorned harness inside it -
+//!    a profile with none of this pack's bundles and none of the user's sessions,
+//!    which reads as "the desktop app opens the plain DeepSeek Harness". The
+//!    `~/.dsh` default is the harness's own decision, exactly as it is under
+//!    `run.bat`, and this shell leaves it alone;
 //! 4. watch that output for the ready line, read its URL and navigate the
 //!    window there - refusing anything that is not loopback;
 //! 5. kill the harness when the window closes, so no orphaned `node` process
@@ -57,6 +68,17 @@ const READY_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// How often the supervisor checks whether the harness is still alive.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// The port the harness listens on when it is given none - the same one a
+/// `run.bat` tab opens on, and therefore the same ORIGIN.
+///
+/// The window prefers it so the little state the client keeps per origin (the
+/// conversation content width, for one) survives a run, the way it does in
+/// Chrome. It is only a preference and can never change what the window shows:
+/// the URL loaded is the one the harness prints, so a port that is already held
+/// - by `run.bat`, by the Web GUI, by anything - falls through to a free one.
+/// A stale value here costs the origin and nothing else.
+const DEFAULT_PORT: u16 = 3080;
 
 /// The one window, and the label the exit hook and the supervisor share.
 const WINDOW_LABEL: &str = "main";
@@ -175,20 +197,93 @@ fn resolve_version(options: &Options) -> Result<String, String> {
         .ok_or_else(|| format!("{} has no \"dsh\" version pin", manifest.display()))
 }
 
-/// The harness home this run will use, resolved the way the launcher does:
-/// `-DshHome`, then `DSH_HOME`, then the home directory.
-fn harness_home(options: &Options) -> Option<PathBuf> {
-    if let Some(home) = options.dsh_home.as_ref().filter(|value| !value.is_empty()) {
-        return Some(PathBuf::from(home));
-    }
-    for variable in ["DSH_HOME", "HOME", "USERPROFILE"] {
-        if let Ok(value) = std::env::var(variable) {
-            if !value.is_empty() {
-                return Some(PathBuf::from(value));
-            }
-        }
-    }
-    None
+/// Which of a chosen value and an inherited one wins.
+///
+/// The pure core of [`explicit_home`], and the rule that matters is the `None`
+/// branch: when NEITHER is present the answer is `None` - "no choice was made" -
+/// and never a guess. See [`reported_home`] for why a guess is the bug this
+/// function exists to prevent. A blank value counts as no value at all, which
+/// is also how the harness reads a whitespace-only `DSH_HOME`.
+fn chosen_home(flag: Option<&str>, inherited: Option<&str>) -> Option<String> {
+    let pick = |value: Option<&str>| {
+        value
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    pick(flag).or_else(|| pick(inherited))
+}
+
+/// The harness home to HAND to the child, if one was actually chosen:
+/// `-DshHome`, then `DSH_HOME` as this shell inherited it.
+///
+/// `None` means the child is given no `DSH_HOME` at all, which is the point:
+/// the harness then applies its own default (`~/.dsh`) exactly as it does when
+/// `run.bat` starts it. This shell must never derive a harness home from the
+/// user's home directory, because `DSH_HOME` names the harness's own folder
+/// under it - not the home itself. Handing `%USERPROFILE%` over as `DSH_HOME`
+/// is not a cosmetic mistake: the harness accepts it, finds no profile there,
+/// bootstraps a brand-new one holding only its own two base bundles, and serves
+/// that. The window then shows the plain DeepSeek Harness - no plugins, no
+/// vn-harness branding, none of the user's sessions - while the real home at
+/// `~/.dsh` sits there untouched.
+fn explicit_home(options: &Options) -> Option<PathBuf> {
+    let inherited = std::env::var("DSH_HOME").ok();
+    chosen_home(options.dsh_home.as_deref(), inherited.as_deref()).map(PathBuf::from)
+}
+
+/// Which variable names the user's home directory, first match winning.
+///
+/// Windows is asked for `USERPROFILE` first because that is the variable Node's
+/// own `os.homedir()` reads there - and the harness builds its default from
+/// exactly that call - while elsewhere `HOME` is the spelling. The pure core of
+/// [`home_dir`], kept separate so the order stays testable.
+fn pick_home_variable<'a>(
+    user_profile: Option<&'a str>,
+    home: Option<&'a str>,
+    is_windows: bool,
+) -> Option<&'a str> {
+    let candidates: [Option<&'a str>; 2] = if is_windows {
+        [user_profile, home]
+    } else {
+        [home, user_profile]
+    };
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|value| !value.trim().is_empty())
+}
+
+/// The user's home directory, resolved the way the harness resolves it.
+fn home_dir() -> Option<PathBuf> {
+    let user_profile = std::env::var("USERPROFILE").ok();
+    let home = std::env::var("HOME").ok();
+    pick_home_variable(
+        user_profile.as_deref(),
+        home.as_deref(),
+        cfg!(target_os = "windows"),
+    )
+    .map(PathBuf::from)
+}
+
+/// The harness's own default home under a user home: `~/.dsh`.
+///
+/// One function because the `.dsh` component is the whole content of this rule,
+/// and it is the component that was missing.
+fn default_dsh_home(user_home: &std::path::Path) -> PathBuf {
+    user_home.join(".dsh")
+}
+
+/// The harness home this run will use, for REPORTING only - never exported.
+///
+/// It exists so the console can say where this window's plugins and sessions
+/// come from, and so the "the pack is not installed" nudge can look at the right
+/// profile. Nothing forces the harness to agree: an explicit choice is what the
+/// child is given ([`explicit_home`]), and otherwise the harness applies its own
+/// `~/.dsh` default, which is what this computes so the printed path is the true
+/// one even when the shell said nothing.
+fn reported_home(options: &Options) -> Option<PathBuf> {
+    explicit_home(options).or_else(|| home_dir().map(|directory| default_dsh_home(&directory)))
 }
 
 /// A friendly nudge, never a refusal - the harness runs fine without the pack,
@@ -196,7 +291,7 @@ fn harness_home(options: &Options) -> Option<PathBuf> {
 /// is the same warning `run-web.ps1` prints, from the same source of truth: the
 /// web profile's own bundle list.
 fn warn_when_pack_missing(options: &Options) {
-    let Some(home) = harness_home(options) else {
+    let Some(home) = reported_home(options) else {
         return;
     };
     let profile_dir = home.join("profiles").join("web");
@@ -246,6 +341,31 @@ fn free_port() -> Option<u16> {
         .ok()
         .and_then(|listener| listener.local_addr().ok())
         .map(|address| address.port())
+}
+
+/// Whether nothing holds this loopback port right now.
+///
+/// The listener is closed again immediately, which leaves the same hair of a
+/// race [`free_port`] has - and the same escape hatch.
+fn port_is_free(port: u16) -> bool {
+    TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+/// The port to ask the harness for: `-Port`, else the harness's own default
+/// when it is free, else any free one.
+///
+/// The middle case is what makes the window open on the same origin a `run.bat`
+/// tab does. It cannot change WHICH app is shown - the loaded URL is the one the
+/// harness prints - so a wrong guess here is only a lost preference, never a
+/// wrong page.
+fn choose_port(options: &Options) -> Option<u16> {
+    if options.port > 0 {
+        return Some(options.port);
+    }
+    if port_is_free(DEFAULT_PORT) {
+        return Some(DEFAULT_PORT);
+    }
+    free_port()
 }
 
 /// Whether a URL may be loaded into this window.
@@ -330,19 +450,18 @@ fn supervise(app: AppHandle, options: Options) {
         Ok(version) => version,
         Err(message) => return fail(&app, &message),
     };
-    let port = if options.port > 0 {
-        options.port
-    } else {
-        match free_port() {
-            Some(port) => port,
-            None => return fail(&app, "could not find a free loopback port to listen on"),
-        }
+    let port = match choose_port(&options) {
+        Some(port) => port,
+        None => return fail(&app, "could not find a free loopback port to listen on"),
     };
 
     println!("[vn-harness] desktop shell");
     println!("[vn-harness] Pinned dsh version: {version}");
-    if let Some(home) = harness_home(&options) {
-        println!("[vn-harness] DSH_HOME: {}", home.display());
+    match reported_home(&options) {
+        Some(home) => println!("[vn-harness] DSH_HOME: {}", home.display()),
+        None => println!(
+            "[vn-harness] DSH_HOME: not set, and no home directory to default to; the harness will decide"
+        ),
     }
     warn_when_pack_missing(&options);
     println!("[vn-harness] Starting the harness on 127.0.0.1:{port} (npx --yes @deepseek-ai/dsh@{version} web --no-open)");
@@ -366,7 +485,9 @@ fn supervise(app: AppHandle, options: Options) {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(home) = harness_home(&options) {
+    // `-DshHome` / an inherited `DSH_HOME`, and NOTHING else: with neither, the
+    // child is left to the harness's own `~/.dsh` default (see `explicit_home`).
+    if let Some(home) = explicit_home(&options) {
         command.env("DSH_HOME", home);
     }
 
@@ -629,4 +750,91 @@ fn main() {
             kill_child_tree();
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+/// The home and port decisions, pinned.
+///
+/// These are pure on purpose, like `readyline`'s: the launch-token rules are
+/// tested there and the "which harness does this window show" rules are tested
+/// here, so the one mistake that made the desktop shell open a second, empty
+/// harness can never come back unnoticed.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_home_is_invented_when_nothing_was_chosen() {
+        // The bug this pins: with neither `-DshHome` nor `DSH_HOME`, the shell
+        // used to fall back to HOME/USERPROFILE - the user's home, handed over
+        // as if it were the harness home - and the harness bootstrapped a fresh
+        // unadorned profile there. Nothing chosen must mean nothing exported.
+        assert_eq!(chosen_home(None, None), None);
+        assert_eq!(chosen_home(Some(""), None), None);
+        assert_eq!(chosen_home(Some("   "), None), None);
+        assert_eq!(chosen_home(None, Some("\t")), None);
+    }
+
+    #[test]
+    fn the_flag_wins_over_the_inherited_variable() {
+        assert_eq!(
+            chosen_home(Some("D:\\dsh"), Some("C:\\Users\\someone")),
+            Some("D:\\dsh".to_string())
+        );
+        assert_eq!(
+            chosen_home(None, Some("C:\\Users\\someone")),
+            Some("C:\\Users\\someone".to_string())
+        );
+    }
+
+    #[test]
+    fn a_chosen_home_is_trimmed() {
+        assert_eq!(chosen_home(Some("  D:\\dsh  "), None), Some("D:\\dsh".to_string()));
+    }
+
+    #[test]
+    fn the_default_home_appends_dsh_and_is_never_the_user_home() {
+        let user_home = std::path::Path::new("some-user-home");
+        let resolved = default_dsh_home(user_home);
+        assert_eq!(resolved.file_name().and_then(|name| name.to_str()), Some(".dsh"));
+        assert_ne!(resolved, user_home, "the harness home is ~/.dsh, not ~");
+    }
+
+    #[test]
+    fn windows_prefers_userprofile_because_node_does() {
+        assert_eq!(
+            pick_home_variable(Some("C:\\Users\\me"), Some("C:\\elsewhere"), true),
+            Some("C:\\Users\\me")
+        );
+        // ...and still falls back rather than giving up.
+        assert_eq!(pick_home_variable(None, Some("C:\\elsewhere"), true), Some("C:\\elsewhere"));
+    }
+
+    #[test]
+    fn unix_prefers_home() {
+        assert_eq!(pick_home_variable(None, Some("/home/me"), false), Some("/home/me"));
+        assert_eq!(
+            pick_home_variable(Some("C:\\Users\\me"), Some("/home/me"), false),
+            Some("/home/me")
+        );
+    }
+
+    #[test]
+    fn blank_home_variables_do_not_count() {
+        assert_eq!(pick_home_variable(Some(""), None, true), None);
+        assert_eq!(pick_home_variable(Some("   "), None, true), None);
+        assert_eq!(pick_home_variable(None, None, false), None);
+    }
+
+    #[test]
+    fn an_explicit_port_always_wins() {
+        // 3099 rather than the default, and no network is touched for it.
+        let options = Options {
+            port: 3099,
+            ..Options::default()
+        };
+        assert_eq!(choose_port(&options), Some(3099));
+    }
 }

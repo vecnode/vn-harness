@@ -67,7 +67,7 @@ side never needs PowerShell.
 |---|---|---|---|
 | **1. Install** | `install.bat` | `./install.sh` | adds every bundle under `packages/` to the web profile (`~/.dsh/profiles/web`) and copies the bundled skills into `~/.dsh/skills` |
 | **2. Run** | `run.bat` (double-click) | `./run.sh` | starts `npx @deepseek-ai/dsh@<pin> web` and opens the URL it prints — token included — in **Chrome**, falling back to the default browser |
-| **2b. Run (desktop)** | `run-desktop.bat` (double-click) | `cargo build --release` in `app/src-tauri` | the **same** harness in a native window instead of a browser tab: builds the small Rust/Tauri shell under `app/` when it is out of date, then starts the same pinned server on a free port and shows it in a WebView2 / WKWebView / WebKitGTK window |
+| **2b. Run (desktop)** | `run-desktop.bat` (double-click) | `cargo build --release` in `app/src-tauri` | the **same** harness in a native window instead of a browser tab: builds the small Rust/Tauri shell under `app/` when it is out of date, then starts the same pinned server on the harness's own default port when it is free (a free one otherwise) and shows it in a WebView2 / WKWebView / WebKitGTK window |
 | **3. Remove** | `uninstall.bat` | `./uninstall.sh` | removes the bundles, their patch layers and the skills the installer copied |
 
 ```bat
@@ -102,8 +102,11 @@ never written to a file — both rules are explained in [SECURITY.md](SECURITY.m
 Rust/Tauri shell in [`app/`](app/README.md) and shows the harness in a native
 WebView2 / WKWebView / WebKitGTK window. It is the same server, the same pin and
 the same profile — nothing is bundled and no plugin knows the difference, so the
-two launchers are interchangeable. The shell picks a **free** port (so it never
-collides with a `run.bat` server on 3080), opens its window immediately with a
+two launchers are interchangeable. The shell asks for the harness's **own default
+port** when nothing holds it — the same origin a `run.bat` tab opens on, which is
+what keeps the window's per-origin client state — and falls back to a free
+loopback port when something already has it, so it never collides with a `run.bat`
+server or the Web GUI. It opens its window immediately with a
 splash while `npx` works, holds the launch token to the same two rules the
 browser launcher does, and kills the harness when the window closes. It needs the
 Rust toolchain ([rustup.rs](https://rustup.rs)) in addition to Node.js; the first

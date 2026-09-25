@@ -19,8 +19,10 @@ and shows **that** URL in a WebView2 / WKWebView / WebKitGTK window:
 - nothing under `packages/` knows this directory exists, no installer touches it,
   no row is disabled and no profile file is written;
 - the flags mirror `run.bat` (`-Port`, `-DshHome`, `-DshVersion`, `-Help`);
-- it picks a **free** loopback port, so it never collides with a `run.bat` server
-  or the Web GUI on 3080.
+- it asks for the harness's **own default port** when nothing holds it  -  the same
+  origin a `run.bat` tab opens on, which is what keeps the window's per-origin
+  client state  -  and falls back to a free loopback port when something already has
+  it, so it never collides with a `run.bat` server or the Web GUI.
 
 Requires the **Rust toolchain** ([rustup.rs](https://rustup.rs)) to build, and
 Node.js 22 or newer exactly as the browser launcher does.
@@ -32,7 +34,11 @@ Node.js 22 or newer exactly as the browser launcher does.
    release builds, and any `CARGO_TARGET_DIR`, all land on the same pin. There is
    no built-in fallback version: a stale hard-coded pin would mean this window
    quietly ran a different harness than `run.bat`.
-2. Binds `127.0.0.1:0` to ask the OS for a free port, then releases it.
+2. Chooses the port: `-Port` when it was given, else the harness's own default
+   (3080) if binding `127.0.0.1` there succeeds, else `127.0.0.1:0`  -  asking the OS
+   for any free port  -  released again before the harness binds it. The URL loaded
+   is the one the harness prints, so a wrong guess here costs the origin and
+   nothing else.
 3. Opens the window **immediately**, on its own splash (`ui/index.html`), because
    the first run of a dsh version spends a while inside `npx`. After 45 seconds
    the splash says the wait is long and points at the console.
@@ -47,6 +53,24 @@ Node.js 22 or newer exactly as the browser launcher does.
    window is enough on macOS/Linux; an abrupt kill of the shell there can leave the
    harness running, because no equivalent is wired up for those platforms in this
    first cut.
+
+## The harness home it opens, and why it never invents one
+
+The window shows the same profile a `run.bat` tab shows, and the rule that keeps
+it that way is deliberately narrow: the shell hands the child a `DSH_HOME` only
+when `-DshHome` gave one or `DSH_HOME` was **inherited** from the environment. With
+neither, it passes nothing at all and lets the harness apply its own default
+(`~/.dsh`), exactly as the browser launcher does.
+
+It must never derive one from `USERPROFILE` / `HOME`, because `DSH_HOME` names the
+harness's own folder *under* the user's home  -  not the home itself. The first cut
+did exactly that, and the harness accepted it: finding no profile at
+`%USERPROFILE%`, it bootstrapped a fresh one holding only its own two base
+bundles, so the window opened the **plain DeepSeek Harness**  -  no plugins, no
+`vn-harness` branding, none of the user's sessions  -  and left a whole second home
+beside the real `.dsh`. Unit tests in `src-tauri/src/main.rs` pin the rule
+(`chosen_home`, `default_dsh_home`, `pick_home_variable`), and the console still
+*reports* the resolved home  -  `~/.dsh` included  -  without exporting it.
 
 ## The two rules that are load-bearing
 
@@ -70,7 +94,7 @@ browser, so a rendered document can never replace the app's only window.
 
 | Path | What it is |
 |---|---|
-| `src-tauri/src/main.rs` | The supervisor: flags, the repository/pin lookup, the free port, spawning npx, the window, the exit hook |
+| `src-tauri/src/main.rs` | The supervisor: flags, the repository/pin lookup, the port and harness-home choices, spawning npx, the window, the exit hook |
 | `src-tauri/src/readyline.rs` | The pure half - ANSI stripping, URL extraction, the loopback refusal, `redact` - and its tests |
 | `src-tauri/Cargo.toml` | Two dependencies: `tauri`, and `serde_json` (already in the tree behind tauri) |
 | `src-tauri/tauri.conf.json` | Identifier, the `ui/` folder as `frontendDist`, no declared window (it is built in Rust so the navigation filter can live with it), `bundle.active: false` |
@@ -91,9 +115,10 @@ screen.
 
 Measured on Windows 11 (Rust 1.94, Node 22.20, WebView2 153) rather than assumed:
 
-- `cargo test` - 14/14, the launch-token rules above;
-- a free port is picked (61203, 62066, 60927 across runs - never 3080, which was
-  already serving the Web GUI);
+- `cargo test`  -  22/22: the launch-token rules below plus the home and port rules;
+- the port rule: a free port is chosen whenever 3080 is taken (61203, 62066, 60927
+  across the runs that were measured while the Web GUI was serving 3080), and 3080
+  itself is asked for first once nothing holds it;
 - the ready line is found ~8 seconds into a warm run, the window is titled
   `vn-harness` and answering, and a `msedgewebview2.exe` process holds established
   connections to the harness port - so the app really loaded, rather than the
