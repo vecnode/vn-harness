@@ -1299,6 +1299,51 @@ check('ui-state: the boot row is silent with no settings service', (() => {
   return table.length
 })(), 0)
 
+// --------------------------------------------------------- the repo manifest
+// `.dsh-version.json` is documentation, but it is documentation a PERSON reads
+// to know what is installed and at which version, and nothing else keeps it
+// honest: the installers discover bundles from the FILESYSTEM (packages/*/
+// package.json with `dsh.bundle`) and read only the `dsh` pin out of this file,
+// so a bundle whose package.json moved on leaves a stale version and a stale
+// description behind with no error anywhere. It had already drifted (dsh-terminal
+// sat at alpha.6 through alpha.8, dsh-pdf counted SEVEN routes where the code
+// registers TEN). These three checks fail the moment it happens again.
+{
+  const manifest = JSON.parse(await fsp.readFile(path.join(repo, '.dsh-version.json'), 'utf8'))
+  const declared = manifest.packages !== null && typeof manifest.packages === 'object' ? manifest.packages : {}
+  const versions = new Map()
+  const bundles = []
+  for (const entry of readdirSync(path.join(repo, 'packages'), { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    let pkg = null
+    try {
+      pkg = JSON.parse(await fsp.readFile(path.join(repo, 'packages', entry.name, 'package.json'), 'utf8'))
+    } catch (err) {
+      continue
+    }
+    versions.set(pkg.name, pkg.version)
+    if (pkg.dsh !== undefined && pkg.dsh.bundle !== undefined) bundles.push(pkg.name)
+  }
+  check(
+    'manifest: every bundle is declared',
+    bundles.filter((name) => declared[name] === undefined).join(','),
+    '',
+  )
+  check(
+    'manifest: every declared version matches package.json',
+    Object.entries(declared)
+      .filter(([name, entry]) => versions.get(name) !== entry.version)
+      .map(([name]) => name)
+      .join(','),
+    '',
+  )
+  check(
+    'manifest: the dsh pin is present',
+    typeof manifest.dsh === 'string' && manifest.dsh !== '' && typeof manifest.vendoredFrom === 'string' && manifest.vendoredFrom !== '',
+    true,
+  )
+}
+
 console.log('')
 console.log(failures === 0 ? 'all node-route checks passed' : failures + ' check(s) FAILED')
 process.exitCode = failures === 0 ? 0 : 1

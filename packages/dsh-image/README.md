@@ -163,6 +163,6 @@ needs only a restart.
   JPEG and PNG, an image index page beside the PDFs one, and rotation - which is
   the one edit a viewer can hold in memory without touching the file.
 
-This package is also the shape the planned **`dsh-audio`** viewer reuses: the same
+This package is also the shape the **`dsh-audio`** viewer reuses: the same
 zoom-moves-the-layout rule, the same pointer anchoring, the same
 measured-overflow pan.

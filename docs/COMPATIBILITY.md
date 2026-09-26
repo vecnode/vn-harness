@@ -188,9 +188,9 @@ the details.
   service shows a disabled button instead of a broken one. On the pack's
   own **left top bar** it also replaces the branding: the shipped mark and wordmark
   (they are `single`-slot occupants filled by the harness's `brand-official` row,
-  with the layout's own fish as fallback) are hidden and redrawn as a plain
-  **24px black disc** and the text **VN Harness**, in the wide row and in the
-  collapsed rail.
+  with the layout's own fish as fallback) are hidden and redrawn as the **app
+  icon** (`assets/vn-harness.svg`, a 24px black disc with a 1px transparent
+  margin) and the text **vn-harness**, in the wide row and in the collapsed rail.
 - **dsh-ui-state** keeps the UI state that a reload used to forget, **on the
   host**, so the web profile and the desktop window share one picture: one
   settings namespace (`vn-harness` in `$DSH_HOME/settings.yaml`) holding the page
@@ -507,12 +507,13 @@ the details.
 
 - **run launcher (new)**: `run.bat` / `run.sh` - one file per platform at the repo
   root - start the pinned `dsh web` and open the URL it prints in Chrome, falling
-  back to the default browser; see **Running the app** above. Each half holds all
-  the work, so there is no wrapper/worker split: the Windows half is one
-  self-contained batch file (no PowerShell at all, which is what makes it
-  double-clickable) and the POSIX half is POSIX sh. Nothing in the profile changes
-  and no bundle was added: the launcher is repo tooling, and an installed profile
-  needs nothing to use it.
+  back to the default browser; see **Running the app** above. The POSIX half holds
+  all the work in one POSIX sh file; on Windows the double-clickable root
+  `run.bat` is batch only (which is what makes a double-click work with no
+  execution-policy question) and the work is in `scripts/run-web.ps1`, because cmd
+  cannot watch a running child's output. Nothing in the profile changes and no
+  bundle was added: the launcher is repo tooling, and an installed profile needs
+  nothing to use it.
 
 - **ui-state alpha.1 (new package)**: the pack gained **`dsh-ui-state`** — the
   state a reload used to forget. The interface's own state was remembered in the

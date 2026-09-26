@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
     // Constants
     // ---------------------------------------------------------------------
     /** Shown on the dock's bar so a freshly loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.8'
+    const PLUGIN_VERSION = '0.1.0-alpha.9'
     /** The header list this control joins (Open In... is -10). */
     const HEADER_SLOT = 'conversation.session.header.utilities'
     /** The root-scoped overlay list the layout package renders inside the frame. */
@@ -289,11 +289,19 @@ body.dst-dragging{cursor:row-resize;user-select:none}
 .dst-grpTime{flex:none;font-size:10.5px;font-variant-numeric:tabular-nums}
 .dst-grpTurn{flex:none;font-size:10.5px;opacity:.8}
 .dst-grpPrompt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary,#666);font-size:11.5px}
-.dst-cmd{margin:0 0 6px;padding:2px 0 2px 2px;border-left:2px solid transparent;border-radius:3px}
-.dst-cmd[data-status=running]{border-left-color:var(--dsw-alias-state-warning-primary,#d29922)}
-.dst-cmd[data-status=failed],.dst-cmd[data-status=signal],.dst-cmd[data-status=error]{border-left-color:var(--dsw-alias-state-error-primary,#d3382c)}
-.dst-cmdHead{display:flex;align-items:baseline;gap:6px;padding:1px 4px;border-radius:4px;cursor:pointer}
-.dst-cmdHead:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.1))}
+/* alpha.9: EVERY row is readable at a glance, in any theme. Both side rails
+   carry the status colour - the exit-0 GREEN included, not only a failure's red -
+   and the row's own head (the line that drops the output down) wears a LIGHT
+   wash of the same colour, so the command lines a reader scans stand out from
+   their output without the output losing contrast. The tone is ONE custom
+   property per status, so the rails, the wash and the pill can never disagree;
+   the wash is mixed with transparent, so it lightens a light theme and darkens
+   a dark one and the label keeps its own themed colour either way. */
+.dst-cmd{--dst-accent:var(--dsw-alias-state-success-primary,#2f9e44);margin:0 0 6px;padding:1px 0 2px;border-left:2px solid var(--dst-accent);border-right:2px solid var(--dst-accent);border-radius:3px}
+.dst-cmd[data-status=running]{--dst-accent:var(--dsw-alias-state-warning-primary,#d29922)}
+.dst-cmd[data-status=failed],.dst-cmd[data-status=signal],.dst-cmd[data-status=error]{--dst-accent:var(--dsw-alias-state-error-primary,#d3382c)}
+.dst-cmdHead{display:flex;align-items:baseline;gap:6px;padding:2px 6px;border-radius:4px;cursor:pointer;background:color-mix(in srgb,var(--dst-accent) 14%,transparent)}
+.dst-cmdHead:hover{background:color-mix(in srgb,var(--dst-accent) 26%,transparent)}
 .dst-cmdHead:focus-visible{outline:1px solid var(--dsw-alias-brand-primary,#4d6bfe);outline-offset:1px}
 .dst-cmdMark{flex:none;color:var(--dsw-alias-label-tertiary,#999);font-size:10px;transition:transform .12s ease}
 .dst-cmd[data-expanded] .dst-cmdMark{transform:rotate(90deg)}

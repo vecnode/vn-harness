@@ -304,7 +304,7 @@ path therefore needs a route of its own (§6).
 
 A **sub-plugin** of the bar: one bundle, two halves, no core patches. Its client
 half is hand-written (the pack's own code, not a fork); its Node half owns the
-only host-side routes in the pack.
+pack's file routes.
 
 **Browser half** (`lib/client.js`) registers the type:
 
@@ -1182,13 +1182,14 @@ is a harness internal rather than a published API, resolution failure is a
 first-class outcome: `health` answers `available:false` with the reason, the dock
 renders it, and the boot is untouched.
 
-**The routes.** Three authenticated HTTP routes through `connection.fetch` - the
+**The routes.** Four authenticated HTTP routes through `connection.fetch` - the
 mechanism §6 uses - and ONE **upgrade** route, which that mechanism does not
 cover:
 
 | Route | What it is |
 |---|---|
 | `GET /api/dsh-terminal/health` | PTY availability, the shell's label, the capacity, the platform |
+| `GET /api/dsh-terminal/activity` | the agent view's read: this conversation's command-relevant session events, filtered and bounded (read-only) |
 | `GET /api/dsh-terminal/vendor/xterm.js` / `xterm.css` | the vendored engine (ETag-cached), like §6's CodeMirror bundle |
 | `WS /api/dsh-terminal/pty` | the terminal itself |
 
@@ -1281,6 +1282,18 @@ status, older events outside the tail are named instead of paged, and
 it - is refused for a multi-line command, whose newlines would submit themselves as
 they were typed.
 
+**A row's status is drawn on the row itself (alpha.9).** The status used to be a
+rail on the LEFT of the block and only for a failure, so a command that succeeded -
+the overwhelmingly common row - drew nothing at all, and the line a reader actually
+scans (the clickable head that drops the output down) carried no mark of its own.
+Every row now wears the status colour on BOTH rails - green for `exit 0`, amber
+while running, red on a failure, a signal or an error - and its head wears a light
+`color-mix(..., transparent)` wash of the same colour. The tone is ONE custom
+property (`--dst-accent`) set per `data-status`, so the two rails, the wash and the
+status pill cannot drift apart, and the wash is mixed with `transparent` rather than
+with a surface colour, so it lightens a light theme, darkens a dark theme, and
+leaves the label's own themed colour alone.
+
 **What the checks pin.** `check-node-routes.mjs` drives the real protocol against
 a real PTY (`init` -> `ready` -> a command answered -> `kill`), proves a JSON line
 is shell input rather than a control frame, proves an unauthenticated upgrade is
@@ -1293,11 +1306,13 @@ conversation past the budget answers with its TAIL with `hasMore` set (including
 the single oversized newest command). `check-client-bundles.mjs` pins the bundle
 id, both seats, the order and the rendered markup, plus (alpha.7) that the switch
 is a MODE, that the bundle reads the route rather than the browser's session
-window, that the poll stops when nothing is subscribed and pauses in a hidden tab -
-and then DRIVES the whole read model with hand-built session events (the
-executing-tool parse, the exit-marker contract, the fold's grouping and statuses,
-the signature) and RENDERS the view itself with a hand-built log, because the
-switch is off by default and a static render of the dock can never reach a row.
+window, that the poll stops when nothing is subscribed and pauses in a hidden tab,
+(alpha.9) that the stylesheet carries the row's status dress - both rails, the tone
+in one property per `data-status`, and the head's wash - and then DRIVES the whole
+read model with hand-built session events (the executing-tool parse, the
+exit-marker contract, the fold's grouping and statuses, the signature) and RENDERS
+the view itself with a hand-built log, because the switch is off by default and a
+static render of the dock can never reach a row.
 
 ## 12. The installer
 
@@ -1399,8 +1414,8 @@ passes that through as the batch's own exit code).
 - **Live links**: the web profile installs every bundle (`dsh-vn-master` — the
   blank master, so a profile that lists it still gets no client half — plus
   `dsh-rightbar`, `dsh-rightbar-files`, `dsh-editor`, `dsh-gittree`,
-  `dsh-diagrams`, `dsh-terminal`, `dsh-modal`,
-  `dsh-themes`, `dsh-open-in-app`) as `pnpm link:` symlinks straight into this repo (detected by
+  `dsh-image`, `dsh-audio`, `dsh-diagrams`, `dsh-pdf`, `dsh-terminal`, `dsh-modal`,
+  `dsh-ui-state`, `dsh-themes`, `dsh-open-in-app`) as `pnpm link:` symlinks straight into this repo (detected by
   `Test-LiveLink` / `is_live_link()`, comparing realpaths case-insensitively on
   Windows). Code edits then already apply - a restart of
   `npx @deepseek-ai/dsh web` plus a hard browser refresh is all it takes; the
@@ -1499,10 +1514,10 @@ its own. It is placed last here because it is the newest section, not because it
 runs last: it is an ordinary row beside the editor, the History tab and the
 terminal.
 
-**What it is.** One row (`diagrams`), five tools (`diagram_write`,
-`diagram_patch`, `diagram_read`, `diagram_verify`, `diagram_delete`), two bundled
-skills (`mermaid-diagrams`, `tikz-diagrams`, each with a
-`reference/complex-diagrams.md`), two tab types (`diagram` - one per
+**What it is.** One row (`diagrams`), six tools (`diagram_write`,
+`diagram_patch`, `diagram_read`, `diagram_verify`, `diagram_publish`,
+`diagram_delete`), two bundled skills (`mermaid-diagrams`, `tikz-diagrams`, each
+with a `reference/complex-diagrams.md`), two tab types (`diagram` - one per
 diagram, a resource address; `diagrams` - the conversation index, a page with
 the guide entry at `order: 40`) and one `tool.call.toolview` card per tool. The
 package README is the reference; this section records the decisions that had to

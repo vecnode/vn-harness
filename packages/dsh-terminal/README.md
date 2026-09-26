@@ -1,4 +1,4 @@
-# dsh-terminal (alpha.8)
+# dsh-terminal (alpha.9)
 
 **Terminal** is a **bottom dock** for the DeepSeek Harness web GUI: a real shell,
 in the app, under the conversation. A header button — the same 28px round control
@@ -172,6 +172,19 @@ call named one, the duration, and a status pill: `running`, `exit N`,
 **Show all N lines**; long output is never hidden outright. A row expands on
 click (or on `Enter`/`Space` — the head is a `role="button"`), and carries three
 actions: **Copy command**, **Copy output**, and **Run in Terminal**.
+
+**A row is readable at a glance, in any theme** (alpha.9). The row's status is
+drawn as a **rail down each side** — left *and* right, so a long command line
+cannot leave the mark behind, and the **exit-0 green counts**: alpha.8 tinted only
+a failure's left edge red and left everything else transparent, which made the
+common case the invisible one. The row's **head** — the clickable line that drops
+the output down, i.e. the line a reader actually scans — wears a **light wash of
+that same colour**, so the command lines separate from their own output without
+the output losing contrast. One custom property holds the tone per status
+(success/warning/error), so the rails, the wash and the pill can never disagree,
+and the wash is mixed with `transparent` rather than with a surface colour, which
+lightens a light theme, darkens a dark theme, and leaves the label's own themed
+colour alone.
 
 **Run in Terminal TYPES the command into your active shell; it does not submit
 it.** You get the agent's command line in your prompt, to read, edit or run —
@@ -372,7 +385,9 @@ command is still sent. The **client** check pins that the bundle reads that rout
 and no longer reaches for the browser's own session window, that the poll stops
 when nothing is subscribed and pauses in a hidden tab, that the switch is a
 **mode** (off by default, `aria-pressed`, and no `Agent` chip in the strip until
-it is on), that the stylesheet carries the view's rules, that killing a chip does
+it is on), that the stylesheet carries the view's rules — including alpha.9's
+status dress: a rail on **both** sides, the tone in one custom property per
+`data-status`, and the head's light wash — that killing a chip does
 not move a reader looking at the log, and that **Run in Terminal** refuses a
 multi-line command. Then the bundle's pure half is **driven** with hand-built
 events — `parseExecCall` (including that a missing `description` marks the
@@ -388,6 +403,19 @@ same log from re-folding it.
 
 ## Alpha notes
 
+- **alpha.9** — a row's status was nearly invisible in the common case: only a
+  **failure** drew anything (a 2px red edge on the LEFT of the block) while a
+  command that succeeded — the overwhelmingly common row — drew a transparent
+  border, and the row's own head (the line that drops the output down, and the
+  line a reader scans) carried no mark of its own at all. Now the status is a
+  rail down **both** sides in the status colour — **green for exit 0**, amber
+  while running, red on a failure, a signal or an error — and the head wears a
+  **light wash of the same colour**. The tone moved into one custom property
+  (`--dst-accent`) set per `data-status`, so the two rails, the wash and the
+  status pill are rendered from a single value and cannot drift apart; the wash
+  is `color-mix(… , transparent)`, which lightens a light theme and darkens a
+  dark theme and never touches the label colour, so it stays readable everywhere.
+  The tracked client check pins the whole rule.
 - **alpha.8** — the agent view showed nothing: `Reading the conversation…`, and
   it only filled in after a new message was sent. The read was the bug, not the
   drawing. alpha.7 read the **browser's** session window

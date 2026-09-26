@@ -35,7 +35,7 @@ way and what it touches; the table below is the map.
 | [`dsh-audio`](packages/dsh-audio/README.md) | [`README.md`](packages/dsh-audio/README.md) | alpha `0.1.0-alpha.2` |
 | [`dsh-diagrams`](packages/dsh-diagrams/README.md) | [`README.md`](packages/dsh-diagrams/README.md) | alpha `0.1.0-alpha.6` |
 | [`dsh-pdf`](packages/dsh-pdf/README.md) | [`README.md`](packages/dsh-pdf/README.md) | alpha `0.1.0-alpha.3` |
-| [`dsh-terminal`](packages/dsh-terminal/README.md) | [`README.md`](packages/dsh-terminal/README.md) | alpha `0.1.0-alpha.5` |
+| [`dsh-terminal`](packages/dsh-terminal/README.md) | [`README.md`](packages/dsh-terminal/README.md) | alpha `0.1.0-alpha.9` |
 | [`dsh-themes`](packages/dsh-themes/README.md) | [`README.md`](packages/dsh-themes/README.md) | alpha `0.1.0-alpha.18` |
 | [`dsh-ui-state`](packages/dsh-ui-state/README.md) | [`README.md`](packages/dsh-ui-state/README.md) | alpha `0.1.0-alpha.1` |
 | [`dsh-modal`](packages/dsh-modal/README.md) | [`README.md`](packages/dsh-modal/README.md) | alpha `0.1.0-alpha.1` |
@@ -171,8 +171,9 @@ switches. Removing a bundle also removes its patch layer.
   `dsh-rightbar-files` and `dsh-open-in-app` are **forks** of that line's client
   bundles, so a pin bump is a deliberate step: bump the pin, run
   `scripts/sync-vendored.ps1` to move the forks forward, then re-verify (see
-  `packages/dsh-rightbar/README.md`). `dsh-open-in-app` is the one fork that is
-  not byte-for-byte — its documented patches live in `sync-vendored.ps1`.
+  `packages/dsh-rightbar/README.md`). `dsh-open-in-app` and `dsh-rightbar` are the
+  forks that are not byte-for-byte — their documented patches live in
+  `sync-vendored.ps1`.
   `sync-vendored.ps1` is **maintainer tooling**, and the one script in this repo
   that wants PowerShell 7 (`pwsh`) on macOS/Linux; the installers never do.
 - **Plain JavaScript, no build step.** The UI halves are hand-written

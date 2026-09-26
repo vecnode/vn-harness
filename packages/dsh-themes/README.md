@@ -1,4 +1,4 @@
-# dsh-themes (alpha.16)
+# dsh-themes (alpha.18)
 
 **The pack's conversation-header package.** It owns four controls on that header
 and the appearance overrides that dress it.
@@ -33,10 +33,12 @@ out of the frame. See [The screenshot control](#the-screenshot-control-alpha10).
 **4. The Page-zoom control** (alpha.15) — the leftmost button of the four. It drops
 a menu holding the level in force plus the two steps, **Zoom in** and **Zoom out**,
 and those two do what the browser's own **Ctrl+ / Ctrl- page zoom** does: `zoom` on
-the document element, along Chrome's own ladder, remembered per origin. It exists
-because that keyboard gesture belongs to the browser — a Chrome tab has it, and the
-native window the desktop launcher opens (a Tauri shell over the very same
-`dsh web`) does not. See [The page-zoom control](#the-page-zoom-control-alpha15).
+the document element, along Chrome's own ladder, and — since alpha.17 — remembered
+in the pack's own host-side settings section, with the per-origin `localStorage`
+copy underneath as the fallback. It exists because that keyboard gesture belongs to
+the browser — a Chrome tab has it, and the native window the desktop launcher opens
+(a Tauri shell over the very same `dsh web`) does not. See
+[The page-zoom control](#the-page-zoom-control-alpha15).
 
 It also carries the pack's **appearance overrides** — rules that hold one surface
 on a fixed palette or a fixed shape whatever the app theme is. The first is the
@@ -62,10 +64,13 @@ It is a thin control, not a second theme system:
   choice in the `ui-theme` settings namespace, resolves `system` through
   `prefers-color-scheme`, and ui-layout applies every snapshot to the document
   (`body[data-ds-dark-theme]` + the `--dsw-*` tokens);
-- this bundle only **reads** the published snapshot and calls `setTheme(id)`,
-  exactly like the Settings → General → **Appearance** row. Switching here
-  updates Settings, and switching in Settings updates this control: there is one
-  preference, one persistence path, and one palette.
+- this bundle only **reads** the published snapshot and calls `setTheme(id)` for
+  that switch, exactly like the Settings → General → **Appearance** row.
+  Switching here updates Settings, and switching in Settings updates this
+  control: there is one preference, one persistence path for it, and one palette.
+  The one choice that schema cannot hold — a **registered** theme — is remembered
+  in this pack's own section instead (alpha.17/18); see
+  [Registered themes](#registered-themes-nord-alpha12-and-monokai-alpha13).
 
 It can also **register** themes through that same service (`ctx.theme.register`,
 ui-theme's documented third-party surface) — see
@@ -146,12 +151,28 @@ keep their shipped dark value: the scrims (`bg-mask-*`), the elevation strokes a
 the shadow scale are scheme-neutral black/white alphas and read correctly on
 either registered dark theme unchanged.
 
-**The choice is in-process, by the shipped design.** ui-theme's durable preference
-schema accepts `light` / `dark` / `system` only, so `setTheme('nord')` applies at
-once and a **reload** (or a settings re-adopt, e.g. after a reconnect) returns to
-the durable built-in. That is the shipped boundary, not something this
-registration can lift — which is also why nothing here remembers the choice behind
-the service's back.
+**The choice is remembered, and kept in force.** ui-theme's durable preference
+schema accepts `light` / `dark` / `system` only, so an extension theme id is
+written to the pack's own `vn-harness` section instead (alpha.17, through the
+`uiState` service `dsh-ui-state` publishes) and put back on the next load; the
+shipped preference is never faked, and picking a built-in clears that field so it
+reads as inherited again. Keeping it in force is the other half (alpha.18).
+ui-theme's `ThemeRuntime.adopt()` re-assigns its `preference` from its DURABLE
+section whenever its settings scope notifies, and that scope notifies whenever the
+settings DOCUMENT changes — any write to any namespace, this pack's own zoom and
+dock writes included — so an extension theme, which is never written durably, was
+applied by the click and discarded by the next settings write; that predates
+alpha.17, and ANY Settings change reverted Nord. This control therefore treats an
+extension theme as a DESIRED STATE it keeps applied (`desiredTheme` +
+`reconcileTheme` on every `theme/change`) rather than a one-shot choice, with
+ui-theme's own namespace REVISION as the tie-break between the two cases that
+otherwise look identical: a re-adopt (revision unmoved — nobody chose anything, so
+the theme goes back) and a deliberate built-in chosen in the shipped Settings →
+Appearance row (revision moved — that decision wins and the remembered id is
+cleared). Re-picking the built-in that was ALREADY durable is the one case the
+revision cannot see, so the extension is re-applied there and this control's own
+menu is the escape. The tracked check now runs the REAL ui-theme bundle rather than
+a stub — which is what let the bug ship — and skips loudly where no copy exists.
 
 **Adding another theme** is one entry in `THEME_EXTENSIONS` (id, label key,
 `colorScheme`, token map, menu glyph) plus its `theme.<id>` copy in both
@@ -325,7 +346,7 @@ html .pXSMma_fishHitbox::before{
   the inset instead, so no container can shave it.
 - **Inlined as a data URI rather than served.** The mark is a few hundred bytes,
   so inlining costs nothing and the branding needs no route, no request and no
-  Node half (this package's row is a deliberate no-op). `assets/vn-harness.svg`
+  Node half. `assets/vn-harness.svg`
   stays the source of truth, and the tracked check compares the inlined copy's
   viewBox and circle geometry against that file, so the two cannot drift. The
   asset sits at the repository root because it is the *source*; like the vendored
@@ -453,17 +474,24 @@ The button lives **inside the page it zooms**, and a page zoom shrinks the layou
 viewport, so the header's utilities row — a crumb plus four 28px buttons, roughly
 400px of min-content — eventually needs more room than the window has left. A rung
 whose top hides the way back down is not offered: without it the only rescues would
-be Ctrl+- in a browser (which the shell does not have) or clearing `localStorage`
-by hand. The bottom rung is 50% for the same kind of reason, one of degree — this
+be Ctrl+- in a browser (which the shell does not have) or clearing the remembered
+level by hand (`localStorage` or the pack's own section). The bottom rung is 50%
+for the same kind of reason, one of degree — this
 is a shell an agent works in, and 25% renders its text unreadable. Everything in
 between is Chrome's own rung.
 
-**The level is remembered per origin**, in `localStorage` under
-`dsh-themes.page-zoom`, and **re-applied before the control's first render**:
-in a browser tab the browser remembers its own zoom, and in the shell this is the
-only memory there is. A value that is not on the ladder is ignored rather than
-applied, and a browser that refuses storage (private mode, a locked-down WebView)
-still zooms — the level is simply not remembered.
+**The level is durable, and it is re-applied before the control's first render.**
+Since alpha.17 the level goes to the pack's own host-side section
+(`vn-harness.pageZoom`, through the `uiState` service `dsh-ui-state` publishes),
+which is one document a Chrome tab and the shell's WebView both read — so it
+survives a host restart and a port change, which the per-origin store never did.
+The `localStorage` copy under `dsh-themes.page-zoom` is written alongside it and
+read as the fallback for a profile that installed this bundle without that
+package, which is why the service is resolved lazily (`ctx.get`, never `inject`)
+and its absence costs the sharing rather than the memory. A value that is not on
+the ladder is ignored rather than applied — the ladder is the only thing this
+control ever writes — and a browser that refuses storage (private mode, a
+locked-down WebView) still zooms: the level is simply not remembered.
 
 **It never listens for a key.** Swallowing Ctrl+ and Ctrl- in the page would
 **double** the zoom in a browser, where the gesture already works, and the shell is
@@ -686,7 +714,8 @@ lib/index.js       Node half: one authenticated route, POST /api/dsh-themes/scre
                    which writes the client's PNG to this machine's Desktop (the
                    browser bundle needs no host otherwise)
 lib/client.js      Browser half: the Page-zoom button + menu (one inline `zoom` on
-                   <html>, Chrome's ladder cut at 50/200, remembered per origin),
+                   <html>, Chrome's ladder cut at 50/200, remembered in the
+                   `vn-harness` section with the `localStorage` copy underneath),
                    the Screenshot button (capture + save), the Themes
                    button + menu, the registered themes (THEME_EXTENSIONS: Nord's
                    and Monokai's token maps and menu glyphs, registered through
@@ -716,14 +745,16 @@ lib/client.js      Browser half: the Page-zoom button + menu (one inline `zoom` 
   place a palette is declared. A theme another plugin registers shows up too — by
   its id, with the generic appearance mark, since this package has no words or
   glyph for it.
-- **Extension themes do not touch the durable preference.** `setTheme` only writes
-  `light` / `dark` / `system` through the settings scope, so selecting Nord or
-  Monokai leaves the stored preference alone — which is exactly why it is
-  session-scoped, and why this package does not fake a persistence layer of its
-  own.
+- **Extension themes do not touch ui-theme's durable preference.** `setTheme` only
+  writes `light` / `dark` / `system` through the settings scope, so selecting Nord
+  or Monokai leaves the stored preference alone; the id it wants in force lives in
+  the pack's own `vn-harness` section (alpha.17), is put back on the next load,
+  and is kept applied against ui-theme's own re-adopt (alpha.18), and picking a
+  built-in clears it.
 - **Same switch, both surfaces.** Because the write goes through
-  `theme.setTheme(id)`, no second copy of the preference (and no second
-  persistence path) exists to drift.
+  `theme.setTheme(id)`, no second copy of the built-in preference (and no second
+  persistence path for it) exists to drift; the extension id is the one thing this
+  package remembers itself, above.
 - **The download seat is taken by priority, not by force.** Registering the
   SHIPPED occupant's `id` one priority lower is what makes this package's
   component the rendered one; a different `id` would simply have added a second
@@ -741,8 +772,8 @@ lib/client.js      Browser half: the Page-zoom button + menu (one inline `zoom` 
   transform, no per-surface CSS: a level that is not the resting one is a single
   inline `zoom` on `<html>`, and the resting level removes it, so an unzoomed page
   is byte-for-byte the page the harness shipped. That is also why the control needs
-  no host half and no Tauri API — the same code zooms a browser tab and the shell's
-  WebView.
+  no host half of its own and no Tauri API — the same code zooms a browser tab and
+  the shell's WebView.
 - **The ladder's top rung is a safety property, not a preference.** The control
   lives inside the page it zooms, and a page zoom reflows the shell, so a rung high
   enough to push the header's utilities row past the (shrunken) layout viewport

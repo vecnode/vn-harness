@@ -1,6 +1,6 @@
 # scripts/checks
 
-Standalone verification for the pack's JavaScript halves. None of the three
+Standalone verification for the pack's JavaScript halves. None of the four
 scripts needs a running harness and none is part of the installers; run them
 after touching a client bundle, a Node route or a shipped skill (they caught a
 real "the tab body never got the hook it needs" bug during the alpha.4 editor
@@ -9,6 +9,7 @@ work). Node only - identical on Windows, macOS and Linux.
 ```sh
 node scripts/checks/check-client-bundles.mjs   # module table + real React render
 node scripts/checks/check-node-routes.mjs      # every Node route + the diagram tools
+node scripts/checks/check-pdf-node.mjs         # the five pdf tools + the routes, against PDFs it builds
 node scripts/checks/check-skill-examples.mjs   # every fenced example in every shipped skill
 DSH_CHECK_LAUNCH=1 node scripts/checks/check-node-routes.mjs   # also opens a real file browser
 ```
@@ -160,6 +161,17 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
     verdict it was cached with, a `box` sequence diagram validating, a bare
     `axis` chart compiling, and every tool result validated against the schema
     the tool declares.
+- `check-pdf-node.mjs` builds its own PDFs (a two-page report with a labelled
+  value, a one-page scan that is one image and no text, a twelve-page document
+  for the per-call caps, one nested in a subfolder and one inside `node_modules`
+  to pin the index walk, a truncated copy), so it needs no TeX, no poppler and no
+  network, and drives all five `pdf_*` tools, the routes, the path policy and the
+  vendor `--check`. The scanner is verified in two halves on purpose: the tool as
+  the agent calls it (which on a host without tesseract means pinning its
+  refusal) and the pipeline directly through a stub OCR engine, which is what
+  proves on any host that the raster handed to the engine is the one drawn for
+  that page, that a second call is a cache hit, that another dpi/psm/language is
+  a new recognition, and that the per-call cap names the pages it left.
 - `check-skill-examples.mjs` extracts every fenced example from `skills/**/*.md`
   and parses or compiles it with the plugin's own engines, so a copy-pasteable
   source that no longer works fails the run instead of misleading the next

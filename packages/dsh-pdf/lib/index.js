@@ -1737,8 +1737,9 @@ export function registerRoutes(ctx, deps) {
   })
 
   // The registry matches EXACT paths only (there is no wildcard), so the
-  // vendored engine, its worker and the two asset maps are four registrations
-  // rather than one prefix route.
+  // vendored engine, its worker and the three asset maps are five registrations
+  // rather than one prefix route (the wasm image decoders joined in alpha.3,
+  // which is why this count is five and not the four it was).
   for (const name of VENDOR_ASSETS) {
     register(VENDOR_ROUTE + '/' + name, ['GET', 'HEAD'], async (request) => serveVendorAsset(request, name))
   }

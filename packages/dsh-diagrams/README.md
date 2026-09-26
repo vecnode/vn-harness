@@ -17,8 +17,9 @@ in every chat, and survives the chat it was drawn in.
   strip's `+` / **Start** page, showing the library and this conversation).
 - Tools: `diagram_write`, `diagram_patch`, `diagram_read`, `diagram_verify`,
   `diagram_publish`, `diagram_delete` - each taking an optional `scope`
-  (`conversation` | `library`), and each resolving a bare id in the LIBRARY
-  first.
+  (`conversation` | `library`) and resolving a bare id in the LIBRARY first,
+  except `diagram_publish`, which takes an id from THIS conversation and copies
+  it in.
 - Skills: `mermaid-diagrams`, `tikz-diagrams` (authored in `skills/`, copied
   into `$DSH_HOME/skills` by the installer), each with a
   `reference/complex-diagrams.md` for pictures too big for the syntax summary.
@@ -198,7 +199,7 @@ link at all).
 | Surface | What it is |
 |---|---|
 | `dsh-resource://diagram/session/<session>/<id>` (a library diagram is `dsh-resource://diagram/library/<id>`) | **one tab per diagram**: the rendered picture laid out at 80% of the pane with a `-` / `+` / `Fit` zoom ladder (25%-400%), drag-to-pan when it overflows, a `Recompile` button for TikZ, `Copy`, and `Export ▾` |
-| `sidebar://diagrams` | the **index**: every diagram of the conversation with kind, status and size; `New Mermaid` / `New TikZ`; picking a row opens its tab |
+| `sidebar://diagrams` | the **index**: every diagram of the conversation and of the shared library, with kind, status and size; `New Mermaid` / `New TikZ`; picking a row opens its tab |
 
 The index type carries the package's one **guide entry** (`order: 40`, after
 Files 10, Editor 20 and History 30), which is what the `+` control and the Start
@@ -462,7 +463,7 @@ node scripts/checks/check-skill-examples.mjs   # every fenced example in every s
 ```
 
 The client check renders the real seats through a real React runtime (the panel
-bodies, both chips, all five tool cards) and asserts the four load-bearing
+bodies, both chips, all six tool cards) and asserts the four load-bearing
 properties of the render path - parse-before-render, `suppressErrorRendering`,
 the plugin's own container, and the `finally` sweep - each of which is the
 difference between a text error and a stray error picture in the page; it also

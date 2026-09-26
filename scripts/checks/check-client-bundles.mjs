@@ -1506,7 +1506,7 @@ check('terminal adopt: a height already in force moves nothing', adopt({ shared:
 check('terminal adopt: an unready section waits', adopt({ ready: false }), null)
 check('terminal adopt: an absent value is not a height of zero', adopt({ shared: null }), null)
 check('terminal adopt: another window still moves the dock', adopt({ shared: 350, known: 400, current: 280 }), 350)
-check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.8'))
+check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.9'))
 
 // ------------------------------------------------- the agent's own terminal use
 // alpha.7. The dock's second view is a TRANSCRIPT of what the conversation
@@ -1533,6 +1533,23 @@ check(
     // The shared notice is absolute/inset:0, so the body it sits in must be its
     // containing block or "no commands yet" would cover the filters too.
     termCss.includes('.dst-actBody{position:relative;'),
+)
+// alpha.9: a command row has to be readable at a glance, in EVERY theme. Both
+// side rails carry the status colour - the exit-0 GREEN included, not only a
+// failure's red - and the row's own head (the clickable line that drops the
+// output down) wears a LIGHT wash of the same colour, so the command lines a
+// reader scans stand out from their output without the output losing contrast.
+// The tone is ONE custom property per status, so the rails, the wash and the
+// pill cannot drift apart; the wash is mixed with `transparent`, which lightens
+// a light theme and darkens a dark theme and leaves the label colour alone.
+check(
+  'terminal command rows wear the status on both rails and on the head',
+  termCss.includes('.dst-cmd{--dst-accent:var(--dsw-alias-state-success-primary,#2f9e44)') &&
+    termCss.includes('border-left:2px solid var(--dst-accent);border-right:2px solid var(--dst-accent)') &&
+    termCss.includes('.dst-cmd[data-status=running]{--dst-accent:var(--dsw-alias-state-warning-primary,#d29922)}') &&
+    termCss.includes('.dst-cmd[data-status=failed],.dst-cmd[data-status=signal],.dst-cmd[data-status=error]{--dst-accent:var(--dsw-alias-state-error-primary,#d3382c)}') &&
+    termCss.includes('background:color-mix(in srgb,var(--dst-accent) 14%,transparent)') &&
+    termCss.includes('.dst-cmdHead:hover{background:color-mix(in srgb,var(--dst-accent) 26%,transparent)}'),
 )
 check(
   'terminal header control shows agent activity',
@@ -3731,6 +3748,38 @@ if (coreThemeBundle === null) {
   check('the pack menu switches to a built-in', realThemeService.getTheme().preference, 'dark')
   settingsDocumentMoved()
   check('and that sticks', realThemeService.getTheme().preference, 'dark')
+}
+
+// --------------------------------------------------------- the version constant
+// Every browser bundle that carries a `PLUGIN_VERSION` - the marker its toolbar
+// and its console line print, and what a person reads to know which build is
+// loaded - must agree with its own package.json. Nothing else checks it, and the
+// two DID drift: dsh-audio printed alpha.1 while its package.json said alpha.2,
+// so a freshly built bundle looked older than it was and the only way to notice
+// was to compare two files by hand. (dsh-editor pins its own constant for the
+// extra reason that its engine request is version-qualified; this is the
+// pack-wide shape of the same rule. The three GENERATED forks carry no marker,
+// which is why they are absent rather than failing.)
+{
+  const drifted = []
+  const carriers = []
+  for (const entry of readdirSync(path.join(repo, 'packages'), { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const file = path.join(repo, 'packages', entry.name, 'lib', 'client.js')
+    if (!existsSync(file)) continue
+    const match = /const PLUGIN_VERSION = '([^']+)'/.exec(readFileSync(file, 'utf8'))
+    if (match === null) continue
+    carriers.push(entry.name)
+    let version = null
+    try {
+      version = JSON.parse(readFileSync(path.join(repo, 'packages', entry.name, 'package.json'), 'utf8')).version
+    } catch (err) {
+      version = null
+    }
+    if (match[1] !== version) drifted.push(entry.name + '=' + match[1] + ' vs package.json ' + String(version))
+  }
+  check('a bundle version marker matches package.json', drifted.join(', '), '')
+  check('most bundles still print their version', carriers.length >= 10, true)
 }
 
 console.log('')

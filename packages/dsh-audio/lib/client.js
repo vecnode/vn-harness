@@ -77,7 +77,7 @@ window.__ModuleLoader__.load({
     /** The tab kind this package owns. */
     const KIND = 'audio'
     /** Version marker shown in the toolbar, so a loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.1'
+    const PLUGIN_VERSION = '0.1.0-alpha.2'
     /** Address grammar owned by @deepseek-ai/dsh-util-workspace-path. */
     const FILE_PREFIX = 'dsh-resource://file/'
     const SESSION_SEGMENT = 'session/'

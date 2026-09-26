@@ -38,12 +38,15 @@ host-side half owns the pack's own HTTP routes. Alpha.
   fixing reaches those too — an engine older than its bundle answers
   **`CM.yaml is not a function`**, which `openFile`'s `catch` turns into the very
   "Editor unavailable" tab the fix exists to prevent — so the claim in this file
-  was broader than the code. One lookup now serves both families:
-  `engineLanguage(CM, name)` returns null (and reports once) when the engine
-  exports no factory of that name, `lezerLanguage` builds through it, and
-  `streamLanguage` wraps a stream mode through it — so `languageExtensionFor`
-  contains **no direct `CM.<name>(...)` call at all**, and the tracked check
-  asserts exactly that (it fails on a bare `return CM.<name>(` reappearing). The
+  was broader than the code. Two lookups now serve the two families, because the
+  engine answers in two shapes: `engineLanguage(CM, name)` returns null (and
+  reports once) when the engine exports no factory of that name, a Lezer language
+  being a function, while `engineStreamMode(CM, name)` does the same for a
+  CM5-style mode, a StreamParser object carrying `token()`; `lezerLanguage` builds
+  through the first and `streamLanguage` wraps a stream mode through the second —
+  so `languageExtensionFor` contains **no direct `CM.<name>(...)` call at all**,
+  and the tracked check asserts exactly that (it fails on a bare `return
+  CM.<name>(` reappearing). The
   warning's remedy was also stale: it still told the reader the route "caches the
   artifact in memory for the life of the harness process, so RESTART `dsh web`",
   which alpha.12 had just made false — a restart cannot help when the artifact on
@@ -196,7 +199,7 @@ host-side half owns the pack's own HTTP routes. Alpha.
   fetched once from `/api/dsh-editor/vendor` the first time a file opens — once
   per bundle version, since the request carries `?v=<bundle version>` (alpha.12).
   A language the loaded engine does not carry — Lezer or stream, both go through
-  the one guarded lookup (alpha.13) — opens the document **without syntax
+  a guarded lookup (alpha.13) — opens the document **without syntax
   highlighting** and warns once in the console with the rebuild command, instead
   of failing the tab.
 - **Toolbar**: a find-in-file search input, a **Preview** button (Markdown files
