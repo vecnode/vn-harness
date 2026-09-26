@@ -1,8 +1,10 @@
 # 🤖 vn-harness
 
 ![Language: JavaScript](https://img.shields.io/badge/language-JavaScript-f7df1e?logo=javascript&logoColor=black)
+![Language: Rust](https://img.shields.io/badge/language-Rust-000000?logo=rust&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![DeepSeek Harness 0.1.5-rc.1](https://img.shields.io/badge/dsh-0.1.5--rc.1-4f8cff)
+![Platforms: Windows | macOS | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
 Agent Application with core [DSH](https://www.deepseek.com/harness/en/).
 
