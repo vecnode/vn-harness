@@ -13,7 +13,7 @@ Windows half is PowerShell, the macOS/Linux half is plain POSIX shell.
 ![print](assets/vn-harness-20260920-164101.png)
 
 <p align="center">
-  <img src="assets/vn-harness-20260925-195253.png" alt="The vn-harness desktop window while the pinned harness starts: a dark splash showing the mark, the name and a &quot;Starting the harness…&quot; line" width="49%">
+  <img src="assets/vn-harness 26_09_2026 09_53_53.png" alt="The vn-harness desktop window while the pinned harness starts: a dark splash showing the mark, the name and a &quot;Starting the harness…&quot; line" width="49%">
   <img src="assets/vn-harness-20260925-084844.png" alt="The same window once the harness is up, showing the pack's app in the light theme" width="49%">
   <br>
   <em><code>run-desktop.bat</code>: the shell's splash while <code>npx</code> works, and the same window once the harness is listening.</em>
