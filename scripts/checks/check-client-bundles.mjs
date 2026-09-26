@@ -1397,6 +1397,42 @@ check('terminal refits on resize and follows the end', termSource.includes('refi
 //     the columns the dock spans, which is what a ResizeObserver reports.
 check('terminal tracks the animated left bar', termSource.includes('new ResizeObserver(') && termSource.includes('columnObserver.observe(column)'))
 check('terminal also snaps on transitionend', termSource.includes("frame.addEventListener('transitionend', onTransitionEnd)"))
+//  alpha.6: placing the dock and FOLLOWING the frame are two effects. As one,
+//  keyed on the height, every frame of a dock drag disconnected a
+//  MutationObserver and a ResizeObserver and built them again, and their pending
+//  notifications landed on the fresh observers. The tracking effect is now keyed
+//  on `open` alone (the `|| !open` guard is its tell) and reads `dock.height` at
+//  call time; a drag only ever runs the two-write placement effect.
+check(
+  'terminal installs its frame observers once per open, not per height',
+  termSource.includes('// Geometry, part one: PLACE the dock') &&
+    termSource.includes('// Geometry, part two: FOLLOW the app frame') &&
+    termSource.includes('if (node === null || !open) return undefined') &&
+    termSource.includes('const refit = () => {') &&
+    termSource.includes('observer = new MutationObserver(refit)'),
+)
+//  alpha.6: the drag itself. The height comes from the POINTER, never from the
+//  dock's rect (the grip moves as the dock moves, so a handler that measured it
+//  would chase itself); moves coalesce to one per animation frame; the drag
+//  closes on `pointercancel` as well as `pointerup`, because a cancelled drag
+//  used to leave its listeners attached and the dock still following the mouse;
+//  and the PTY hears a size at most every SIZE_WIRE_MS, since every size message
+//  makes the shell redraw its prompt (~60 a second at one per frame).
+check(
+  'terminal drag is frame-coalesced, capturable and cancellable',
+  termSource.includes('requestAnimationFrame(apply)') &&
+    termSource.includes('setPointerCapture') &&
+    termSource.includes("window.addEventListener('pointercancel', finish)") &&
+    termSource.includes("document.body.classList.add('dst-dragging')") &&
+    termCss.includes('body.dst-dragging{'),
+)
+check(
+  'terminal throttles the PTY size message and settles it on release',
+  termSource.includes('const SIZE_WIRE_MS = 120') &&
+    termSource.includes('this.sendSize(entry, false)') &&
+    termSource.includes('sendSize(entry, true)') &&
+    termSource.includes('runtime.settle()'),
+)
 //  4. the bar's chip strip (alpha.4). Two behaviours, both only visible in a live
 //     document, so both are pinned at the source level:
 //
@@ -1445,7 +1481,26 @@ check('terminal reveal: a chip already inside does not move', reveal(strip, { le
 check('terminal reveal: a chip just inside the edge stays put', reveal(strip, { left: 108, right: 392 }), 0)
 check('terminal reveal: a chip flush with the left edge stays put', reveal(strip, { left: 100, right: 120 }), 0)
 check('terminal reveal: no margin means no air', reveal(strip, { left: 60, right: 120 }, 0), -40)
-check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.5'))
+// alpha.6: the shared section may only move the dock when the value is NEWS. The
+// dock's height rides a queued, non-optimistic wire write, and the scope
+// re-announces on every accepted view, so an accept handler that re-adopts the
+// section unconditionally hands the dock a height the drag has already left
+// behind - once per accepted write, for as long as the queue of
+// one-write-per-pointer-move takes to drain. That is the "the size glitches and I
+// have to hide it" report in arithmetic, so it is pinned behaviourally rather
+// than by the source shapes that let it ship.
+const adoptDecision = terminal.exports.__internals.adoptDecision
+const adopt = (input) =>
+  adoptDecision(Object.assign({ ready: true, dragging: false, pending: 0, shared: 400, known: null, current: 280 }, input))
+check('terminal adopt: news moves the dock', adopt({}), 400)
+check('terminal adopt: the pointer owns the height', adopt({ dragging: true }), null)
+check('terminal adopt: our own echo is not news', adopt({ shared: 400, known: 400 }), null)
+check('terminal adopt: a write of ours still on the wire is not news', adopt({ pending: 1, shared: 300, known: 400 }), null)
+check('terminal adopt: a height already in force moves nothing', adopt({ shared: 280, current: 280 }), null)
+check('terminal adopt: an unready section waits', adopt({ ready: false }), null)
+check('terminal adopt: an absent value is not a height of zero', adopt({ shared: null }), null)
+check('terminal adopt: another window still moves the dock', adopt({ shared: 350, known: 400, current: 280 }), 350)
+check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.6'))
 
 // -------------------------------------------------------------- dsh-rightbar
 // The right bar is a GENERATED fork, so these are source-level checks (like the
@@ -3250,11 +3305,25 @@ check(
 )
 check(
   'terminal writes both stores on a resize',
-  termSource.includes("sharedState.set('dockHeight', next)") && termSource.includes('STORAGE_KEY, String(next)'),
+  termSource.includes('function queueSharedHeight') &&
+    termSource.includes("sharedState.set('dockHeight', value)") &&
+    termSource.includes('STORAGE_KEY, String(next)') &&
+    // ...and NOT once per pointer move: the section is a queued wire write, and a
+    // request per move both floods it and feeds the echo loop below.
+    termSource.includes('SHARED_WRITE_DEBOUNCE_MS') &&
+    termSource.includes('sharedPending += 1'),
 )
 check(
-  'terminal adopts a height that arrives after load',
-  termSource.includes('sharedState.subscribe(adoptShared)') && termSource.includes('setHeight(shared)'),
+  'terminal adopts only what is news',
+  termSource.includes('sharedState.subscribe(adoptShared)') &&
+    termSource.includes('adoptDecision({') &&
+    // Every one of the three not-news gates has to be WIRED, not merely defined:
+    // the pointer, our own writes still on the wire, and the value in force.
+    termSource.includes('dragging,') &&
+    termSource.includes('pending: sharedPending') &&
+    termSource.includes('known: sharedKnown,') &&
+    termSource.includes('setHeight(next, { persist: false })') &&
+    termSource.includes('sharedPending += 1'),
 )
 check('terminal remembers no open state', termSource.includes('dockOpen') === false)
 

@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
     // Constants
     // ---------------------------------------------------------------------
     /** Shown on the dock's bar so a freshly loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.5'
+    const PLUGIN_VERSION = '0.1.0-alpha.6'
     /** The header list this control joins (Open In... is -10). */
     const HEADER_SLOT = 'conversation.session.header.utilities'
     /** The root-scoped overlay list the layout package renders inside the frame. */
@@ -81,6 +81,25 @@ window.__ModuleLoader__.load({
     const DEFAULT_HEIGHT = 280
     const MAX_HEIGHT_RATIO = 0.7
     const STORAGE_KEY = 'dsh-terminal.dockHeight'
+    /**
+     * How long a settled height waits before it goes to the shared section.
+     * A drag changes the height on every frame and the section is a WIRE write
+     * (queued, one round trip each): coalescing is what makes a drag one request
+     * instead of two hundred, and it is the same 400ms dsh-ui-state uses for its
+     * own column-width drags - the pack solves one hazard the same way twice.
+     */
+    const SHARED_WRITE_DEBOUNCE_MS = 400
+    /**
+     * The shortest gap between two PTY size messages while a drag is running.
+     *
+     * The emulator is re-fitted on every frame of a drag (that is what makes the
+     * visible line count follow the pointer), but the PTY is a SHELL on the other
+     * end and every resize makes it redraw its prompt: one message per frame is
+     * ~60 prompt redraws a second, which is its own kind of glitch. Around eight
+     * a second reads as live, and `settle()` always sends the final size, so a
+     * released drag leaves the shell at exactly the box on screen.
+     */
+    const SIZE_WIRE_MS = 120
 
     // ---------------------------------------------------------------------
     // The pack's own durable state (alpha.5)
@@ -103,6 +122,23 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     /** The `uiState` service once `apply` has found it, or `null`. */
     let sharedState = null
+    /**
+     * The height this client last handed to the shared section, or null while it
+     * has never written one. The section is NOT optimistic - `get` answers from
+     * the last view the HOST accepted - so a value equal to this one is this
+     * client's own echo coming back, never news (see `adoptDecision`).
+     */
+    let sharedKnown = null
+    /** The pending shared write, so a whole drag coalesces into one request. */
+    let sharedTimer = null
+    /**
+     * How many of this client's own writes are still on the wire. The section
+     * lags by exactly that much, so an announcement that arrives while it is not
+     * zero is a view from BEFORE the write and must not be adopted.
+     */
+    let sharedPending = 0
+    /** Set while a grip drag is in flight: the pointer owns the height. */
+    let dragging = false
 
     /**
      * Resolve the pack's shared-state service.
@@ -141,7 +177,13 @@ window.__ModuleLoader__.load({
 .dst-dock{position:fixed;left:0;right:0;bottom:0;z-index:21;box-sizing:border-box;display:none;flex-direction:column;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f1f1f);border-top:.5px solid var(--dsw-alias-border-l4,rgba(127,127,127,.34));box-shadow:0 -6px 18px rgba(0,0,0,.06);font-size:12.5px;line-height:1.5}
 .dst-dock[data-open]:not([data-suspended]){display:flex}
 .dst-grip{flex:none;height:6px;cursor:row-resize;touch-action:none;background:transparent}
+.dst-grip::after{content:'';display:block;width:44px;height:2px;margin:2px auto 0;border-radius:2px;background:var(--dsw-alias-border-l3,rgba(127,127,127,.3))}
 .dst-grip:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
+.dst-grip:hover::after{background:var(--dsw-alias-label-tertiary,#999)}
+/* While the edge is being dragged the whole page keeps the resize cursor and
+   stops selecting text - the pointer regularly leaves a 6px strip, and a drag
+   that started selecting the terminal's output reads as "it broke". */
+body.dst-dragging{cursor:row-resize;user-select:none}
 .dst-bar{flex:none;display:flex;align-items:center;gap:8px;min-width:0;padding:2px 8px 6px 10px;border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.16))}
 .dst-brand{flex:none;display:inline-flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary,#666);font-weight:500}
 .dst-glyph{flex:none;display:inline-flex;color:var(--dsw-alias-label-tertiary,#999)}
@@ -236,6 +278,50 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * What an accepted shared section should do to the dock.
+     *
+     * PURE, and exported for the tracked check, because this is the whole of the
+     * alpha.5 drag bug: the shared write is queued and NOT optimistic, the
+     * section re-announces on every accepted view, and the accept handler
+     * re-adopted whatever the LAST accepted view carried - which during a drag is
+     * a height the pointer left behind a moment ago. The dock was dragged up,
+     * snapped back to a stale echo, and dragged up again, and the queue of
+     * one-write-per-pointer-move kept replaying old heights for seconds after the
+     * release: "the size glitches and I have to hide it". Four ways a value is
+     * not news, and all four are this function's answer:
+     *
+     *  - the pointer is down (`dragging`): the live drag is the truth;
+     *  - a write of ours is still on the wire (`pending`): the section is LAGGING
+     *    us, so what it announces is a view from before that write;
+     *  - `shared` equals what this client last wrote (`known`): our own echo;
+     *  - `shared` equals the height already in force (`current`): nothing to do.
+     *
+     * It is the same hazard dsh-ui-state guards for its own column widths with a
+     * `restored` flag ("so a later snapshot cannot stomp a live drag").
+     *
+     * @param {object} input - `ready`, `dragging`, `pending`, `shared`, `known`,
+     *   `current`.
+     * @returns {number|null} the height to adopt, or null to leave the dock alone.
+     */
+    function adoptDecision(input) {
+      if (!input.ready || input.dragging) return null
+      // A write of ours still on the wire means the section is LAGGING this
+      // client: whatever it announces now is a view from before that write, and
+      // adopting it is how the dock snapped back to a height the pointer had
+      // already left. `known` alone cannot see this (a second write can be in
+      // flight by the time the first one is answered).
+      if (Number(input.pending) > 0) return null
+      // `Number(null)` is 0 and 0 is a finite height, so absence is rejected by
+      // hand rather than left to the numeric test.
+      if (input.shared === null || input.shared === undefined || input.shared === '') return null
+      const shared = Number(input.shared)
+      if (!Number.isFinite(shared)) return null
+      if (input.known !== null && shared === input.known) return null
+      if (shared === input.current) return null
+      return shared
+    }
+
+    /**
      * The scroll a strip needs to bring ONE chip into view: the smallest amount
      * that leaves `margin` px of air, or 0 when it is already there. Both boxes
      * are `{ left, right }` in the same coordinate space (`getBoundingClientRect`),
@@ -324,20 +410,69 @@ window.__ModuleLoader__.load({
       if (dock.sessionId !== sessionId) closeDock()
     }
 
-    function setHeight(value) {
+    /** Send the settled height to the shared section, once. */
+    function flushSharedHeight() {
+      if (sharedTimer !== null) {
+        clearTimeout(sharedTimer)
+        sharedTimer = null
+      }
+      if (sharedState === null || sharedKnown === null) return
+      const value = sharedKnown
+      // `set` settles when the wire call does, and the scope announces on the way
+      // through - which is exactly why the writes outstanding here are the window
+      // in which an announcement says nothing about the present.
+      const settle = () => {
+        sharedPending = Math.max(0, sharedPending - 1)
+      }
+      sharedPending += 1
+      try {
+        const write = sharedState.set('dockHeight', value)
+        if (write && typeof write.then === 'function') write.then(settle, settle)
+        else settle()
+      } catch (err) {
+        /* not persisting is not a failure */
+        settle()
+      }
+    }
+
+    /**
+     * Remember a height for the shared section WITHOUT sending it yet.
+     *
+     * The section is a queued wire write, so one request per pointer move both
+     * floods the queue and (because each answer re-announces an older view) fed
+     * the very echo loop this debounce exists to starve. `sharedKnown` is
+     * recorded at once, though: it is what `adoptDecision` compares an incoming
+     * view against, and it must be current while the write is still in flight.
+     *
+     * @param value - the height just applied.
+     */
+    function queueSharedHeight(value) {
+      if (sharedState === null) return
+      sharedKnown = value
+      if (sharedTimer !== null) clearTimeout(sharedTimer)
+      sharedTimer = setTimeout(() => {
+        sharedTimer = null
+        flushSharedHeight()
+      }, SHARED_WRITE_DEBOUNCE_MS)
+    }
+
+    /**
+     * @param value - the wanted height in px (clamped here).
+     * @param options - `{ persist: false }` when the value CAME from the shared
+     *   section: writing it straight back is what made a drag fight its own echo.
+     */
+    function setHeight(value, options) {
       const next = clampHeight(value)
       if (next === dock.height) return
       dock.height = next
       // Both stores, on purpose: the shared section is what the two hosts agree
       // on, and the localStorage copy keeps the dock remembering its height if
-      // dsh-ui-state is uninstalled while this bundle stays.
-      if (sharedState !== null) {
-        try {
-          sharedState.set('dockHeight', next)
-        } catch (err) {
-          /* not persisting is not a failure */
-        }
-      }
+      // dsh-ui-state is uninstalled while this bundle stays. localStorage is
+      // synchronous and local - it can follow every frame of a drag; the shared
+      // section cannot, and waits for the drag to settle.
+      const persist = !(options && options.persist === false)
+      if (persist) queueSharedHeight(next)
+      else sharedKnown = next
       try {
         if (window.localStorage) window.localStorage.setItem(STORAGE_KEY, String(next))
       } catch (err) {
@@ -628,7 +763,7 @@ window.__ModuleLoader__.load({
         const fit = new FitAddon()
         term.loadAddon(fit)
         term.open(host)
-        const entry = { index, term, fit, ws: null, status: 'connecting', wroteReplay: false, host }
+        const entry = { index, term, fit, ws: null, status: 'connecting', wroteReplay: false, host, sizeSent: null, sizeAt: 0, sizeTimer: null }
         this.entries.set(index, entry)
 
         term.onData((data) => {
@@ -768,13 +903,7 @@ window.__ModuleLoader__.load({
           } catch (err) {
             /* a zero-sized host (mid-layout) is not an error */
           }
-          if (entry.ws !== null && entry.ws.readyState === 1) {
-            try {
-              entry.ws.send(CONTROL + JSON.stringify({ t: 'resize', cols: entry.term.cols, rows: entry.term.rows }))
-            } catch (err) {
-              /* the next fit retries */
-            }
-          }
+          this.sendSize(entry, false)
           try {
             entry.term.scrollToBottom()
           } catch (err) {
@@ -783,9 +912,57 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /**
+       * Tell one PTY the size its emulator now has, at most every `SIZE_WIRE_MS`
+       * while a drag is in flight.
+       *
+       * A size the shell already has is never sent again, and a size that arrives
+       * inside the quiet window is DEFERRED rather than dropped - the emulator is
+       * already the new size, so the shell simply hears about it a moment later.
+       *
+       * @param entry - one slot's entry.
+       * @param force - send now, whatever the clock says (a settled size).
+       */
+      sendSize(entry, force) {
+        if (entry.ws === null || entry.ws.readyState !== 1) return
+        const size = String(entry.term.cols) + 'x' + String(entry.term.rows)
+        if (entry.sizeSent === size && !force) return
+        const now = Date.now()
+        if (!force && now - entry.sizeAt < SIZE_WIRE_MS) {
+          if (entry.sizeTimer === null) {
+            entry.sizeTimer = setTimeout(() => {
+              entry.sizeTimer = null
+              this.sendSize(entry, true)
+            }, SIZE_WIRE_MS - (now - entry.sizeAt))
+          }
+          return
+        }
+        if (entry.sizeTimer !== null) {
+          clearTimeout(entry.sizeTimer)
+          entry.sizeTimer = null
+        }
+        entry.sizeSent = size
+        entry.sizeAt = now
+        try {
+          entry.ws.send(CONTROL + JSON.stringify({ t: 'resize', cols: entry.term.cols, rows: entry.term.rows }))
+        } catch (err) {
+          /* the next fit retries */
+        }
+      }
+
       /** The panel or the viewport changed size: re-fit and follow the end. */
       refit() {
         this.fit()
+      }
+
+      /**
+       * A drag just ended: re-fit once and make sure every PTY holds the final
+       * size, including a slot whose only news was deferred inside the quiet
+       * window.
+       */
+      settle() {
+        this.fit()
+        for (const entry of this.entries.values()) this.sendSize(entry, true)
       }
 
       /** Show one slot and hide the others. */
@@ -842,6 +1019,10 @@ window.__ModuleLoader__.load({
         const entry = this.entries.get(index)
         if (entry === undefined) return
         this.entries.delete(index)
+        if (entry.sizeTimer !== null) {
+          clearTimeout(entry.sizeTimer)
+          entry.sizeTimer = null
+        }
         try {
           if (entry.ws !== null) {
             entry.ws.onclose = null
@@ -992,31 +1173,48 @@ window.__ModuleLoader__.load({
       const [mode, setMode] = useState(appearance())
       const slots = open || sessionId === null ? slotsFor(sessionId) : []
 
-      // Geometry: place the dock, and take its room from the middle and right
-      // columns ONLY - never from the frame, whose single grid row is shared
-      // with the left bar (see `columnsFor`).
+      // Geometry, part one: PLACE the dock and take its room from the middle and
+      // right columns ONLY - never from the frame, whose single grid row is
+      // shared with the left bar (see `columnsFor`).
       //
-      // Deliberately NOT keyed on the revision: every status bump would run the
-      // cleanup and the effect again, churning the columns' heights. The
-      // observers and the resize listener cover live moves.
+      // This is the effect a drag drives, and it is deliberately nothing but two
+      // imperative writes: a drag changes the height on every frame, and the
+      // observer setup below used to live in the same effect - so every frame of
+      // a drag disconnected and rebuilt a MutationObserver AND a ResizeObserver,
+      // then let their pending notifications land on the fresh observers. Two
+      // observers per frame is most of why a resized dock stuttered.
       useEffect(() => {
         const node = rootRef.current
         if (node === null) return undefined
         const frame = frameFrom(node)
         applyGeometry(node, frame)
         applyInsets(frame)
+        return undefined
+      }, [open, height])
+
+      // Geometry, part two: FOLLOW the app frame. Installed once while the dock
+      // is open, and every callback reads `dock.height` at call time (module
+      // state, so no stale closure) which is why a height change needs no new
+      // observer. Deliberately NOT keyed on the revision either: every status
+      // bump would churn the columns.
+      useEffect(() => {
+        const node = rootRef.current
+        if (node === null || !open) return undefined
+        const frame = frameFrom(node)
+        if (frame === null) return undefined
         let observer = null
         let columnObserver = null
-        if (open && frame !== null && typeof MutationObserver === 'function') {
+        const refit = () => {
+          applyGeometry(node, frame)
+          applyInsets(frame)
+        }
+        if (typeof MutationObserver === 'function') {
           // The frame's inline `style` changes when a column is dragged or the
           // right bar opens/closes: one mutation, settled immediately.
-          observer = new MutationObserver(() => {
-            applyGeometry(node, frame)
-            applyInsets(frame)
-          })
+          observer = new MutationObserver(refit)
           observer.observe(frame, { attributes: true, attributeFilter: ['style', 'data-rightbar-fullscreen'] })
         }
-        if (open && frame !== null && typeof ResizeObserver === 'function') {
+        if (typeof ResizeObserver === 'function') {
           // The LEFT BAR is ANIMATED, which is what the observer above cannot see:
           // collapsing or expanding it rewrites the grid tracks ONCE and then
           // transitions them, so the mutation fires before the width has actually
@@ -1029,17 +1227,16 @@ window.__ModuleLoader__.load({
         const onTransitionEnd = (event) => {
           if (event.target === frame) applyGeometry(node, frame)
         }
-        if (open && frame !== null) frame.addEventListener('transitionend', onTransitionEnd)
+        frame.addEventListener('transitionend', onTransitionEnd)
         const onResize = () => {
-          applyGeometry(node, frame)
-          applyInsets(frame)
+          refit()
           const runtime = runtimeRef.current
           if (runtime !== null) runtime.refit()
         }
         window.addEventListener('resize', onResize)
         return () => {
           window.removeEventListener('resize', onResize)
-          if (frame !== null) frame.removeEventListener('transitionend', onTransitionEnd)
+          frame.removeEventListener('transitionend', onTransitionEnd)
           if (observer !== null) observer.disconnect()
           if (columnObserver !== null) columnObserver.disconnect()
         }
@@ -1138,21 +1335,82 @@ window.__ModuleLoader__.load({
         runtime.show(dock.active.get(sessionId) ?? 0)
       }, [slots.length, sessionId])
 
-      const onGripDown = useCallback(
-        (event) => {
-          const startY = event.clientY
-          const startHeight = dock.height
-          const move = (moveEvent) => setHeight(startHeight + (startY - moveEvent.clientY))
-          const up = () => {
-            window.removeEventListener('pointermove', move)
-            window.removeEventListener('pointerup', up)
+      /**
+       * Drag the dock's top edge.
+       *
+       * The height comes from the POINTER's own Y and the two values captured at
+       * pointerdown, never from the dock's rect: the grip moves as the dock moves,
+       * so a handler that measured it would chase itself. Moves are coalesced to
+       * one per animation frame - a pointer stream is not a frame rate - and the
+       * drag is closed on `pointerup` AND `pointercancel`, since a cancelled drag
+       * used to leave its listeners attached and the dock still following the
+       * mouse.
+       */
+      const onGripDown = useCallback((event) => {
+        if (typeof event.button === 'number' && event.button !== 0) return
+        const grip = event.currentTarget
+        const startY = event.clientY
+        const startHeight = dock.height
+        let frame = 0
+        let pending = null
+        dragging = true
+        if (document.body) document.body.classList.add('dst-dragging')
+        try {
+          if (grip && typeof grip.setPointerCapture === 'function') grip.setPointerCapture(event.pointerId)
+        } catch (err) {
+          /* capture is a nicety: the window listeners cover this either way */
+        }
+        const apply = () => {
+          frame = 0
+          if (pending === null) return
+          const value = pending
+          pending = null
+          setHeight(value)
+        }
+        const move = (moveEvent) => {
+          pending = startHeight + (startY - moveEvent.clientY)
+          if (frame === 0) frame = requestAnimationFrame(apply)
+        }
+        const finish = () => {
+          if (frame !== 0) {
+            cancelAnimationFrame(frame)
+            frame = 0
           }
-          window.addEventListener('pointermove', move)
-          window.addEventListener('pointerup', up)
-          event.preventDefault()
-        },
-        [],
-      )
+          if (pending !== null) {
+            const value = pending
+            pending = null
+            setHeight(value)
+          }
+          dragging = false
+          if (document.body) document.body.classList.remove('dst-dragging')
+          try {
+            if (
+              grip &&
+              typeof grip.releasePointerCapture === 'function' &&
+              typeof grip.hasPointerCapture === 'function' &&
+              grip.hasPointerCapture(event.pointerId)
+            ) {
+              grip.releasePointerCapture(event.pointerId)
+            }
+          } catch (err) {
+            /* an already-released capture is not a failure */
+          }
+          // The drag's last word reaches both stores NOW, not after the debounce:
+          // someone who drags and immediately closes the tab should still find
+          // their height, and the PTY should hear the settled size at once
+          // instead of being left at a frame's worth of rows.
+          flushSharedHeight()
+          const runtime = runtimeRef.current
+          if (runtime !== null) runtime.settle()
+          window.removeEventListener('pointermove', move)
+          window.removeEventListener('pointerup', finish)
+          window.removeEventListener('pointercancel', finish)
+        }
+        window.addEventListener('pointermove', move)
+        window.addEventListener('pointerup', finish)
+        window.addEventListener('pointercancel', finish)
+        event.preventDefault()
+      }, [])
 
       const addTerminal = useCallback(() => {
         const list = slotsFor(sessionId)
@@ -1453,13 +1711,27 @@ window.__ModuleLoader__.load({
         // geometry in a module-level store), so the shared value is adopted
         // here, once it lands: the section is a wire read, and until it answers
         // the localStorage copy is the only height there has ever been.
+        //
+        // It must NOT adopt on every announcement, which is what alpha.5 did.
+        // The scope notifies on each accepted view - including the answers to
+        // this client's OWN writes - so re-reading the section per notification
+        // handed the dock a stale echo on every frame of a drag. `adoptDecision`
+        // filters the three not-news cases (the pointer is down, our own echo,
+        // the value already in force) and an adopted height is written with
+        // `persist: false`, so adopting cannot itself become a write.
         sharedState = uiStateService(ctx)
         if (sharedState !== null && typeof sharedState.subscribe === 'function') {
           const adoptShared = () => {
-            if (!sharedReady()) return
-            const shared = Number(sharedState.get('dockHeight'))
-            if (!Number.isFinite(shared)) return
-            setHeight(shared)
+            const next = adoptDecision({
+              ready: sharedReady(),
+              dragging,
+              pending: sharedPending,
+              shared: sharedState.get('dockHeight'),
+              known: sharedKnown,
+              current: dock.height,
+            })
+            if (next === null) return
+            setHeight(next, { persist: false })
           }
           adoptShared()
           sharedState.subscribe(adoptShared)
@@ -1496,8 +1768,11 @@ window.__ModuleLoader__.load({
     exports.apply = apply
     exports.inject = inject
     // The bundle's PURE half, for the tracked check: the strip's scroll-into-view
-    // arithmetic, which a static render cannot exercise (see `revealDelta`).
-    exports.__internals = { revealDelta }
+    // arithmetic and the shared-section adopt decision, neither of which a static
+    // render can exercise. The second one is the whole of the alpha.5 drag bug -
+    // four numbers and two flags - so it is pinned behaviourally rather than by
+    // the source shape that let it ship.
+    exports.__internals = { revealDelta, adoptDecision }
     return module.exports
   },
 })

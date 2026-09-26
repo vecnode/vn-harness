@@ -1,4 +1,4 @@
-# dsh-terminal (alpha.4)
+# dsh-terminal (alpha.6)
 
 **Terminal** is a **bottom dock** for the DeepSeek Harness web GUI: a real shell,
 in the app, under the conversation. A header button — the same 28px round control
@@ -71,16 +71,36 @@ nodes into a React-managed container), so it positions itself:
   — the mutation reports the pre-transition value and never fires again (alpha.2
   left the dock standing at the old edge), while the columns' **size** changes on
   every frame of the transition. `transitionend` is the final snap.
+  - *Installed once, not per height.* Placement and tracking are two effects
+    (alpha.6). They used to be one, keyed on the height, so **every frame of a
+    dock drag disconnected both observers and built them again** — with their
+    pending notifications then landing on the fresh ones. Placing the dock is now
+    a two-write effect; the observers are installed while the dock is open and
+    read `dock.height` at call time (module state, so there is no stale closure).
 - **Intent is separate from geometry.** `data-open` is user intent;
   `data-suspended` is derived (a fullscreen right bar takes the viewport, and the
   dock yields *and* hands the columns their height back for the duration). The
   observer only ever writes the derived one — the first spike run failed exactly
   here, reopening the dock on the very close that restored the frame's height.
-- **Resizing** — the grip drags the height (120px … 70% of the viewport) and it is
-  remembered in `localStorage`; every change **re-fits the emulator**: rows and
-  columns are recomputed from the new box, the new size goes to the PTY, and the
-  view is put back on the **end of the output**. A drag therefore never leaves a
-  stale screen with the wrong number of lines, and never hides the newest ones.
+- **Resizing** — the grip drags the height (120px … 70% of the viewport), and it is
+  remembered in both `localStorage` and the pack's shared section. Every change
+  **re-fits the emulator**: rows and columns are recomputed from the new box and
+  the view is put back on the **end of the output**, so a drag never leaves a
+  stale screen with the wrong number of lines and never hides the newest ones.
+  Three things keep the drag itself honest (all alpha.6, all reported from use):
+  - the height comes from the **pointer's** Y and the values captured at
+    `pointerdown`, never from the dock's rect — the grip moves as the dock moves,
+    so a handler that measured it would chase itself. Moves are coalesced to one
+    per animation frame, the pointer is captured for the duration, and the drag
+    closes on `pointerup` **and** `pointercancel`;
+  - the **PTY** is told the new size at most every `SIZE_WIRE_MS` (120ms) while
+    the drag runs, and always once when it settles. The emulator is re-fitted on
+    every frame — that is what makes the line count follow the pointer — but every
+    size message makes the shell redraw its prompt, and one per frame is ~60
+    prompt redraws a second;
+  - the shared section is written **once, 400ms after the drag settles** (plus a
+    flush at release), never per pointer move. See the alpha.6 note below: a write
+    per move is what made the dock fight its own echo.
 
 ## What it does
 
@@ -220,6 +240,32 @@ the tracking removed, that check reports the dock stuck at its old edge).
 
 ## Alpha notes
 
+- **alpha.6** — dragging the dock's top edge "did not work well": the panel
+  jumped, kept moving after the release, and the only way out was to hide it.
+  Three causes, all in the resize path:
+  1. **the dock fought its own echo.** alpha.5 put the height in the pack's shared
+     section, and the section is a *queued, non-optimistic* wire write: `set` is
+     one request per call, and the scope re-announces on every accepted view —
+     so the accept handler re-read the section and adopted whatever the LAST
+     accepted view carried. During a drag that is a height the pointer left
+     behind a moment ago, and with one write per `pointermove` the answers were
+     seconds behind: the dock was dragged up, snapped back to a stale echo,
+     dragged up again, and the queue kept replaying old heights after the release.
+     An accepted view is now adopted only when it is **news** — `adoptDecision`
+     refuses while the pointer is down, refuses this client's own last written
+     value, and refuses the height already in force — an adopted height is written
+     with `persist: false`, the shared write is debounced to 400ms past the
+     settle (the same figure dsh-ui-state uses for its own column-width drags),
+     and the release flushes the final value at once.
+  2. **the observers were rebuilt per frame** (see *Geometry*).
+  3. **the PTY heard a resize per frame**, and a shell redraws its prompt on each
+     one (see *Resizing*).
+  The grip is also easier to grab and to keep hold of: a small handle bar that
+  brightens on hover, `setPointerCapture` for the drag, `pointercancel` handling,
+  and `body.dst-dragging` (row-resize cursor, no text selection) while the
+  pointer is down. `adoptDecision` is exported in `__internals` and pinned
+  behaviourally by the tracked check — the arithmetic is four numbers and two
+  flags, and the source shapes that let this ship were all present and correct.
 - **alpha.4** — two things about the bar itself, both reported from use:
   1. picking a chip showed the terminal but left the **highlight** on the chip you
      had just left. The pick was routed through `runtime.show()`, which writes
