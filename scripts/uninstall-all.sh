@@ -41,7 +41,9 @@ usage() {
     '  -DshHome <dir>       override DSH_HOME (default: $DSH_HOME, else ~/.dsh)' \
     '  -ProfileName <name>  override the profile name (default: web)' \
     '  -DshVersion <ver>    override the pinned dsh version from .dsh-version.json' \
-    '  -Target web|cli      accepted for muscle memory; both mean the web profile'
+    '  -Target web|cli      accepted for muscle memory; both mean the web profile' \
+    '  -NoPause             accepted and ignored here; uninstall.sh owns the window' \
+    '  -Help / -h / --help  print this help'
 }
 
 while [ $# -gt 0 ]; do
@@ -56,7 +58,8 @@ while [ $# -gt 0 ]; do
     -DshVersion=*|--dsh-version=*) dsh_version_arg=${1#*=} ;;
     -Target|--target) shift; target_arg=${1:-} ;;
     -Target=*|--target=*) target_arg=${1#*=} ;;
-    -h|--help) usage; exit 0 ;;
+    -NoPause|--no-pause) ;;   # the entry point owns the window; accepted so it is never "unknown"
+    -Help|--help|-h) usage; exit 0 ;;
     *)
       printf 'vn-harness: unknown option "%s"\n' "$1" >&2
       printf 'Run "sh scripts/uninstall-all.sh --help" for the accepted options.\n' >&2

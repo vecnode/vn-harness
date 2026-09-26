@@ -1,0 +1,316 @@
+# ============================================================================
+#  .github/workflows/distribute.yml - build the vn-harness distribution for
+#  Windows, macOS (Intel and Apple silicon) and Linux.
+#
+#  WHAT IT BUILDS, AND WHY IT IS THE SAME THING YOU BUILD LOCALLY
+#  -------------------------------------------------------------
+#  A distribution is a FOLDER, not an installer: app/ is a launcher that runs
+#  the pinned `npx @deepseek-ai/dsh@<pin> web`, and the plugins are installed
+#  into the harness web profile as LIVE LINKS into packages/. So the artifact is
+#  the built shell beside the whole pack, plus a zip of the two.
+#
+#  The build, the ship list, the layout and the end-to-end check all live in
+#  scripts/dist.ps1 (Windows) and scripts/dist.sh (macOS/Linux) - the SAME files
+#  `distribute.bat` / `./distribute.sh` run on your machine. This workflow only
+#  picks the runner, calls them with -Verify, and uploads what they produced, so
+#  a local run and a CI run cannot drift. To see what a run does before pushing
+#  a tag: Actions -> distribute -> Run workflow (that trigger uploads artifacts
+#  and publishes nothing).
+#
+#  WHAT THE VERIFY STEP PROVES
+#  ---------------------------
+#  `-Verify` copies the assembled folder to a temp location, installs it into a
+#  throwaway DSH_HOME with the distribution's OWN installer, asserts the profile
+#  now lists every bundle the folder carries, then boots the pinned harness from
+#  it and waits for the `dsh web:` ready line - token REDACTED in the log, and a
+#  line that does not name a loopback address refused rather than trusted. It
+#  never opens a window, which is why a runner with no screen can run it.
+#
+#  AND WHAT THIS WORKFLOW DELIBERATELY DOES NOT DO
+#  -----------------------------------------------
+#  No .msi / .dmg / .deb / AppImage: app/src-tauri/tauri.conf.json keeps
+#  `bundle.active: false`, so nothing needs the Tauri CLI, a multi-size icon set
+#  or a signing identity. macOS therefore ships a bare binary in a zip (no .app
+#  bundle and no notarization, so Gatekeeper will need a right-click -> Open the
+#  first time), and Windows ships an unsigned .exe (SmartScreen will say
+#  "unknown publisher"). Both are recorded in docs/DISTRIBUTE.md.
+#
+#  RUNNER LABELS ARE PART OF THE BUILD
+#  -----------------------------------
+#  The matrix names images GitHub still publishes, and the checks job validates
+#  them rather than trusting them: the first cut asked for macos-13, which has
+#  been retired, and no amount of running the distributer locally could have
+#  caught that - only a runner can. macOS x64 is macos-15-intel, macOS arm64 is
+#  macos-15. The two ARM64 legs are marked `experimental` and run
+#  continue-on-error until each has been green twice; promotion is deleting one
+#  line.
+# ============================================================================
+name: distribute
+
+on:
+  # Manual runs: the way to watch the whole thing work, and to download the
+  # artifacts, without pushing a tag. `release: true` publishes a GitHub Release
+  # from the run (the `tag` input names it, or v<pack version> is used).
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Override the pack version used in the artifact names (default: package.json)'
+        required: false
+        default: ''
+      release:
+        description: 'Publish the artifacts as a GitHub Release when the build is green'
+        type: boolean
+        default: false
+      tag:
+        description: 'Tag for that release (default: v<pack version>); created from this commit if absent'
+        required: false
+        default: ''
+
+  # Every push to main that can change what ships. This uploads artifacts and
+  # publishes nothing - a release is a deliberate act (a tag, or the input above).
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'packages/**'
+      - 'scripts/**'
+      - 'docs/**'
+      - 'assets/**'
+      - '.dsh-version.json'
+      - 'package.json'
+      - 'README.md'
+      - 'LICENSE'
+      - 'SECURITY.md'
+      - 'install.bat'
+      - 'install.sh'
+      - 'uninstall.bat'
+      - 'uninstall.sh'
+      - 'run-web.bat'
+      - 'run-web.sh'
+      - 'run-desktop.bat'
+      - 'distribute.bat'
+      - 'distribute.sh'
+      - '.gitignore'
+      - '.github/workflows/distribute.yml'
+
+  # Publishing a Release builds the three OS archives and attaches them to it.
+  # `gh release create v0.1.0-alpha.0 --generate-notes` is the whole ritual; the
+  # job below refuses to attach anything when the tag and package.json's version
+  # disagree, so a release tag can never name a version that was never built.
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. The distribution feature's own invariants, before anything is compiled.
+  # ---------------------------------------------------------------------------
+  checks:
+    name: checks (ship list, bundles, half-to-half parity)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Distribution layout and payload
+        run: node scripts/checks/check-dist-layout.mjs
+
+      # check-client-bundles.mjs renders every browser half with a REAL React and
+      # looks for one in $DSH_HOME/profiles/node_modules first, then the npm npx
+      # caches. A fresh runner has neither and the check THROWS rather than
+      # skipping, so this installs a React into that first location. Pinned on
+      # purpose: the pack's bundles are developed against React 18.3.1, and a
+      # check that renders against a different React is a different check.
+      - name: The React runtime the client checks render with
+        run: npm install --prefix "$HOME/.dsh/profiles" --no-save --no-package-lock --no-fund --no-audit react@18.3.1 react-dom@18.3.1
+
+      # These two skip loudly where a host cannot run them (a check that cannot
+      # run says so instead of passing), so they are safe on a bare runner: the
+      # client half skips the sections that need the harness's own core bundles,
+      # and the skill check skips every TikZ example when there is no TeX engine.
+      # check-node-routes.mjs and check-pdf-node.mjs are NOT run here: they want a
+      # real profile with the harness installed, which this job deliberately does
+      # not build - run them locally (see scripts/checks/README.md).
+      - name: Client bundles
+        run: node scripts/checks/check-client-bundles.mjs
+
+      - name: Shipped skill examples
+        run: node scripts/checks/check-skill-examples.mjs
+
+  # ---------------------------------------------------------------------------
+  # 2. Build, assemble, verify, upload - once per target.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build ${{ matrix.rid }}
+    needs: checks
+    runs-on: ${{ matrix.os }}
+    # An experimental leg (the ARM64 rows) may fail without failing the run, so a
+    # toolchain surprise on a newer image cannot block a release. The required
+    # legs have no `experimental` key, which makes this false for them.
+    continue-on-error: ${{ matrix.experimental || false }}
+    # 90, not 60: every leg now populates a ~223 MB harness dependency closure
+    # (and, from L2 on, unpacks a 26-36 MB Node archive) before it even starts
+    # compiling the shell, and the Intel macOS leg has no warm cache on a first
+    # run. A timeout that expires mid-build reads as a code failure and is not.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- required: the three operating systems, one artifact each -------
+          # windows-2022 rather than windows-latest (Server 2025): the x64 leg is
+          # the one users download, so it stays on the image whose WebView2 and
+          # MSVC story is the most predictable.
+          - os: windows-2022
+            rid: win-x64
+          # macOS 13 is GONE as a runner image and macOS 14 is deprecated, so the
+          # Intel leg is macos-15-intel. There is no macos-13/macos-14 label left
+          # to fall back to; a native build per architecture beats a universal
+          # binary this cut does not attempt.
+          - os: macos-15-intel
+            rid: mac-x64
+          - os: macos-15
+            rid: mac-arm64
+          # The oldest supported Ubuntu on purpose: a binary built here runs on
+          # anything at or above its glibc, which a newer image cannot promise.
+          - os: ubuntu-22.04
+            rid: linux-x64
+
+          # --- ARM64: staged, non-blocking ------------------------------------
+          # These two produce real artifacts for machines that have none today,
+          # but their toolchains are the newer ones (Tauri on Windows ARM64 in
+          # particular), so a surprise there must not block a release. They are
+          # marked experimental and continue-on-error; promote one by deleting
+          # its `experimental: true` line once it has been green twice.
+          - os: windows-11-arm
+            rid: win-arm64
+            experimental: true
+          - os: ubuntu-22.04-arm
+            rid: linux-arm64
+            experimental: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      # Tauri 2 links against WebKitGTK on Linux. Everything here is needed by
+      # wry/tao (webkit2gtk-4.1, gtk3, libsoup3, javascriptcoregtk-4.1) or by the
+      # tauri build script (librsvg, patchelf); `zip` is what scripts/dist.sh
+      # prefers for the archive, and `lsof` is the fallback it uses to prove a
+      # verify boot left no server holding its port.
+      - name: Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential file pkg-config \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev librsvg2-dev patchelf \
+            zip lsof
+
+      - name: Build, assemble and verify the distribution (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION_INPUT: ${{ github.event.inputs.version }}
+        run: |
+          $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$env:GITHUB_WORKSPACE/scripts/dist.ps1", '-Verify')
+          if ($env:VERSION_INPUT) { $arguments += @('-Version', $env:VERSION_INPUT) }
+          & pwsh @arguments
+          exit $LASTEXITCODE
+
+      - name: Build, assemble and verify the distribution (macOS / Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          VERSION_INPUT: ${{ github.event.inputs.version }}
+        run: |
+          if [ -n "$VERSION_INPUT" ]; then
+            sh scripts/dist.sh -Verify -Version "$VERSION_INPUT"
+          else
+            sh scripts/dist.sh -Verify
+          fi
+
+      - name: The release tag must name the version that was built
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tag="${RELEASE_TAG#v}"
+          want=$(node -p "require('./package.json').version")
+          if [ "$tag" != "$want" ]; then
+            echo "::error::The release tag is '$RELEASE_TAG' but package.json says '$want'. Bump the version and tag again, or retag the release."
+            exit 1
+          fi
+
+      - name: Upload the archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn-harness-${{ matrix.rid }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # 3. Attach the three archives to a GitHub Release (tag or the manual input).
+  # ---------------------------------------------------------------------------
+  release:
+    name: release
+    needs: build
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Collect the archives
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Hash them
+        run: |
+          cd artifacts
+          ls -l
+          sha256sum vn-harness-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          TAG_INPUT: ${{ github.event.inputs.tag }}
+        run: |
+          set -eu
+          tag="${RELEASE_TAG:-$TAG_INPUT}"
+          if [ -z "$tag" ]; then tag="v$(node -p "require('./package.json').version")"; fi
+          # A release that does not exist yet is created from this commit; an
+          # existing one just gets the assets added (or replaced).
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA"
+          gh release upload "$tag" artifacts/*.zip artifacts/*.tar.gz artifacts/SHA256SUMS.txt --clobber
+          echo "Attached $(ls artifacts | wc -l) file(s) to $tag."

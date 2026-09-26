@@ -1,6 +1,6 @@
 # scripts/checks
 
-Standalone verification for the pack's JavaScript halves. None of the four
+Standalone verification for the pack's JavaScript halves. None of the five
 scripts needs a running harness and none is part of the installers; run them
 after touching a client bundle, a Node route or a shipped skill (they caught a
 real "the tab body never got the hook it needs" bug during the alpha.4 editor
@@ -11,6 +11,7 @@ node scripts/checks/check-client-bundles.mjs   # module table + real React rende
 node scripts/checks/check-node-routes.mjs      # every Node route + the diagram tools
 node scripts/checks/check-pdf-node.mjs         # the five pdf tools + the routes, against PDFs it builds
 node scripts/checks/check-skill-examples.mjs   # every fenced example in every shipped skill
+node scripts/checks/check-dist-layout.mjs      # the distribution: ship list, bundles, half-to-half parity
 DSH_CHECK_LAUNCH=1 node scripts/checks/check-node-routes.mjs   # also opens a real file browser
 ```
 
@@ -177,3 +178,40 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
   and parses or compiles it with the plugin's own engines, so a copy-pasteable
   source that no longer works fails the run instead of misleading the next
   agent.
+- `check-dist-layout.mjs` covers the distribution feature, which is a COPY of
+  this repository produced by two independent halves (`scripts/dist.ps1` on
+  Windows, `scripts/dist.sh` everywhere else). It reads
+  `scripts/dist-manifest.txt` and fails on the quiet failures: a bundle under
+  `packages/` that no include rule carries (it would silently not ship), a lost
+  `skipdir node_modules` (200 MB of build inputs would enter the archive), a
+  rule reaching outside the repository, a bundle `.dsh-version.json` lists but
+  `packages/` does not have, a flag or a generated file only ONE half knows
+  about, the two sentinel lists drifting apart (the guard that catches a copy
+  which flattened or nested a tree), a half that stopped redacting the launch
+  token, `dist/` missing from `.gitignore`, and a workflow that stopped building
+  one of the four targets or dropped the end-to-end `-Verify`. Node only, no
+  build, no network.
+
+  It also pins the RUNNER LABELS, which is the one failure local running cannot
+  catch: the first cut asked GitHub for `macos-13`, an image that has been
+  retired, and the whole run died at scheduling time before any step could
+  report why. The matrix's own `- os:` values are what it reads - the comments
+  above the matrix name the retired labels on purpose, to record why they left -
+  and the ARM64 legs must be marked `experimental` (continue-on-error) while
+  their toolchains settle, so a preview-image surprise cannot block a release.
+  Every root entry point must also appear in the workflow's `paths:` filter, or a
+  change to it would build nothing.
+
+  And it pins the CONSOLE CONTRACT, which is what keeps five Windows launchers
+  and four POSIX ones behaving the same way: each Windows entry point must call
+  `scripts/console/adapt.cmd`, keep the `if not defined VN_HARNESS_CONSOLE set
+  "VN_HARNESS_ARGV=%*"` guard, mention `%*` exactly once (a second occurrence
+  would replace the caller's flags with `--from-terminal` after the Windows
+  Terminal relaunch), forward `%VN_HARNESS_ARGS%`, honour `VN_HARNESS_PAUSE` and
+  handle both of `adapt.cmd`'s exit codes; each POSIX entry point must source
+  `scripts/console/theme.sh` and never invoke PowerShell (comments explaining
+  that rule are stripped before the test, so the rule can still be documented);
+  the `.sh` workers must accept `-Help` and `-NoPause` (an unknown option is a
+  hard error in all of them, so a flag the entry forwards and the worker never
+  heard of breaks the run); `adapt.cmd` must not `setlocal`; and `theme.sh` must
+  stay POSIX - no `[[ ]]`, no `function`, no arrays.

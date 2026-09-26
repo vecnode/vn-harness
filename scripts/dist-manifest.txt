@@ -1,0 +1,112 @@
+# ============================================================================
+#  scripts/dist-manifest.txt - WHAT SHIPS INSIDE A vn-harness DISTRIBUTION.
+#
+#  Read by BOTH distribution halves - scripts/dist.ps1 (Windows) and
+#  scripts/dist.sh (macOS/Linux) - so the two cannot drift: there is one list of
+#  what a distribution contains, and the tracked check
+#  scripts/checks/check-dist-layout.mjs fails when a bundle appears under
+#  packages/ that this list does not carry.
+#
+#  WHY A DISTRIBUTION IS A FOLDER AND NOT AN .exe
+#  ----------------------------------------------
+#  app/ is a LAUNCHER, not a bundle: the shell binary walks up for
+#  .dsh-version.json, runs the pinned `npx @deepseek-ai/dsh@<pin> web --no-open`
+#  and shows that URL in a native window. The plugins are not compiled into it -
+#  the web profile installs every bundle as a LIVE LINK into packages/, so the
+#  folder IS the application. Ship the folder, keep it in place, click it.
+#
+#  SO WHAT MUST ALWAYS BE HERE
+#  ---------------------------
+#  packages/ (every bundle, live-linked by the profile), .dsh-version.json (the
+#  shell has NO fallback pin and refuses to start without it), the installer
+#  scripts, and the built shell binary - which the dist script copies in itself
+#  as <vn-harness.exe | vn-harness>, so it is deliberately NOT listed below.
+#
+#  SYNTAX - one rule per line, '#' starts a comment, blank lines are ignored:
+#
+#    include  <path>     a FILE is copied as is; a DIRECTORY is walked and every
+#                        file under it is copied, minus the skip rules
+#    skipdir  <name>     never ship a directory with this BASENAME, at any depth
+#    skippath <relpath>  never ship this path, or anything under it
+#    skipfile <glob>     never ship a file whose BASENAME matches this glob
+#
+#  SKIP RULES WIN over include rules, whatever order they appear in.
+# ============================================================================
+
+# --- the application itself -------------------------------------------------
+include packages
+include .dsh-version.json
+
+# --- launching and maintaining it -------------------------------------------
+include install.bat
+include install.sh
+include uninstall.bat
+include uninstall.sh
+include run-web.bat
+include run-web.sh
+# The desktop launcher ships too. In a distribution it runs the built shell
+# beside it and needs no Rust; see its own header for why the presence of
+# vn-harness.exe, and not a Cargo.toml, is what decides which path it takes.
+include run-desktop.bat
+include scripts
+
+# --- what a reader needs ----------------------------------------------------
+include README.md
+include LICENSE
+include SECURITY.md
+include docs
+
+# --- the shell's own source, so the folder is complete ----------------------
+# The binary is what RUNS; these are here so a distribution is a whole source
+# tree for it (the same files a clone would have, minus the build output).
+include app/README.md
+include app/ui
+include app/src-tauri/Cargo.toml
+include app/src-tauri/Cargo.lock
+include app/src-tauri/build.rs
+include app/src-tauri/tauri.conf.json
+include app/src-tauri/src
+include app/src-tauri/icons
+
+# --- the branding source (dsh-themes inlines assets/vn-harness.svg) ---------
+# One file, not the folder: assets/ also holds the screenshots the pack's own
+# Screenshot control wrote there, and those are somebody's machine, not content.
+include assets/vn-harness.svg
+
+# ============================================================================
+#  THE SKIP RULES.
+# ============================================================================
+
+# Build output and per-machine trees. `node_modules` is the big one: the three
+# vendor/ workspaces under packages/ hold 204 MB of build INPUTS for artifacts
+# that are already committed under lib/vendor/ - shipping them would multiply
+# the archive by twenty for nothing. `target` is the shell's 1 GB+ Rust build
+# tree; `gen` is tauri-build's regenerated ACL schemas; `tools` is where the
+# installer bootstraps pnpm; `.scratch` is this machine's cargo/pnpm scratch.
+skipdir node_modules
+skipdir target
+skipdir gen
+skipdir tools
+skipdir .scratch
+skipdir .git
+skipdir dist
+
+# Nothing machine-local or generated-log-shaped.
+skippath docs/diagrams
+skipfile *.log
+
+# --- the DISTRIBUTER is not part of a distribution ---------------------------
+# The folder is the PRODUCT; these two are the factory that makes it. A recipient
+# gets START-HERE.bat and does not need the tool that assembled the folder - and
+# docs/DISTRIBUTE.md says so out loud ("re-run the distributer in the source
+# repository to change it"). They are named here rather than simply left out
+# because both files DO exist in the repository and `include scripts` would
+# otherwise sweep them in by accident; a build tool inside the thing it builds
+# invites a nested dist/ inside a distribution.
+skippath scripts/dist.ps1
+skippath scripts/dist.sh
+
+# Nothing with an editor's or the OS's fingerprints on it.
+skipfile .DS_Store
+skipfile Thumbs.db
+skipfile desktop.ini

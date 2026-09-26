@@ -30,11 +30,46 @@ param(
     [string]$Plugin = '',
     [string]$DshHome = '',
     [string]$ProfileName = '',
-    [string]$DshVersion = ''
+    [string]$DshVersion = '',
+    [switch]$NoPause,
+    [switch]$Help
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+# The console contract - UTF-8 output, the colour policy, the shared wording -
+# is defined ONCE, in scripts\console\theme.ps1, and dot-sourced by every worker.
+# $NoPause is accepted because uninstall.bat forwards it; holding the window open
+# is the entry point's job, not this script's, so nothing here reads it.
+. (Join-Path $PSScriptRoot 'console\theme.ps1')
+Initialize-VnConsole
+
+function Show-Usage {
+    Write-Host ''
+    Write-Host 'Usage: uninstall.bat [flags]'
+    Write-Host ''
+    Write-Host '  -Target <web|cli>  which install to remove the bundles from (default: web)'
+    Write-Host '  -Plugin <name>     remove only the bundles matching this substring'
+    Write-Host '  -DshHome <dir>     use this harness home instead of $DSH_HOME, else ~/.dsh'
+    Write-Host '  -ProfileName <n>   remove from this profile (default: web)'
+    Write-Host '  -DshVersion <ver>  override the pinned dsh version from .dsh-version.json'
+    Write-Host '  -NoPause           never hold this window open'
+    Write-Host '  -Help / -h / /?    print this help'
+    Write-Host ''
+    Write-Host 'Only what this pack installed is removed: a bundle or skill somebody added'
+    Write-Host 'themselves is left alone, and no session, setting or credential is touched.'
+    Write-Host 'macOS and Linux use ./uninstall.sh, which does exactly the same thing.'
+    Write-Host ''
+}
+
+# The help spellings that reach here (-Help, and --help which PowerShell folds
+# onto it). -h and /? cannot be bound by PowerShell at all, so the batch entry
+# point translates those two before calling - see uninstall.bat.
+if ($Help) {
+    Show-Usage
+    exit 0
+}
 
 # ---------------------------------------------------------------------------
 # Platform facts. Windows PowerShell 5.1 HAS no $IsWindows/$IsMacOS/$IsLinux
@@ -88,7 +123,7 @@ function Get-PnpmBinName {
     return 'pnpm'
 }
 
-function Write-Step($msg) { Write-Host "[vn-harness] $msg" -ForegroundColor Yellow }
+function Write-Step($msg) { Write-VnStep $msg -Color 'Yellow' }
 
 function Get-DshPin {
     $manifest = Join-Path $repoRoot '.dsh-version.json'

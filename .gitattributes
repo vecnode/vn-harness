@@ -4,8 +4,12 @@
 # pinned to LF no matter which OS checks the repo out.
 *.sh text eol=lf
 
-# Batch files are the Windows launchers; CRLF is what cmd.exe expects.
+# Batch files are the Windows launchers; CRLF is what cmd.exe expects. *.cmd is
+# listed for the same reason: scripts/console/adapt.cmd is the `call`ed console
+# helper every entry point shares, and a launcher whose line endings depend on
+# who checked it out is a launcher that works on one machine.
 *.bat text eol=crlf
+*.cmd text eol=crlf
 
 # The forked browser bundles are GENERATED and byte-compared by
 # scripts/sync-vendored.ps1 (-Check hashes the working copy). With git's

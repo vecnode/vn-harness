@@ -4,6 +4,14 @@ tools/
 .scratch/
 *.log
 
+# The DISTRIBUTION folder built by distribute.bat / distribute.sh. It is a COPY
+# of this repository (minus the trees listed in scripts/dist-manifest.txt) plus
+# the built shell binary, and it is a build OUTPUT like any other: it is rebuilt
+# by one command, it is regenerated per platform in CI, and nothing in it is
+# content. It must never be committed - a 22 MB tree of copies would also make
+# every plugin edit show up twice in a diff.
+dist/
+
 # The desktop shell's Rust build tree (app/). Cargo writes hundreds of
 # megabytes of objects and binaries under app/src-tauri/target/, and none of it
 # is content: `run-desktop.bat` rebuilds it, and a fresh clone builds it once.

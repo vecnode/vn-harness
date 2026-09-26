@@ -56,11 +56,47 @@ param(
     [string]$DshHome = '',
     [string]$ProfileName = '',
     [string]$DshVersion = '',
-    [switch]$Force
+    [switch]$Force,
+    [switch]$NoPause,
+    [switch]$Help
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+# The console contract - UTF-8 output, the colour policy, the shared wording -
+# is defined ONCE, in scripts\console\theme.ps1, and dot-sourced by every worker.
+# $NoPause is accepted because install.bat forwards it; holding the window open
+# is the entry point's job, not this script's, so nothing here reads it.
+. (Join-Path $PSScriptRoot 'console\theme.ps1')
+Initialize-VnConsole
+
+function Show-Usage {
+    Write-Host ''
+    Write-Host 'Usage: install.bat [flags]'
+    Write-Host ''
+    Write-Host '  -Target <web|cli>  which install to add the bundles to (default: web)'
+    Write-Host '  -Plugin <name>     install only the bundles matching this substring'
+    Write-Host '  -DshHome <dir>     use this harness home instead of $DSH_HOME, else ~/.dsh'
+    Write-Host '  -ProfileName <n>   install into this profile (default: web)'
+    Write-Host '  -DshVersion <ver>  override the pinned dsh version from .dsh-version.json'
+    Write-Host '  -Force             re-add even when the version is unchanged'
+    Write-Host '  -NoPause           never hold this window open'
+    Write-Host '  -Help / -h / /?    print this help'
+    Write-Host ''
+    Write-Host 'install.bat is the entry point and forwards every flag here. Run it from'
+    Write-Host 'the repository root either way, because .dsh-version.json is read there.'
+    Write-Host 'macOS and Linux use ./install.sh, which does exactly the same thing.'
+    Write-Host ''
+}
+
+# The help spellings that reach here (-Help, and --help which PowerShell folds
+# onto it). -h and /? cannot be bound by PowerShell at all, so the batch entry
+# point translates those two before calling - see install.bat.
+if ($Help) {
+    Show-Usage
+    exit 0
+}
 
 # ---------------------------------------------------------------------------
 # Platform facts. Windows PowerShell 5.1 HAS no $IsWindows/$IsMacOS/$IsLinux
@@ -116,7 +152,7 @@ function Get-PnpmBinName {
     return 'pnpm'
 }
 
-function Write-Step($msg) { Write-Host "[vn-harness] $msg" -ForegroundColor Cyan }
+function Write-Step($msg) { Write-VnStep $msg }
 
 function Get-DshPin {
     $manifest = Join-Path $repoRoot '.dsh-version.json'
@@ -488,11 +524,11 @@ Write-Host ''
 Write-Step 'Done.'
 Write-Host ''
 Write-Host 'Next steps:'
-Write-Host '  - START it with run.bat (Windows) or ./run.sh (macOS/Linux): that is'
+Write-Host '  - START it with run-web.bat (Windows) or ./run-web.sh (macOS/Linux): that is'
 Write-Host '    "npx @deepseek-ai/dsh web" plus the browser hand-off - it opens the'
 Write-Host '    URL the app prints, token included, in Chrome (default browser as'
 Write-Host '    the fallback) and keeps the harness in that window. On Windows,'
-Write-Host '    just double-click run.bat at the repo root.'
+Write-Host '    just double-click run-web.bat at the repo root.'
 Write-Host '  - RESTART the app to load the changes. Stop the running'
 Write-Host '    "npx @deepseek-ai/dsh web" (Ctrl+C), start it again, then'
 Write-Host '    HARD-REFRESH the browser tab (Ctrl+F5). The client bundle'

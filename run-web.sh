@@ -23,14 +23,14 @@
 #  handed to a browser after the URL has been checked to be a loopback address.
 #
 #  POSIX shell only: this script needs Node.js (>= 22) with npm/npx - never
-#  PowerShell. The Windows half is the root `run.bat`, which forwards to
+#  PowerShell. The Windows half is the root `run-web.bat`, which forwards to
 #  scripts/run-web.ps1 - the entry point there is batch so a double-click works,
 #  while the watching-and-opening half is PowerShell, because cmd reads a child's
 #  output only up to EOF. The two halves do the same work with the same flags,
 #  print the same messages and put the same tab on screen, so keep them in step.
 #
 #  Usage:
-#    ./run.sh [-Port <n>] [-DshHome <dir>] [-DshVersion <version>]
+#    ./run-web.sh [-Port <n>] [-DshHome <dir>] [-DshVersion <version>]
 #             [-NoBrowser] [-DefaultBrowser]
 # ============================================================
 set -u
@@ -43,6 +43,15 @@ esac
 script_dir=$(CDPATH= cd -- "$script_dir" && pwd)
 repo_root=$script_dir
 
+# The console contract - colour only on a terminal, NO_COLOR honoured, and the
+# same words the Windows half prints - is defined ONCE for every POSIX entry
+# point: scripts/console/theme.sh, the twin of scripts/console/theme.ps1.
+. "$repo_root/scripts/console/theme.sh"
+
+# -NoPause means never hold the window open. The Windows half reads the same
+# convention (VN_HARNESS_PAUSE=0), so the flag behaves identically on both hosts.
+case " $* " in *" -NoPause "*) VN_HARNESS_PAUSE=0 ;; esac
+
 port_arg=''
 dsh_home_arg=''
 dsh_version_arg=''
@@ -51,7 +60,7 @@ default_browser=0
 
 usage() {
   printf '%s\n' \
-    'Usage: sh run.sh [-Port <n>] [-DshHome <dir>] [-DshVersion <version>]' \
+    'Usage: sh run-web.sh [-Port <n>] [-DshHome <dir>] [-DshVersion <version>]' \
     '                 [-NoBrowser] [-DefaultBrowser]' \
     '' \
     '  -Port <n>          listen on this port instead of the default (3080)' \
@@ -59,9 +68,11 @@ usage() {
     '  -DshVersion <ver>  override the pinned dsh version from .dsh-version.json' \
     '  -NoBrowser         start the server only; open nothing' \
     '  -DefaultBrowser    skip Google Chrome and use the default browser' \
+    '  -NoPause           never hold this window open' \
+    '  -Help / -h / --help   print this help' \
     '' \
     'Run it from the repository root (it reads .dsh-version.json from there);' \
-    'the Windows half is run.bat, which does exactly the same thing.'
+    'the Windows half is run-web.bat, which does exactly the same thing.'
 }
 
 while [ $# -gt 0 ]; do
@@ -74,10 +85,11 @@ while [ $# -gt 0 ]; do
     -DshVersion=*|--dsh-version=*) dsh_version_arg=${1#*=} ;;
     -NoBrowser|--no-browser) no_browser=1 ;;
     -DefaultBrowser|--default-browser) default_browser=1 ;;
-    -h|--help) usage; exit 0 ;;
+    -NoPause|--no-pause) VN_HARNESS_PAUSE=0 ;;
+    -Help|--help|-h) usage; exit 0 ;;
     *)
       printf 'vn-harness: unknown option "%s"\n' "$1" >&2
-      printf 'Run "sh run.sh --help" for the accepted options.\n' >&2
+      printf 'Run "sh run-web.sh --help" for the accepted options.\n' >&2
       exit 2
       ;;
   esac

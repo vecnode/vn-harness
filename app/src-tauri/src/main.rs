@@ -8,15 +8,15 @@
 //! `npx @deepseek-ai/dsh@<pin> web` process.
 //!
 //! So the shell does exactly what `scripts/run-web.ps1` does on Windows and
-//! `run.sh` does elsewhere, with a webview in place of a browser hand-off:
+//! `run-web.sh` does elsewhere, with a webview in place of a browser hand-off:
 //!
 //! 1. read the pinned dsh version from `.dsh-version.json` at the repository
 //!    root (found by walking up from this executable, so debug and release
 //!    builds both work, wherever the target directory is);
 //! 2. pick the port: `-Port` when it was given, else the harness's own default
-//!    (3080 - the same origin a `run.bat` tab opens on, which is what keeps the
+//!    (3080 - the same origin a `run-web.bat` tab opens on, which is what keeps the
 //!    window's per-origin client state) when nothing holds it, else any free
-//!    loopback port, so a desktop window never collides with a `run.bat` server
+//!    loopback port, so a desktop window never collides with a `run-web.bat` server
 //!    or with the Web GUI;
 //! 3. run `npx --yes @deepseek-ai/dsh@<pin> web --no-open --port <port>`, with
 //!    its stdout and stderr streamed to this console and exactly one variable
@@ -27,7 +27,7 @@
 //!    a profile with none of this pack's bundles and none of the user's sessions,
 //!    which reads as "the desktop app opens the plain DeepSeek Harness". The
 //!    `~/.dsh` default is the harness's own decision, exactly as it is under
-//!    `run.bat`, and this shell leaves it alone;
+//!    `run-web.bat`, and this shell leaves it alone;
 //! 4. watch that output for the ready line, read its URL and navigate the
 //!    window there - refusing anything that is not loopback;
 //! 5. kill the harness when the window closes, so no orphaned `node` process
@@ -90,13 +90,13 @@ const READY_TIMEOUT: Duration = Duration::from_secs(90);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// The port the harness listens on when it is given none - the same one a
-/// `run.bat` tab opens on, and therefore the same ORIGIN.
+/// `run-web.bat` tab opens on, and therefore the same ORIGIN.
 ///
 /// The window prefers it so the little state the client keeps per origin (the
 /// conversation content width, for one) survives a run, the way it does in
 /// Chrome. It is only a preference and can never change what the window shows:
 /// the URL loaded is the one the harness prints, so a port that is already held
-/// - by `run.bat`, by the Web GUI, by anything - falls through to a free one.
+/// - by `run-web.bat`, by the Web GUI, by anything - falls through to a free one.
 /// A stale value here costs the origin and nothing else.
 const DEFAULT_PORT: u16 = 3080;
 
@@ -123,7 +123,7 @@ struct Options {
     help: bool,
 }
 
-/// The flags, mirroring `run.bat` so the two launchers stay interchangeable.
+/// The flags, mirroring `run-web.bat` so the two launchers stay interchangeable.
 /// Both spellings of each flag are accepted, and matching is case-insensitive,
 /// because `-Port` is what the batch file documents and `--port` is what a
 /// shell user types.
@@ -172,7 +172,7 @@ fn print_usage() {
     println!("  -Help              print this help");
     println!();
     println!("Shows the harness in a native window instead of a Chrome tab. Same pin,");
-    println!("same profile and same flags as run.bat; anything a browser tab can do in");
+    println!("same profile and same flags as run-web.bat; anything a browser tab can do in");
     println!("that profile, this window can do, because it is the same server.");
     println!();
 }
@@ -200,7 +200,7 @@ fn repo_root() -> Option<PathBuf> {
 /// The pinned dsh version: the flag wins, then `.dsh-version.json`.
 ///
 /// There is deliberately NO built-in fallback. A stale hard-coded pin would
-/// mean a shell that quietly runs a different harness than `run.bat` does, so
+/// mean a shell that quietly runs a different harness than `run-web.bat` does, so
 /// an unreadable manifest is an error that names the file.
 fn resolve_version(options: &Options) -> Result<String, String> {
     if let Some(version) = options.dsh_version.as_ref().filter(|value| !value.is_empty()) {
@@ -242,7 +242,7 @@ fn chosen_home(flag: Option<&str>, inherited: Option<&str>) -> Option<String> {
 ///
 /// `None` means the child is given no `DSH_HOME` at all, which is the point:
 /// the harness then applies its own default (`~/.dsh`) exactly as it does when
-/// `run.bat` starts it. This shell must never derive a harness home from the
+/// `run-web.bat` starts it. This shell must never derive a harness home from the
 /// user's home directory, because `DSH_HOME` names the harness's own folder
 /// under it - not the home itself. Handing `%USERPROFILE%` over as `DSH_HOME`
 /// is not a cosmetic mistake: the harness accepts it, finds no profile there,
@@ -377,7 +377,7 @@ fn port_is_free(port: u16) -> bool {
 /// The port to ask the harness for: `-Port`, else the harness's own default
 /// when it is free, else any free one.
 ///
-/// The middle case is what makes the window open on the same origin a `run.bat`
+/// The middle case is what makes the window open on the same origin a `run-web.bat`
 /// tab does. It cannot change WHICH app is shown - the loaded URL is the one the
 /// harness prints - so a wrong guess here is only a lost preference, never a
 /// wrong page.

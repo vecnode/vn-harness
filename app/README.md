@@ -10,7 +10,7 @@ cargo build --release      :: macOS / Linux (from app/src-tauri), then run the b
 ## What it is, and what it is not
 
 It is a **launcher**, not a desktop edition. It starts the same pinned
-`npx @deepseek-ai/dsh@<pin> web --no-open` that `run.bat` / `./run.sh` start,
+`npx @deepseek-ai/dsh@<pin> web --no-open` that `run-web.bat` / `./run-web.sh` start,
 and shows **that** URL in a WebView2 / WKWebView / WebKitGTK window:
 
 - no TypeScript is bundled or rebuilt - the web profile installs every bundle as
@@ -18,11 +18,11 @@ and shows **that** URL in a WebView2 / WKWebView / WebKitGTK window:
   the browser tab shows, served by the same process;
 - nothing under `packages/` knows this directory exists, no installer touches it,
   no row is disabled and no profile file is written;
-- the flags mirror `run.bat` (`-Port`, `-DshHome`, `-DshVersion`, `-Help`);
+- the flags mirror `run-web.bat` (`-Port`, `-DshHome`, `-DshVersion`, `-Help`);
 - it asks for the harness's **own default port** when nothing holds it  -  the same
-  origin a `run.bat` tab opens on, which is what keeps the window's per-origin
+  origin a `run-web.bat` tab opens on, which is what keeps the window's per-origin
   client state  -  and falls back to a free loopback port when something already has
-  it, so it never collides with a `run.bat` server or the Web GUI.
+  it, so it never collides with a `run-web.bat` server or the Web GUI.
 
 Requires the **Rust toolchain** ([rustup.rs](https://rustup.rs)) to build, and
 Node.js 22 or newer exactly as the browser launcher does.
@@ -33,7 +33,7 @@ Node.js 22 or newer exactly as the browser launcher does.
    `.dsh-version.json`, and reads the pinned dsh version from it - so debug and
    release builds, and any `CARGO_TARGET_DIR`, all land on the same pin. There is
    no built-in fallback version: a stale hard-coded pin would mean this window
-   quietly ran a different harness than `run.bat`.
+   quietly ran a different harness than `run-web.bat`.
 2. Chooses the port: `-Port` when it was given, else the harness's own default
    (3080) if binding `127.0.0.1` there succeeds, else `127.0.0.1:0`  -  asking the OS
    for any free port  -  released again before the harness binds it. The URL loaded
@@ -96,7 +96,7 @@ feature, and `cargo test` drives all of it.
 
 ## The harness home it opens, and why it never invents one
 
-The window shows the same profile a `run.bat` tab shows, and the rule that keeps
+The window shows the same profile a `run-web.bat` tab shows, and the rule that keeps
 it that way is deliberately narrow: the shell hands the child a `DSH_HOME` only
 when `-DshHome` gave one or `DSH_HOME` was **inherited** from the environment. With
 neither, it passes nothing at all and lets the harness apply its own default

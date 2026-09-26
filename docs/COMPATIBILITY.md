@@ -21,11 +21,11 @@ The pack targets the harness line DeepSeek ships to the raw web install
 ## Running the app
 
 The pack ships its own launcher next to the installers - one entry point per
-platform, `run.bat` (Windows, double-click it) and `run.sh` (macOS/Linux), both
+platform, `run-web.bat` (Windows, double-click it) and `run-web.sh` (macOS/Linux), both
 at the repo root - so starting the GUI is one command instead of remembering the
 command line. On Windows the entry point is a batch wrapper and the work is in
 `scripts/run-web.ps1`, because cmd cannot watch a running child's output (its
-`for /f` reads only up to EOF); `run.sh` does the whole job itself. Both run the
+`for /f` reads only up to EOF); `run-web.sh` does the whole job itself. Both run the
 same pinned invocation the docs use -
 `npx --yes @deepseek-ai/dsh@<pin> web --no-open [--port <n>]` - and then:
 
@@ -42,7 +42,7 @@ same pinned invocation the docs use -
 
 Flags: `-Port <n>`, `-DshHome <dir>`, `-DshVersion <ver>`, `-NoBrowser`
 (start the server only) and `-DefaultBrowser` (skip Chrome). On Windows the
-launcher is `run.bat [flags]` (double-click friendly, no execution-policy
+launcher is `run-web.bat [flags]` (double-click friendly, no execution-policy
 question, because the entry point is batch). The launch token is
 never written to a file: the POSIX half pipes the app's output through an
 anonymous FIFO and both halves keep the token in memory. It reaches the browser as
@@ -79,14 +79,14 @@ the details.
   tab) goes through the plugin's own authenticated route; the session's
   workspace root is resolved host-side from the live session header or session
   persistence.
-- **dsh-gittree** adds the **History** page tab (its label; the package, row and address keep the `gittree` name): the workspace’s **commit history**
+- **dsh-gittree** adds the **History** page tab (its label; the package, row and address keep the `gittree` name): the workspaceâ€™s **commit history**
   (short id, subject, author, date), with the branch and the current commit kept in
-  its file bar, read through the package’s own **read-only**
+  its file bar, read through the packageâ€™s own **read-only**
   `/api/dsh-gittree/*` routes (the tab uses their `brief=1` form, so it never builds
   a file list). Picking a commit shows its message and the files it touched, and a
   file row opens the file through the ordinary `dsh-resource://file/...` address,
   which the editor or a shipped preview then claims. It replaces nothing and
-  publishes no service, so it cannot disturb the bar’s tab-type chain.
+  publishes no service, so it cannot disturb the barâ€™s tab-type chain.
   **git must be on `PATH`** for its routes to answer.
 - **dsh-terminal** adds a **real shell in a bottom dock**: a header control at
   `order: 30` in the same `conversation.session.header.utilities` list (the last
@@ -158,7 +158,7 @@ the details.
   `order: -20` (left of Open In at `-10`) and drives the shipped
   `@deepseek-ai/dsh-client-ui-theme` service (`getTheme` / `setTheme` / the
   `theme/change` event, resolved lazily) - so the button and
-  Settings → General → Appearance are the same preference. The editor reads the
+  Settings â†’ General â†’ Appearance are the same preference. The editor reads the
   same service for its own light/dark CodeMirror palette. It also injects the
   pack's appearance overrides: the **Markdown paper**, one rule that re-declares
   ui-theme's own light declarations on the shipped preview's
@@ -213,7 +213,7 @@ the details.
     is already user-editable, atomic, schema-validated and hot-reloaded.
     Schemastery (which `settings.register` wants) is resolved at runtime through
     the same `$DSH_HOME/profiles` anchor `dsh-terminal` uses for `node-pty`, never
-    imported — a bare import resolves from the repo folder and fails there.
+    imported â€” a bare import resolves from the repo folder and fails there.
   - It **does not** remember the terminal dock being open: see the notes under
     `dsh-terminal` and in the changelog below.
   - **New package**, so the first install after this change needs a plain
@@ -237,9 +237,9 @@ the details.
 
 ## Renames, retirements and forks within the pack
 
-- **alpha.9 → alpha.10**: `dsh-focus` (row `focus`) was renamed to `dsh-files`
+- **alpha.9 â†’ alpha.10**: `dsh-focus` (row `focus`) was renamed to `dsh-files`
   (row `files`).
-- **editor alpha.1 → alpha.2**: `dsh-files` was retired outright - the harness
+- **editor alpha.1 â†’ alpha.2**: `dsh-files` was retired outright - the harness
   now ships a right Sidebar with a Files tab, and the editor became a tab type
   registering into that bar instead of a panel inside the pack's own dock.
 - **installer alpha.2**: the DSH Desktop target was removed; the pack installs
@@ -249,7 +249,7 @@ the details.
   `@deepseek-ai/dsh-client-ui-sidebar-right` / `-sidebar-files` bundles, and the
   bar's bundle layer hard-disables the two core rows so only the pack's
   copies run. Re-sync the fork with `scripts/sync-vendored.ps1` after a
-  harness-line bump (see `ARCHITECTURE.md` §4).
+  harness-line bump (see `ARCHITECTURE.md` Â§4).
 - **editor alpha.4 / modal alpha.1 / open-in-app alpha.1**: the editor starts
   blank documents and names new files through the new shared `modals` dialog;
   the Open In file-manager entries moved to the pack's own cross-platform
@@ -271,8 +271,8 @@ the details.
   it. No new packages, no core rows touched.
 - **editor alpha.7 / shell-installer alpha**: the rendered Markdown page now
   carries an **Edit** button (the editor's own document body, shadowing the
-  shipped one at a lower slot priority), so **Preview is a toggle**: Editor →
-  Preview → Edit → Editor on the same tab and file. Separately, `install.sh` /
+  shipped one at a lower slot priority), so **Preview is a toggle**: Editor â†’
+  Preview â†’ Edit â†’ Editor on the same tab and file. Separately, `install.sh` /
   `uninstall.sh` and `scripts/install-all.sh` / `uninstall-all.sh` are **real
   POSIX shell implementations** now - Node.js + npm/npx only - instead of
   wrappers around PowerShell, so macOS/Linux hosts no longer need PowerShell at
@@ -316,12 +316,12 @@ the details.
 
 - **gittree alpha.2**: the tab is **history-only** - the working-tree listing, its path
   filter, its changed-only switch and the viewer switch are gone; what remains is the
-  commit list plus the branch and the current commit in the file bar, and a commit’s
+  commit list plus the branch and the current commit in the file bar, and a commitâ€™s
   message and changed files when one is picked. The state route gained a `brief=1`
   form for exactly those bar facts, so the tab never builds a file list. It also fixes
   a real hang: alpha.1 returned an effect cleanup that ran on the very next render -
   the one its own `setState` caused - and cancelled the request the effect had just
-  started, so the panel sat on "Reading the history…" forever. Every request
+  started, so the panel sat on "Reading the historyâ€¦" forever. Every request
   now carries a `useRef` token and applies its answer only while it is the newest one.
 
 - **gittree alpha.3**: the tab is **renamed to History** in the capsule and the chip,
@@ -374,7 +374,7 @@ the details.
 - **terminal alpha.3**: collapsing or expanding the **left bar** left the dock
   standing at its old left edge. The left bar is animated - one grid rewrite,
   then a CSS transition - so the `MutationObserver` on that rewrite reports the
-  **pre-transition** track (`260px` while the track animates `260 → 171 → 62 →
+  **pre-transition** track (`260px` while the track animates `260 â†’ 171 â†’ 62 â†’
   60`, measured in the engine) and is never called again. A `ResizeObserver` on
   the two columns the dock spans - whose *size* changes on every frame of the
   transition - now follows it, with a `transitionend` snap as the backstop. No
@@ -389,7 +389,7 @@ the details.
   which beats the `display:contents` wrapper the app puts around each occupant)
   and a **24px black disc** plus the text **VN Harness** are drawn in their place
   - in the wide row and in the collapsed rail. Verified in the running app: the
-  shipped art computes to `display:none` and the disc to `24px × 24px`,
+  shipped art computes to `display:none` and the disc to `24px Ã— 24px`,
   `border-radius:50%`, `rgb(0,0,0)`. Pinned to the sidebar's hashed class names
   like the band itself, so a harness bump that renames them needs that one rule
   updated (and the tracked check fails loudly).
@@ -402,7 +402,7 @@ the details.
   served `ui-conversation` bundle was compared with the served `dsh-themes` bundle
   to confirm both declare `14px/20px/500`.
 
-- **themes alpha.8**: the branding mark is now the **app icon** —
+- **themes alpha.8**: the branding mark is now the **app icon** â€”
   `assets/vn-harness.svg` at the pack root, a black circle centred on (12,12) with
   a **1px transparent margin** inside its box. That margin is the fix for alpha.7's
   "cut" disc: it was drawn edge-to-edge inside boxes the app paints with
@@ -410,8 +410,8 @@ the details.
   circle lost a fraction of a pixel on each side. The same icon replaces the whale
   in the empty conversation's hero ("Into the Unknown", the
   `conversation.hero.brand.mark` slot) at 26px, so the new-session screen wears the
-  same mark as the sidebar. The icon is **inlined as a data URI** — no route, no
-  request, no Node half — with the asset as the source of truth and a tracked check
+  same mark as the sidebar. The icon is **inlined as a data URI** â€” no route, no
+  request, no Node half â€” with the asset as the source of truth and a tracked check
   comparing the inlined geometry against it. Verified in the running app (sidebar,
   rail and hero) and at the pixel level: at 24px and 26px the opaque box is exactly
   square with a 1px margin on all four sides, every row and column mirrors, the
@@ -508,22 +508,22 @@ the details.
   column's branding band all end on (the toolbar had been `8 + 26 + 8 = 42.5px`,
   i.e. ~4.5px low).
 
-- **run launcher (new)**: `run.bat` / `run.sh` - one file per platform at the repo
+- **run launcher (new)**: `run-web.bat` / `run-web.sh` - one file per platform at the repo
   root - start the pinned `dsh web` and open the URL it prints in Chrome, falling
   back to the default browser; see **Running the app** above. The POSIX half holds
   all the work in one POSIX sh file; on Windows the double-clickable root
-  `run.bat` is batch only (which is what makes a double-click work with no
+  `run-web.bat` is batch only (which is what makes a double-click work with no
   execution-policy question) and the work is in `scripts/run-web.ps1`, because cmd
   cannot watch a running child's output. Nothing in the profile changes and no
   bundle was added: the launcher is repo tooling, and an installed profile needs
   nothing to use it.
 
-- **ui-state alpha.1 (new package)**: the pack gained **`dsh-ui-state`** — the
+- **ui-state alpha.1 (new package)**: the pack gained **`dsh-ui-state`** â€” the
   state a reload used to forget. The interface's own state was remembered in the
   wrong place: everything that survived lived on the HOST (`$DSH_HOME/sessions`,
   `storages/workspace.json`, `settings.yaml`) while the page zoom and the dock
   height sat in `localStorage`, which is per **origin** and per browser
-  **profile** — so a Chrome tab and the desktop window's WebView never shared it,
+  **profile** â€” so a Chrome tab and the desktop window's WebView never shared it,
   and the desktop shell lost it whenever port 3080 was taken. This package makes
   that state host state: ONE settings namespace, `vn-harness`, in
   `$DSH_HOME/settings.yaml`, holding `pageZoom`, `theme`, `dockHeight`,
@@ -573,7 +573,7 @@ the details.
   what let this ship) and skips loudly on a host with no copy of it.
 - **themes alpha.17**: the page zoom and an **extension theme** become durable.
   `light` / `dark` / `system` always persisted (ui-theme owns them); **Nord** and
-  **Monokai** did not — ui-theme's durable schema accepts the built-in three
+  **Monokai** did not â€” ui-theme's durable schema accepts the built-in three
   only, so they were an in-process choice a reload threw away. They now ride the
   `vn-harness` section, with the per-origin `localStorage` copy kept UNDERNEATH as
   the fallback, so the control still remembers its level in a profile that
@@ -585,8 +585,8 @@ the details.
 - **terminal alpha.5**: the dock's **height** rides the same section, on the same
   terms (localStorage kept underneath). Its **open** state is deliberately NOT
   remembered: the panel is the window onto a PROCESS, and after a reload the
-  client holds no slots, so reopening it would either show an empty panel or —
-  once the server's five-minute PTY retention has lapsed — start a shell nobody
+  client holds no slots, so reopening it would either show an empty panel or â€”
+  once the server's five-minute PTY retention has lapsed â€” start a shell nobody
   asked for. A height is a preference; "a shell was running" is not.
   Version changed: a plain install run (or `-Force`) re-adds the bundle.
 
@@ -595,7 +595,7 @@ the details.
   window is built (a browser round trip could not answer in time) and written on
   a coalesced resize/move plus once at exit, with a monitor check that centres the
   window when the remembered point is on no screen. It is desktop-only state by
-  nature — a Chrome tab has no window geometry to share. `app/` is not a plugin
+  nature â€” a Chrome tab has no window geometry to share. `app/` is not a plugin
   and no installer touches it: `run-desktop.bat` rebuilds it on the next launch
   (close any running vn-harness window first, or the release binary is locked).
 

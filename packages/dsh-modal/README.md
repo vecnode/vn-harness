@@ -3,7 +3,7 @@
 **Modal** is the pack's shared dialog surface for the DeepSeek Harness web GUI.
 It is a **client-service plugin**: its browser half mounts one body-level
 overlay and provides the **`modals`** service on the client context, so any other
-client plugin — inside this pack or in a deployment — opens a dialog with
+client plugin â€” inside this pack or in a deployment â€” opens a dialog with
 
 ```js
 const modals = ctx.get('modals')
@@ -17,7 +17,7 @@ dialog in the app looks and behaves the same. Alpha.
 
 | Call | Answers |
 |---|---|
-| `modals.open(spec)` | a Promise: **`null`** when the dialog is cancelled, otherwise the field values — or whatever `spec.submit` returned |
+| `modals.open(spec)` | a Promise: **`null`** when the dialog is cancelled, otherwise the field values â€” or whatever `spec.submit` returned |
 | `modals.alert(specOrMessage)` | a Promise that settles when the single-button dialog is dismissed |
 | `modals.confirm(specOrMessage)` | `true` only when the confirm button was used |
 | `modals.prompt(spec)` | the typed string, or `null` when cancelled |
@@ -29,10 +29,10 @@ dialog in the app looks and behaves the same. Alpha.
 | Field | Meaning |
 |---|---|
 | `title`, `message` | the heading and the body line |
-| `fields` | `[{ name, label?, value?, placeholder?, hint?, mono?, required?, maxLength? }]` — text inputs; the first one is focused and selected |
+| `fields` | `[{ name, label?, value?, placeholder?, hint?, mono?, required?, maxLength? }]` â€” text inputs; the first one is focused and selected |
 | `validate(values)` | returns an error **string** to show inline and block the submit |
-| `submit(values, …)` | async work that runs **while the dialog stays open** |
-| `confirmLabel`, `cancelLabel`, `busyLabel` | button copy (`cancelLabel: null` renders no cancel button — an alert) |
+| `submit(values, â€¦)` | async work that runs **while the dialog stays open** |
+| `confirmLabel`, `cancelLabel`, `busyLabel` | button copy (`cancelLabel: null` renders no cancel button â€” an alert) |
 | `danger` | paints the confirm button as the error color |
 
 `submit` is the point of the whole surface: a save, a rename or a request that
@@ -55,9 +55,9 @@ so two racing saves can never replace each other's UI.
 The host creates its own container on `document.body` and renders it with
 `react-dom/client`'s `createRoot`. Both `react-dom` and `react-dom/client` are
 seeded in the shell's module table, so no slot registration, no layout
-contribution and no ordering constraint is involved — which is exactly what makes
+contribution and no ordering constraint is involved â€” which is exactly what makes
 the service callable from every plugin. The service itself is published with
-`ctx.reflect.provide('modals', …)`, the same client-service mechanism
+`ctx.reflect.provide('modals', â€¦)`, the same client-service mechanism
 `dsh-rightbar` uses for `sidebarRightTabs` / `sidebarRight`.
 
 ## Layout
@@ -82,5 +82,5 @@ added by one plain launcher run (no `-Force` needed); after that a plain run is
 enough. The web profile links
 it into this repo, so code edits only need a restart of
 `npx @deepseek-ai/dsh web` plus a hard browser refresh. Starting it is
-`run.bat` / `./run.sh` - the launcher that starts `dsh web` and opens the URL it
+`run-web.bat` / `./run-web.sh` - the launcher that starts `dsh web` and opens the URL it
 prints in Chrome.

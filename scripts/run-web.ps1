@@ -5,8 +5,8 @@
 
 .DESCRIPTION
     This is the WINDOWS half of the launcher; macOS and Linux run the root
-    `run.sh` instead (plain POSIX shell - Node.js with npm/npx and no PowerShell
-    at all). On Windows the entry point is the root `run.bat`, which is a
+    `run-web.sh` instead (plain POSIX shell - Node.js with npm/npx and no PowerShell
+    at all). On Windows the entry point is the root `run-web.bat`, which is a
     double-click wrapper that forwards its flags here - this file is the worker
     and holds all the logic, and it sits in `scripts/` beside the installer
     scripts so the repository root stays clean. Both halves do the same work with
@@ -60,9 +60,9 @@
     Print the accepted flags and exit.
 
 .EXAMPLE
-    run.bat
+    run-web.bat
 .EXAMPLE
-    run.bat -Port 3099 -DefaultBrowser
+    run-web.bat -Port 3099 -DefaultBrowser
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-web.ps1 -Help
 #>
@@ -73,6 +73,7 @@ param(
     [string]$DshVersion = '',
     [switch]$NoBrowser,
     [switch]$DefaultBrowser,
+    [switch]$NoPause,
     [switch]$Help
 )
 
@@ -80,6 +81,14 @@ $ErrorActionPreference = 'Stop'
 # This script lives in scripts/, so the repository root - and with it
 # .dsh-version.json - is its PARENT folder.
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+# The console contract - UTF-8 output, the colour policy, the shared wording -
+# is defined ONCE, in scripts\console\theme.ps1, and dot-sourced by every worker
+# so four scripts cannot answer "may I colour this?" differently. It is safe
+# where there is no console at all. $NoPause is accepted because the batch entry
+# point forwards it; the window is the entry point's to hold, not this script's.
+. (Join-Path $PSScriptRoot 'console\theme.ps1')
+Initialize-VnConsole
 
 # ---------------------------------------------------------------------------
 # Platform facts. Windows PowerShell 5.1 HAS no $IsWindows/$IsMacOS/$IsLinux,
@@ -124,23 +133,25 @@ function Get-ToolNames {
     return @($Name)
 }
 
-function Write-Step($msg) { Write-Host "[vn-harness] $msg" -ForegroundColor Cyan }
+function Write-Step($msg) { Write-VnStep $msg }
 
 function Show-Usage {
     Write-Host ''
-    Write-Host 'Usage: run.bat [flags]'
+    Write-Host 'Usage: run-web.bat [flags]'
     Write-Host ''
     Write-Host '  -Port <n>          listen on this port instead of the default (3080)'
     Write-Host '  -DshHome <dir>     override DSH_HOME (default: $env:DSH_HOME, else ~/.dsh)'
     Write-Host '  -DshVersion <ver>  override the pinned dsh version from .dsh-version.json'
     Write-Host '  -NoBrowser         start the server only; open nothing'
     Write-Host '  -DefaultBrowser    skip Google Chrome and use the default browser'
-    Write-Host '  -Help              print this help'
+    Write-Host '  -NoPause           accepted and ignored here: the entry point owns'
+    Write-Host '                     the window, so run-web.bat is what holds it open'
+    Write-Host '  -Help / -h / /?    print this help'
     Write-Host ''
-    Write-Host 'run.bat at the repository root is the entry point - double-click it, or'
+    Write-Host 'run-web.bat at the repository root is the entry point - double-click it, or'
     Write-Host 'pass any of the flags above; it forwards them to this script. Run it from'
     Write-Host 'the repository root either way, because .dsh-version.json is read there.'
-    Write-Host 'macOS and Linux use ./run.sh, which does exactly the same thing.'
+    Write-Host 'macOS and Linux use ./run-web.sh, which does exactly the same thing.'
     Write-Host ''
 }
 

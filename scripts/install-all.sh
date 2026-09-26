@@ -49,7 +49,9 @@ usage() {
     '  -DshHome <dir>       override DSH_HOME (default: $DSH_HOME, else ~/.dsh)' \
     '  -ProfileName <name>  override the profile name (default: web)' \
     '  -DshVersion <ver>    override the pinned dsh version from .dsh-version.json' \
-    '  -Target web|cli      accepted for muscle memory; both mean the web profile'
+    '  -Target web|cli      accepted for muscle memory; both mean the web profile' \
+    '  -NoPause             accepted and ignored here; install.sh owns the window' \
+    '  -Help / -h / --help  print this help'
 }
 
 while [ $# -gt 0 ]; do
@@ -65,7 +67,8 @@ while [ $# -gt 0 ]; do
     -DshVersion=*|--dsh-version=*) dsh_version_arg=${1#*=} ;;
     -Target|--target) shift; target_arg=${1:-} ;;
     -Target=*|--target=*) target_arg=${1#*=} ;;
-    -h|--help) usage; exit 0 ;;
+    -NoPause|--no-pause) ;;   # the entry point owns the window; accepted so it is never "unknown"
+    -Help|--help|-h) usage; exit 0 ;;
     *)
       printf 'vn-harness: unknown option "%s"\n' "$1" >&2
       printf 'Run "sh scripts/install-all.sh --help" for the accepted options.\n' >&2
@@ -477,7 +480,7 @@ printf '\n'
 step 'Done.'
 printf '\n'
 printf 'Next steps:\n'
-printf '  - START it with ./run.sh (or run.bat on Windows): that is\n'
+printf '  - START it with ./run-web.sh (or run-web.bat on Windows): that is\n'
 printf '    "npx @deepseek-ai/dsh web" plus the browser hand-off - it opens the\n'
 printf '    URL the app prints, token included, in Chrome (default browser as\n'
 printf '    the fallback) and keeps the harness in that terminal.\n'
