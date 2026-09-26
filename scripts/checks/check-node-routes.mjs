@@ -366,7 +366,50 @@ function loadFromHarness(name) {
   const routeHandlers = new Map()
   let upgradeRoute = null
   const termModule = await import(pathToFileURL(terminalModule).href)
-  const sessions = { get: (id) => (id === 'session-term' ? { header: { cwd: termCwd } } : undefined) }
+  // One live session double per conversation the activity route is driven with.
+  // `snapshotEvents` is what the harness's own Session exposes (the whole
+  // contiguous in-memory log), and the events are the durable shapes the client
+  // fold reads: `tool/call`, `tool/result` and a HUMAN `user/message`.
+  const actEvents = [
+    { type: 'turn/start', seq: 1, time: 1000, data: { turn: 1 } },
+    { type: 'user/message', seq: 2, time: 1001, data: { id: 'm1', role: 'user', content: [{ type: 'text', text: 'do it' }], source: { kind: 'user' } } },
+    { type: 'user/message', seq: 3, time: 1002, data: { id: 'm2', role: 'user', content: [{ type: 'text', text: 'injected context' }], source: { kind: 'plugin', plugin: 'x' } } },
+    { type: 'assistant/message', seq: 4, time: 1003, data: { turn: 1, step: 1, message: { id: 'a1', role: 'assistant', content: [], source: { kind: 'model' } }, stream: [] } },
+    { type: 'tool/call', seq: 5, time: 1004, data: { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{"command":"ls","description":"list"}' } },
+    {
+      type: 'tool/result',
+      seq: 6,
+      time: 1005,
+      data: {
+        turn: 1,
+        step: 1,
+        message: { id: 'r1', role: 'user', source: { kind: 'tool', callId: 'c1' }, content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'a\nb\n[exit code: 0]' }] }] },
+      },
+    },
+  ]
+  const bigEvents = []
+  for (let index = 0; index < 420; index += 1) {
+    bigEvents.push({
+      type: 'tool/call',
+      seq: index + 1,
+      time: 2000 + index,
+      data: { turn: 1, step: 1, callId: 'b' + String(index), name: 'bash', arguments: '{"command":"echo ' + String(index) + '","description":"d"}' },
+    })
+  }
+  const hugeEvents = [{ type: 'tool/result', seq: 1, time: 1, data: { turn: 1, step: 1, message: { id: 'r', role: 'user', source: { kind: 'tool', callId: 'huge' }, content: [{ type: 'tool-result', toolCallId: 'huge', content: [{ type: 'text', text: 'x'.repeat(600 * 1024) }] }] } } }]
+  const brokenEvents = []
+  const liveSessions = {
+    'session-term': { header: { cwd: termCwd }, snapshotEvents: () => actEvents },
+    'session-big': { header: { cwd: termCwd }, snapshotEvents: () => bigEvents },
+    'session-huge': { header: { cwd: termCwd }, snapshotEvents: () => hugeEvents },
+    'session-broken': {
+      header: { cwd: termCwd },
+      snapshotEvents: () => {
+        throw new Error('unreadable')
+      },
+    },
+  }
+  const sessions = { get: (id) => liveSessions[id] }
   termModule.apply({
     effect: (fn) => fn(),
     logger: { debug() {}, info() {}, warn() {} },
@@ -397,7 +440,7 @@ function loadFromHarness(name) {
   check(
     'terminal: routes registered',
     [...routeHandlers.keys()].sort().join(','),
-    '/api/dsh-terminal/health,/api/dsh-terminal/vendor/xterm.css,/api/dsh-terminal/vendor/xterm.js',
+    '/api/dsh-terminal/activity,/api/dsh-terminal/health,/api/dsh-terminal/vendor/xterm.css,/api/dsh-terminal/vendor/xterm.js',
   )
   check('terminal: upgrade registered', upgradeRoute !== null && upgradeRoute.path, '/api/dsh-terminal/pty')
   const health = await routeHandlers.get('/api/dsh-terminal/health')(new Request('http://x/api/dsh-terminal/health?session=session-term'))
@@ -415,6 +458,39 @@ function loadFromHarness(name) {
   const vendorCss = await routeHandlers.get('/api/dsh-terminal/vendor/xterm.css')(new Request('http://x/api/dsh-terminal/vendor/xterm.css'))
   const cssText = await vendorCss.text()
   check('terminal: serves the xterm stylesheet', vendorCss.status === 200 && cssText.includes('.xterm-viewport'), true)
+
+  // The agent view's read (alpha.7). It reads the HOST's copy of the
+  // conversation log, which is what makes the panel work the moment the app
+  // opens instead of waiting for a browser to stage the conversation.
+  const activityCall = (query) => routeHandlers.get('/api/dsh-terminal/activity')(new Request('http://x/api/dsh-terminal/activity' + query))
+  const activityRes = await activityCall('?session=session-term')
+  const activityBody = await activityRes.json()
+  check('terminal: activity answers', activityRes.status === 200 && activityBody.ok === true, true)
+  check('terminal: activity sends only what the panel draws', activityBody.entries.map((entry) => entry.event.type).join(','), 'user/message,tool/call,tool/result')
+  check('terminal: activity drops injected context', activityBody.entries.some((entry) => entry.event.seq === 3), false)
+  check('terminal: activity drops assistant streams', activityBody.entries.some((entry) => entry.event.type === 'assistant/message'), false)
+  check('terminal: activity is in log order', activityBody.entries.map((entry) => entry.event.seq).join(','), '2,5,6')
+  check('terminal: activity says whether older ones remain', activityBody.hasMore, false)
+  const missing = await activityCall('')
+  check('terminal: activity without a session is refused', missing.status, 400)
+  const notLive = await activityCall('?session=nope')
+  const notLiveBody = await notLive.json()
+  check('terminal: activity names an unopened conversation', notLive.status === 200 && notLiveBody.ok === false && notLiveBody.reason, 'NOT_LIVE')
+  const broken = await activityCall('?session=session-broken')
+  const brokenBody = await broken.json()
+  check('terminal: activity reports an unreadable log', broken.status === 200 && brokenBody.reason, 'UNREADABLE')
+  // A conversation past the count budget answers with its TAIL: the newest
+  // commands are the ones a reader is looking for.
+  const bigRes = await activityCall('?session=session-big')
+  const bigBody = await bigRes.json()
+  check('terminal: activity bounds the answer', bigBody.entries.length, 400)
+  check('terminal: activity keeps the newest commands', bigBody.entries[bigBody.entries.length - 1].event.seq, 420)
+  check('terminal: activity flags what it left behind', bigBody.hasMore, true)
+  // One enormous command is still sent: a byte budget must not leave the panel
+  // with nothing to draw at all.
+  const hugeRes = await activityCall('?session=session-huge')
+  const hugeBody = await hugeRes.json()
+  check('terminal: activity keeps an oversized newest command', hugeBody.entries.length, 1)
 
   const WebSocket = loadFromHarness('ws')
   if (healthBody.available !== true || WebSocket === null) {

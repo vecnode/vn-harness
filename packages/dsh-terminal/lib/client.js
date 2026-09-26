@@ -53,13 +53,13 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
     const h = React.createElement
-    const { useCallback, useEffect, useRef, useState, useSyncExternalStore } = React
+    const { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } = React
 
     // ---------------------------------------------------------------------
     // Constants
     // ---------------------------------------------------------------------
     /** Shown on the dock's bar so a freshly loaded bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.6'
+    const PLUGIN_VERSION = '0.1.0-alpha.8'
     /** The header list this control joins (Open In... is -10). */
     const HEADER_SLOT = 'conversation.session.header.utilities'
     /** The root-scoped overlay list the layout package renders inside the frame. */
@@ -70,9 +70,23 @@ window.__ModuleLoader__.load({
     const OVERLAY_ORDER = 50
     /** Keep in sync with lib/index.js. */
     const HEALTH_ROUTE = '/api/dsh-terminal/health'
+    const ACTIVITY_ROUTE = '/api/dsh-terminal/activity'
     const VENDOR_JS_ROUTE = '/api/dsh-terminal/vendor/xterm.js'
     const VENDOR_CSS_ROUTE = '/api/dsh-terminal/vendor/xterm.css'
     const PTY_ROUTE = '/api/dsh-terminal/pty'
+    /**
+     * How often the agent view re-reads the conversation's log.
+     *
+     * The log lives on the HOST (see `ACTIVITY_ROUTE`), which is what makes this
+     * view work the moment the app opens instead of waiting for a browser to
+     * stage the conversation: the host has the commands whether or not anyone has
+     * looked at them. The price is a poll, so it is a cheap one - a filtered tail
+     * of an in-memory array - it runs only while something is subscribed (the
+     * header control of the conversation on screen), it pauses in a hidden tab,
+     * and it speeds up only while a command is actually running.
+     */
+    const ACTIVITY_POLL_MS = 6000
+    const ACTIVITY_POLL_BUSY_MS = 2000
     /** The marker that separates control frames from the shell's own output. */
     const CONTROL = '\u0000'
     /** Terminal slots per conversation, and the geometry bounds of the dock. */
@@ -100,6 +114,37 @@ window.__ModuleLoader__.load({
      * released drag leaves the shell at exactly the box on screen.
      */
     const SIZE_WIRE_MS = 120
+    /**
+     * The dock's SECOND view: the agent's own terminal use, read out of the
+     * conversation the panel belongs to (alpha.7).
+     *
+     * It is not a PTY slot - there is no shell behind it and nothing to attach
+     * to - so it rides the SAME `dock.active` cell as the terminals under a
+     * sentinel index. `-1` never matches a real slot, which is exactly why
+     * `DockRuntime.show(-1)` hides every emulator, why no terminal chip can
+     * light up while it is on screen, and why nothing in the runtime needs a
+     * second code path.
+     */
+    const ACTIVITY_VIEW = -1
+    /** Where the activity toggle is remembered per origin (a VIEW preference). */
+    const ACTIVITY_STORAGE_KEY = 'dsh-terminal.activity'
+    /**
+     * The tools that EXECUTE something, i.e. what the log shows by default.
+     *
+     * `bash` and `pwsh` are the foreground AND persistent shell tools - the
+     * persistent ones are the same wire tool with no `description` (the shipped
+     * card's own `shellCall` reads them exactly that way). `run_code` runs a
+     * program and `terminal_send` types into a shell the harness itself owns;
+     * both are the agent using a terminal. Everything else is a one-line row
+     * under the "All tools" filter.
+     */
+    const EXEC_TOOLS = { bash: true, pwsh: true, run_code: true, terminal_send: true }
+    /** Output shown before "Show all" - a command's output is unbounded. */
+    const OUTPUT_CLAMP_LINES = 12
+    /** A group caption is one line; the full prompt is one click away. */
+    const PROMPT_CLAMP_CHARS = 160
+    /** The keys a NON-command tool row summarizes itself with, in order. */
+    const ARG_SUMMARY_KEYS = ['file_path', 'path', 'pattern', 'query', 'url', 'prompt', 'command', 'text']
 
     // ---------------------------------------------------------------------
     // The pack's own durable state (alpha.5)
@@ -216,6 +261,57 @@ body.dst-dragging{cursor:row-resize;user-select:none}
 .dst-noticeTitle{color:var(--dsw-alias-label-secondary,#666);font-size:13px}
 .dst-noticeErr{color:var(--dsw-alias-state-error-primary,#d3382c)}
 .dst-noticeCode{font-family:ui-monospace,'Cascadia Code',Consolas,monospace;font-size:11px;opacity:.85;max-width:640px;white-space:pre-wrap}
+/* ---- the agent's own terminal use (alpha.7) ---------------------------- */
+/* The toggle reads as a mode: filled while the log is the view on screen. */
+.dst-actToggle{position:relative;gap:5px}
+.dst-actToggle[data-on]{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.16));border-color:var(--dsw-alias-border-l3,rgba(127,127,127,.34))}
+.dst-pulse{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-state-warning-primary,#d29922);animation:dst-pulse 1.1s ease-in-out infinite}
+.dst-headDot{position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;box-sizing:border-box;border:1.5px solid var(--dsw-alias-bg-layer-1,#fff);background:var(--dsw-alias-state-warning-primary,#d29922)}
+.dst-headDot[data-state=running]{animation:dst-pulse 1.1s ease-in-out infinite}
+.dst-headDot[data-state=failed]{background:var(--dsw-alias-state-error-primary,#d3382c)}
+.dst-chipAct[data-state=running] .dst-dot{animation:dst-pulse 1.1s ease-in-out infinite}
+.dst-badge{flex:none;display:inline-flex;align-items:center;justify-content:center;min-width:15px;height:15px;padding:0 4px;box-sizing:border-box;border-radius:8px;font-size:10.5px;font-variant-numeric:tabular-nums;background:var(--dsw-alias-state-error-primary,#d3382c);color:#fff}
+@keyframes dst-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+/* The view fills the body exactly the way an emulator host does, so switching
+   between the two moves nothing. */
+.dst-activity{position:absolute;inset:0;display:flex;flex-direction:column;box-sizing:border-box;background:var(--dsw-alias-bg-base,#fff)}
+.dst-actBar{flex:none;display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.16));font-size:11.5px}
+.dst-mini{flex:none;height:22px;box-sizing:border-box;padding:0 8px;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#666);font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap}
+.dst-mini:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dst-mini[data-on]{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.16));border-color:var(--dsw-alias-border-l3,rgba(127,127,127,.34));color:var(--dsw-alias-label-primary,#1f1f1f)}
+.dst-actFacts{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary,#999)}
+/* Positioned so the shared .dst-notice (absolute, inset 0) covers the BODY and
+   not the whole view - an unreadable conversation must not hide its own filters. */
+.dst-actBody{position:relative;flex:auto;min-height:0;overflow:auto;font-family:ui-monospace,'Cascadia Code',Consolas,'SF Mono',Menlo,monospace;font-size:12px;line-height:1.45}
+.dst-actList{padding:6px 10px 14px}
+.dst-grp{margin:0 0 10px}
+.dst-grpHead{display:flex;align-items:baseline;gap:8px;margin:6px 0 4px;color:var(--dsw-alias-label-tertiary,#999);font-family:var(--dsw-font-family,inherit)}
+.dst-grpTime{flex:none;font-size:10.5px;font-variant-numeric:tabular-nums}
+.dst-grpTurn{flex:none;font-size:10.5px;opacity:.8}
+.dst-grpPrompt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary,#666);font-size:11.5px}
+.dst-cmd{margin:0 0 6px;padding:2px 0 2px 2px;border-left:2px solid transparent;border-radius:3px}
+.dst-cmd[data-status=running]{border-left-color:var(--dsw-alias-state-warning-primary,#d29922)}
+.dst-cmd[data-status=failed],.dst-cmd[data-status=signal],.dst-cmd[data-status=error]{border-left-color:var(--dsw-alias-state-error-primary,#d3382c)}
+.dst-cmdHead{display:flex;align-items:baseline;gap:6px;padding:1px 4px;border-radius:4px;cursor:pointer}
+.dst-cmdHead:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.1))}
+.dst-cmdHead:focus-visible{outline:1px solid var(--dsw-alias-brand-primary,#4d6bfe);outline-offset:1px}
+.dst-cmdMark{flex:none;color:var(--dsw-alias-label-tertiary,#999);font-size:10px;transition:transform .12s ease}
+.dst-cmd[data-expanded] .dst-cmdMark{transform:rotate(90deg)}
+.dst-cmdName{flex:none;color:var(--dsw-alias-label-tertiary,#999);font-size:11px}
+.dst-cmdLine{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary,#1f1f1f)}
+.dst-cmdCwd{flex:none;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary,#999);font-size:11px;direction:rtl;text-align:left}
+.dst-cmdDur{flex:none;color:var(--dsw-alias-label-tertiary,#999);font-size:10.5px;font-variant-numeric:tabular-nums}
+.dst-pill{flex:none;padding:0 5px;border-radius:8px;font-size:10.5px;line-height:15px;white-space:nowrap;background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.16));color:var(--dsw-alias-label-secondary,#666)}
+.dst-pill[data-tone=ok]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#2f9e44) 18%,transparent);color:var(--dsw-alias-state-success-primary,#2f9e44)}
+.dst-pill[data-tone=failed]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#d3382c) 18%,transparent);color:var(--dsw-alias-state-error-primary,#d3382c)}
+.dst-pill[data-tone=running]{background:color-mix(in srgb,var(--dsw-alias-state-warning-primary,#d29922) 18%,transparent);color:var(--dsw-alias-state-warning-primary,#d29922)}
+.dst-out{margin:2px 0 4px 18px;padding:0;white-space:pre-wrap;word-break:break-word;font:inherit;color:var(--dsw-alias-label-secondary,#666)}
+.dst-outCmd{margin-top:4px;color:var(--dsw-alias-label-primary,#1f1f1f)}
+.dst-cmdWait{margin:2px 0 4px 18px;color:var(--dsw-alias-label-tertiary,#999);font-size:11.5px}
+.dst-cmdActs{display:flex;align-items:center;gap:10px;margin:0 0 2px 18px;min-height:14px}
+.dst-link{padding:0;border:0;background:transparent;color:var(--dsw-alias-label-tertiary,#999);font:inherit;font-size:11px;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.dst-link:hover{color:var(--dsw-alias-brand-primary,#4d6bfe)}
+.dst-linkNote{color:var(--dsw-alias-label-tertiary,#999);font-size:11px;font-style:italic}
 `
     const CSS_TAG = 'dsh-terminal/terminal.css'
     if (typeof document !== 'undefined' && document.head && !document.querySelector('style[data-plugin-css=' + JSON.stringify(CSS_TAG) + ']')) {
@@ -243,8 +339,12 @@ body.dst-dragging{cursor:row-resize;user-select:none}
       rev: 0,
       /** sessionId -> [{ index, status, detail }] — survives closing the dock. */
       slots: new Map(),
-      /** sessionId -> the slot index on screen. */
+      /** sessionId -> the slot index on screen, or `ACTIVITY_VIEW` (alpha.7). */
       active: new Map(),
+      /** sessionId -> the last TERMINAL slot on screen: what "Run in Terminal" targets. */
+      lastSlot: new Map(),
+      /** sessionId -> whether the agent-activity view is switched on (alpha.7). */
+      activity: new Map(),
     }
     const subscribers = new Set()
 
@@ -361,6 +461,27 @@ body.dst-dragging{cursor:row-resize;user-select:none}
       return useSyncExternalStore(subscribe, () => dock.rev, () => dock.rev)
     }
 
+    /**
+     * Subscribe one component to a conversation's agent-activity feed.
+     *
+     * The feed's snapshot is a CACHED object that changes only when the command
+     * log changes (see `activitySignature`), which is what makes it safe to hand
+     * to `useSyncExternalStore` and keeps a streamed assistant token from
+     * re-rendering this panel dozens of times a second.
+     *
+     * @param sessionId - the conversation to read.
+     * @returns the current activity model (never null).
+     */
+    function useActivity(sessionId) {
+      const feed = useMemo(
+        () => (typeof sessionId === 'string' && sessionId !== '' ? activityFeed(sessionId) : null),
+        [sessionId],
+      )
+      const attach = useCallback((listener) => (feed === null ? () => {} : feed.subscribe(listener)), [feed])
+      const read = useCallback(() => (feed === null ? EMPTY_ACTIVITY : feed.getSnapshot()), [feed])
+      return useSyncExternalStore(attach, read, read)
+    }
+
     /** The slots recorded for one conversation (never null). */
     function slotsFor(sessionId) {
       if (typeof sessionId !== 'string' || sessionId === '') return []
@@ -396,6 +517,78 @@ body.dst-dragging{cursor:row-resize;user-select:none}
       dock.open = true
       slotsFor(sessionId)
       bump()
+    }
+
+    /**
+     * Is the agent-activity view switched on for this conversation?
+     *
+     * The answer is a VIEW preference, so unlike the dock's open state it is
+     * remembered - per origin, in `localStorage`, which is where the dock height
+     * lived before alpha.5 promoted it to the pack's shared section. It stays
+     * here on purpose: the toggle is a boolean an accidental reset merely
+     * re-hides, and promoting it would mean adding a field to dsh-ui-state's
+     * durable schema, which is a change to another package's data contract.
+     *
+     * @param sessionId - the conversation the dock belongs to.
+     * @returns whether the activity chip belongs in the strip.
+     */
+    function activityOn(sessionId) {
+      if (typeof sessionId !== 'string' || sessionId === '') return false
+      let value = dock.activity.get(sessionId)
+      if (value === undefined) {
+        value = readStoredActivity()
+        dock.activity.set(sessionId, value)
+      }
+      return value
+    }
+
+    /** The remembered toggle, or false. A blocked localStorage is not a failure. */
+    function readStoredActivity() {
+      try {
+        return window.localStorage ? window.localStorage.getItem(ACTIVITY_STORAGE_KEY) === '1' : false
+      } catch (err) {
+        return false
+      }
+    }
+
+    /** Remember the toggle and publish. The VIEW is the caller's business. */
+    function setActivityOn(sessionId, on) {
+      if (typeof sessionId !== 'string' || sessionId === '') return
+      if (activityOn(sessionId) === on) return
+      dock.activity.set(sessionId, on)
+      try {
+        if (window.localStorage) window.localStorage.setItem(ACTIVITY_STORAGE_KEY, on ? '1' : '0')
+      } catch (err) {
+        /* not persisting is not a failure */
+      }
+      bump()
+    }
+
+    /**
+     * Show one view (a terminal slot or `ACTIVITY_VIEW`) and remember which
+     * TERMINAL was last on screen, so "Run in Terminal" has a target even while
+     * the log is up.
+     *
+     * The runtime is deliberately NOT touched here: this is store state, and the
+     * component that owns the runtime performs the matching `show()`.
+     *
+     * @param sessionId - the conversation the dock belongs to.
+     * @param view - a slot index, or `ACTIVITY_VIEW`.
+     */
+    function selectView(sessionId, view) {
+      if (typeof sessionId !== 'string' || sessionId === '') return
+      dock.active.set(sessionId, view)
+      if (view !== ACTIVITY_VIEW) dock.lastSlot.set(sessionId, view)
+      bump()
+    }
+
+    /** The terminal "Run in Terminal" should target, given the recorded slots. */
+    function targetSlot(sessionId) {
+      const list = slotsFor(sessionId)
+      if (list.length === 0) return null
+      const last = dock.lastSlot.get(sessionId)
+      if (typeof last === 'number' && list.some((slot) => slot.index === last)) return last
+      return list[0].index
     }
 
     function closeDock() {
@@ -479,6 +672,555 @@ body.dst-dragging{cursor:row-resize;user-select:none}
         /* not persisting is not a failure */
       }
       bump()
+    }
+
+    // ---------------------------------------------------------------------
+    // The agent's own terminal use (alpha.7)
+    //
+    // The dock's PTY and the agent's commands are two different worlds: the
+    // agent runs `bash`/`pwsh` through the harness's own shell tool, in its own
+    // process, and never touches the shell in this panel. So this view is not a
+    // second terminal - it is a TRANSCRIPT of what the conversation recorded,
+    // drawn in the dock because that is where you are already looking.
+    //
+    // The events come from the HOST - this package's own read-only
+    // `ACTIVITY_ROUTE`, which answers a filtered tail of the conversation's log -
+    // and are folded HERE. The host is the only place that always has that log: a
+    // browser-side read of the client's own session window has to wait for the
+    // conversation to be staged, which is what left this panel on "Reading the
+    // conversation..." until a new message moved the session along (alpha.8).
+    // Keeping the FOLD here means one implementation of "what a command is",
+    // shared by the panel and the tracked check.
+    //
+    // Every event it reads is part of the session log's published vocabulary:
+    //
+    //   tool/call    { turn, step, callId, name, arguments }   arguments is the
+    //                RAW JSON string the model produced
+    //   tool/result  { turn, step, message, error?, meta? }    message.content[0]
+    //                is the ToolResultBlock: its `content` is the output text and
+    //                its `isError` the infrastructure-failure flag
+    //   user/message { id, role, content, source }             source.kind 'user'
+    //                is a real prompt; every other kind is injected context
+    //
+    // Two things are deliberately NOT here. The fold does not reimplement the
+    // conversation's assembly - it reads the raw events, so it cannot disagree
+    // with the transcript only because a *view* stopped rendering a node. And it
+    // does not pretend to stream: the harness has exactly two tool events and no
+    // live output channel, so a command appears the moment it is dispatched (the
+    // `tool/call` event carries the full arguments) and its output lands in one
+    // shot at settle. That is stated in the README rather than papered over.
+    //
+    // Everything below is PURE except the feed at the end, and the pure half is
+    // exported for the tracked check to drive with hand-built events.
+    // ---------------------------------------------------------------------
+    /** The model every view renders, shared by the feed and its empty states. */
+    const EMPTY_COUNTS = { shell: 0, other: 0, running: 0, failed: 0 }
+    const EMPTY_ACTIVITY = { groups: [], counts: EMPTY_COUNTS, hasMore: false, available: false, reason: null, revision: 0 }
+
+    /** One-line text: whitespace collapsed and cut at `max` characters. */
+    function clampText(value, max) {
+      if (typeof value !== 'string') return ''
+      const flat = value.replace(/\s+/g, ' ').trim()
+      if (flat.length <= max) return flat
+      return flat.slice(0, Math.max(0, max - 1)) + '\u2026'
+    }
+
+    /** The text blocks of a content list, joined - what a message or result says. */
+    function textOf(blocks) {
+      if (!Array.isArray(blocks)) return ''
+      let out = ''
+      for (const block of blocks) {
+        if (block === null || typeof block !== 'object') continue
+        if (block.type !== 'text' || typeof block.text !== 'string') continue
+        out += (out === '' ? '' : '\n') + block.text
+      }
+      return out
+    }
+
+    /**
+     * Terminal control sequences are not text a React box can draw.
+     *
+     * The harness sanitizes its OWN terminal capture on the host
+     * (`dsh-terminal-bash`'s `TerminalSanitizer`), but a shell tool's rendered
+     * result is the raw stdout/stderr of an arbitrary program, so a `tput` or a
+     * colored test runner can put escapes in it. OSC first (its payload may
+     * contain anything, brackets included), then the two-character escapes, then
+     * CSI; CRLF and a bare CR become a plain newline and BEL is dropped, because
+     * all three are things a terminal would have acted on and a text box would
+     * otherwise show.
+     */
+    function stripAnsi(text) {
+      if (typeof text !== 'string' || text === '') return ''
+      return text
+        .replace(/\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g, '')
+        .replace(/\u001B[@-Z\\-_]/g, '')
+        .replace(/[\u001B\u009B]\[[0-?]*[ -/]*[@-~]/g, '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/\u0007/g, '')
+    }
+
+    /**
+     * Split a rendered shell-tool result into its body and its exit status.
+     *
+     * The `\n[exit code: N]` / `\n[killed by signal: X]` markers are owned by
+     * `@deepseek-ai/dsh-shell/render`; the shipped terminal card MIRRORS that
+     * parse rather than importing Host code, and so does this. The consumed
+     * marker leaves the body because the status is drawn as its own pill.
+     * Requiring a leading newline and the end of the string keeps ordinary
+     * output that merely ends with marker-like text from matching.
+     *
+     * @param text - the result body.
+     * @returns `{ body, exitCode }` or `{ body, signal }`.
+     */
+    function parseExitMarker(text) {
+      const value = typeof text === 'string' ? text : ''
+      const signal = /\n\[killed by signal: ([^\]\n]+)\]$/.exec(value)
+      if (signal !== null) return { body: value.slice(0, signal.index), signal: signal[1] }
+      const exit = /\n\[exit code: (\d+)\]$/.exec(value)
+      if (exit !== null) return { body: value.slice(0, exit.index), exitCode: Number(exit[1]) }
+      return { body: value, exitCode: 0 }
+    }
+
+    /** Read a JSON object argument string, or null (a malformed call is not a crash). */
+    function parseArgs(argsRaw) {
+      if (typeof argsRaw !== 'string' || argsRaw.trim() === '') return null
+      try {
+        const value = JSON.parse(argsRaw)
+        return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null
+      } catch (err) {
+        return null
+      }
+    }
+
+    /** The one-line summary a NON-command tool row shows instead of a command. */
+    function summarizeArgs(argsRaw) {
+      const args = parseArgs(argsRaw)
+      if (args === null) return ''
+      for (const key of ARG_SUMMARY_KEYS) {
+        const value = args[key]
+        if (typeof value === 'string' && value.trim() !== '') return clampText(value, 110)
+      }
+      return ''
+    }
+
+    /**
+     * Read one tool call out of its raw arguments.
+     *
+     * PURE, and the mirror of the shipped card's own `shellCall`: `bash` and
+     * `pwsh` carry `{command, description?, timeoutMs?, workdir?,
+     * run_in_background?}` and a MISSING `description` marks the persistent
+     * shell tool (its result has no single process exit status). `run_code`
+     * carries a program, and `terminal_send` carries text typed into a shell the
+     * harness owns.
+     *
+     * @param name - the wire tool name.
+     * @param argsRaw - the raw argument JSON string.
+     * @returns the call, or null when it is not an executing tool (or malformed).
+     */
+    function parseExecCall(name, argsRaw) {
+      if (typeof name !== 'string' || EXEC_TOOLS[name] !== true) return null
+      const args = parseArgs(argsRaw)
+      if (args === null) return null
+      if (name === 'terminal_send') {
+        if (typeof args.text !== 'string' || args.text === '') return null
+        return { tool: name, family: 'terminal', command: args.text, description: '', workdir: '', background: args.run_in_background === true, persistent: false }
+      }
+      if (typeof args.command !== 'string' || args.command.trim() === '') return null
+      const description = typeof args.description === 'string' ? args.description : ''
+      return {
+        tool: name,
+        family: 'shell',
+        command: args.command,
+        description,
+        workdir: typeof args.workdir === 'string' ? args.workdir : '',
+        background: args.run_in_background === true,
+        persistent: args.description === undefined,
+      }
+    }
+
+    /** Start one entry's model from its `tool/call` event. */
+    function callEntry(event, data) {
+      const parsed = parseExecCall(data.name, data.arguments)
+      const isExec = parsed !== null
+      return {
+        key: 'c' + String(event.seq),
+        callId: String(data.callId),
+        tool: typeof data.name === 'string' ? data.name : 'tool',
+        family: isExec ? parsed.family : 'other',
+        command: isExec ? parsed.command : '',
+        description: isExec ? parsed.description : '',
+        workdir: isExec ? parsed.workdir : '',
+        background: isExec ? parsed.background : false,
+        persistent: isExec ? parsed.persistent : false,
+        summary: isExec ? '' : summarizeArgs(data.arguments),
+        turn: data.turn,
+        step: data.step,
+        startedAt: event.time,
+        endedAt: null,
+        durationMs: null,
+        status: 'running',
+        exitCode: null,
+        signal: null,
+        isError: false,
+        errorName: '',
+        errorCode: '',
+        output: '',
+      }
+    }
+
+    /**
+     * Apply one `tool/result` event to its entry.
+     *
+     * The result's own `content[0]` is the `ToolResultBlock`; its `content` is
+     * the output and its `isError` the failure flag, exactly as the shipped
+     * assembler reads them (`event.data.message.content[0]`).
+     *
+     * The exit marker is read ONLY for a foreground shell tool. A PERSISTENT
+     * shell (the same wire tool with no `description`) can report resets and
+     * partial output without any single process exit status, so claiming "exit
+     * 0" there would be inventing a fact - it settles as `ok` with no pill.
+     */
+    function settleEntry(entry, event, data) {
+      const message = data.message
+      const block = message !== null && typeof message === 'object' && Array.isArray(message.content) ? message.content[0] : null
+      const raw = block !== null && typeof block === 'object' ? textOf(block.content) : ''
+      const isError = block !== null && typeof block === 'object' && block.isError === true
+      entry.endedAt = event.time
+      entry.durationMs = typeof entry.startedAt === 'number' && event.time >= entry.startedAt ? event.time - entry.startedAt : null
+      entry.isError = isError
+      if (data.error !== null && typeof data.error === 'object') {
+        entry.errorName = typeof data.error.name === 'string' ? data.error.name : ''
+        entry.errorCode = typeof data.error.code === 'string' ? data.error.code : ''
+      }
+      if (isError) {
+        entry.status = 'error'
+        entry.output = stripAnsi(raw)
+        return entry
+      }
+      if (entry.family === 'shell' && entry.persistent !== true) {
+        const marker = parseExitMarker(stripAnsi(raw))
+        entry.output = marker.body
+        if (marker.signal !== undefined) {
+          entry.signal = marker.signal
+          entry.status = 'signal'
+          return entry
+        }
+        entry.exitCode = marker.exitCode
+        entry.status = marker.exitCode === 0 ? 'ok' : 'failed'
+        return entry
+      }
+      entry.output = stripAnsi(raw)
+      entry.status = 'ok'
+      return entry
+    }
+
+    /**
+     * Fold one contiguous session event window into the activity model.
+     *
+     * PURE, and driven directly by the tracked check.
+     *
+     * Groups follow the PROMPTS, not the turns: a human `user/message` opens the
+     * next group, so the log reads as "what you asked, then what it ran", which
+     * is the only grouping that stays honest when a turn is steered mid-flight or
+     * a synthetic context injection sits between two commands. Commands that
+     * arrive before any prompt land in a captionless group. Empty groups are
+     * dropped: a prompt with no commands is not a row in a command log.
+     *
+     * A result whose call is NOT in the window (its `tool/call` was paged out)
+     * still becomes an entry, with an honest empty command - dropping it would
+     * hide output the reader can otherwise see.
+     *
+     * @param entries - `SessionEventWindow.entries` (transients are ignored).
+     * @returns `{ groups, counts }`.
+     */
+    function buildActivityFromEvents(entries) {
+      const groups = []
+      const byCall = new Map()
+      const counts = { shell: 0, other: 0, running: 0, failed: 0 }
+      let group = null
+
+      const openGroup = (prompt, turn) => {
+        group = { key: 'g' + String(groups.length), prompt: prompt === null ? '' : prompt.text, promptTime: prompt === null ? null : prompt.time, turn: turn === undefined ? null : turn, commands: [] }
+        groups.push(group)
+        return group
+      }
+      /**
+       * The group the next command belongs to, opening a captionless one if the
+       * window starts mid-conversation. The turn is filled in from the first
+       * command when the group was opened by a prompt (a `user/message` carries
+       * no turn of its own - its position in the log is what places it).
+       */
+      const currentGroup = (turn) => {
+        if (group === null) return openGroup(null, turn)
+        if (group.turn === null && typeof turn === 'number') group.turn = turn
+        return group
+      }
+
+      for (const record of Array.isArray(entries) ? entries : []) {
+        if (record === null || typeof record !== 'object' || record.type !== 'event') continue
+        const event = record.event
+        if (event === null || typeof event !== 'object') continue
+        const data = event.data
+        if (data === null || typeof data !== 'object') continue
+        if (event.type === 'user/message') {
+          if (data.source !== null && typeof data.source === 'object' && data.source.kind === 'user') {
+            openGroup({ text: clampText(textOf(data.content), PROMPT_CLAMP_CHARS), time: event.time }, undefined)
+          }
+          continue
+        }
+        if (event.type === 'tool/call') {
+          const entry = callEntry(event, data)
+          if (data.callId !== undefined) byCall.set(String(data.callId), entry)
+          currentGroup(entry.turn).commands.push(entry)
+          continue
+        }
+        if (event.type !== 'tool/result') continue
+        const message = data.message
+        const callId = message && message.source && message.source.callId !== undefined ? String(message.source.callId) : ''
+        let entry = callId === '' ? undefined : byCall.get(callId)
+        if (entry === undefined) {
+          // The call is outside the loaded window: keep the output, name nothing.
+          entry = {
+            key: 'r' + String(event.seq),
+            callId,
+            tool: '',
+            family: 'other',
+            command: '',
+            description: '',
+            workdir: '',
+            background: false,
+            persistent: false,
+            summary: '',
+            turn: data.turn,
+            step: data.step,
+            startedAt: event.time,
+            endedAt: null,
+            durationMs: null,
+            status: 'running',
+            exitCode: null,
+            signal: null,
+            isError: false,
+            errorName: '',
+            errorCode: '',
+            output: '',
+          }
+          currentGroup(entry.turn).commands.push(entry)
+        }
+        settleEntry(entry, event, data)
+      }
+
+      for (const entry of allCommands(groups)) {
+        if (entry.family === 'shell' || entry.family === 'terminal') counts.shell += 1
+        else counts.other += 1
+        if (entry.status === 'running') counts.running += 1
+        else if (entry.status === 'failed' || entry.status === 'signal' || entry.status === 'error') counts.failed += 1
+      }
+      return { groups: groups.filter((item) => item.commands.length > 0), counts }
+    }
+
+    /** Every entry of every group, in log order. */
+    function allCommands(groups) {
+      const out = []
+      for (const group of groups) for (const entry of group.commands) out.push(entry)
+      return out
+    }
+
+    /**
+     * The cheap "did anything I DRAW actually change?" test.
+     *
+     * The session window republishes on every streamed assistant token, and
+     * re-folding a few hundred entries per token to redraw the same log is the
+     * kind of waste that shows as jank in a dock that is open all day. The log is
+     * append-only and nothing here reads an assistant event, so a signature built
+     * from the seq of every event this view consumes is exact: a new call, a new
+     * result or a new prompt changes it, and a streamed token cannot.
+     *
+     * @param entries - the window's entries.
+     * @returns a comparable string.
+     */
+    function activitySignature(entries) {
+      let out = ''
+      for (const record of Array.isArray(entries) ? entries : []) {
+        if (record === null || typeof record !== 'object' || record.type !== 'event') continue
+        const event = record.event
+        if (event === null || typeof event !== 'object') continue
+        if (event.type === 'tool/call' || event.type === 'tool/result') {
+          out += event.type + ':' + String(event.seq) + ';'
+          continue
+        }
+        if (event.type === 'user/message' && event.data && event.data.source && event.data.source.kind === 'user') {
+          out += 'user:' + String(event.seq) + ';'
+        }
+      }
+      return out
+    }
+
+    // ---------------------------------------------------------------------
+    // The feed: one conversation's activity.
+    //
+    // The commands come from the HOST's own copy of the conversation log, over
+    // this package's read-only `ACTIVITY_ROUTE`, and they are folded HERE by the
+    // same pure fold the tracked check drives. That division is the whole design:
+    //
+    //   - the host is the only place that ALWAYS has the log. A browser-side read
+    //     has to wait for that conversation to be staged first, which is exactly
+    //     what made this panel open on "Reading the conversation..." and stay
+    //     there until something else moved the session along;
+    //   - the fold stays in ONE place (the browser), so what the panel draws and
+    //     what the check asserts cannot drift about what a command is;
+    //   - the route answers a filtered tail, so the poll is small.
+    //
+    // The feed is created on the first subscriber (the header control of the
+    // conversation on screen) and lives until the plugin unloads.
+    // ---------------------------------------------------------------------
+    /** sessionId -> feed. */
+    const feeds = new Map()
+
+    /** The feed for one conversation, created on demand. */
+    function activityFeed(sessionId) {
+      let feed = feeds.get(sessionId)
+      if (feed === undefined) {
+        feed = createActivityFeed(sessionId)
+        feeds.set(sessionId, feed)
+      }
+      return feed
+    }
+
+    /** Detach every feed; called from the plugin's own effect cleanup. */
+    function disposeFeeds() {
+      for (const feed of feeds.values()) feed.dispose()
+      feeds.clear()
+    }
+
+    function createActivityFeed(sessionId) {
+      const listeners = new Set()
+      let model = EMPTY_ACTIVITY
+      let signature = null
+      let timer = null
+      let inflight = false
+      let disposed = false
+
+      const notify = () => {
+        for (const listener of [...listeners]) {
+          try {
+            listener()
+          } catch (err) {
+            /* one throwing subscriber must not break the others */
+          }
+        }
+      }
+
+      /** Publish a new model. A fresh object is the change signal React reads. */
+      const publish = (next) => {
+        if (disposed) return
+        model = next
+        notify()
+      }
+
+      /**
+       * Unavailable, with a reason - or with `null` while the first read is
+       * still in flight. The signature is cleared so the next successful read
+       * publishes even when it carries exactly what a previous one did.
+       */
+      const unavailable = (reason) => {
+        if (model.available === false && model.reason === reason) return
+        signature = null
+        publish({ groups: [], counts: EMPTY_COUNTS, hasMore: false, available: false, reason, revision: model.revision + 1 })
+      }
+
+      /** A hidden tab has nobody to draw for: the visibility handler resumes us. */
+      const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
+
+      /** One read, whenever the last one has settled. */
+      const schedule = () => {
+        if (disposed || listeners.size === 0 || hidden()) return
+        if (timer !== null) clearTimeout(timer)
+        timer = setTimeout(() => {
+          timer = null
+          void load()
+        }, model.counts.running > 0 ? ACTIVITY_POLL_BUSY_MS : ACTIVITY_POLL_MS)
+      }
+
+      /**
+       * Fold one answer and publish ONLY when what we draw actually changed.
+       *
+       * The poll runs every few seconds and the log is append-only, so the usual
+       * answer is byte-identical to the last one: `activitySignature` is what
+       * turns that into no work and no re-render at all.
+       */
+      const absorb = (body) => {
+        const entries = Array.isArray(body.entries) ? body.entries : []
+        const next = activitySignature(entries)
+        if (next === signature) return
+        signature = next
+        const folded = buildActivityFromEvents(entries)
+        publish({
+          groups: folded.groups,
+          counts: folded.counts,
+          hasMore: body.hasMore === true,
+          available: true,
+          reason: null,
+          revision: model.revision + 1,
+        })
+      }
+
+      const REACH = 'The terminal routes are not reachable, so the agent\u2019s commands cannot be read here.'
+
+      /** Read the conversation's own log from the host. */
+      async function load() {
+        if (disposed || inflight || hidden()) return
+        inflight = true
+        try {
+          const response = await fetch(ACTIVITY_ROUTE + '?session=' + encodeURIComponent(sessionId), { credentials: 'same-origin' })
+          const body = response.ok ? await response.json() : null
+          if (disposed) return
+          if (body !== null && body.ok === true) absorb(body)
+          else if (body !== null && typeof body.message === 'string' && body.message !== '') unavailable(body.message)
+          else unavailable(REACH)
+        } catch (err) {
+          if (!disposed) unavailable(REACH)
+        } finally {
+          inflight = false
+          schedule()
+        }
+      }
+
+      const onVisible = () => {
+        if (!disposed && !hidden() && listeners.size > 0) void load()
+      }
+      if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+        document.addEventListener('visibilitychange', onVisible)
+      }
+
+      return {
+        subscribe(listener) {
+          listeners.add(listener)
+          if (listeners.size === 1) void load()
+          return () => {
+            listeners.delete(listener)
+            // Nothing is watching: stop the clock rather than poll for a panel
+            // that nobody has open.
+            if (listeners.size === 0 && timer !== null) {
+              clearTimeout(timer)
+              timer = null
+            }
+          }
+        },
+        getSnapshot() {
+          return model
+        },
+        dispose() {
+          disposed = true
+          if (timer !== null) {
+            clearTimeout(timer)
+            timer = null
+          }
+          if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+            document.removeEventListener('visibilitychange', onVisible)
+          }
+          listeners.clear()
+        },
+      }
     }
 
     // ---------------------------------------------------------------------
@@ -1112,12 +1854,331 @@ body.dst-dragging{cursor:row-resize;user-select:none}
       return svg(['M8 3.4v9.2', 'M3.4 8h9.2'], size)
     }
 
+    /**
+     * The activity mark: a terminal with a prompt line already run - the panel's
+     * own glyph with a filled prompt, so the two are distinguishable at 13px.
+     */
+    function ActivityGlyph({ size = 13 }) {
+      return svg(
+        [
+          'M2.5 3.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z',
+          'M4.6 7.2 6.4 9l-1.8 1.8',
+          h('path', { key: 'p', d: 'M8.4 10.9h3.1', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round' }),
+        ],
+        size,
+      )
+    }
+
+    /**
+     * The Agent chip's tooltip: the counts the strip cannot fit.
+     *
+     * @param activity - the feed's model.
+     * @returns one sentence a reader can act on.
+     */
+    function activityFactsTitle(activity) {
+      const parts = [String(activity.counts.shell) + (activity.counts.shell === 1 ? ' command' : ' commands')]
+      if (activity.counts.running > 0) parts.push(String(activity.counts.running) + ' running')
+      if (activity.counts.failed > 0) parts.push(String(activity.counts.failed) + ' failed')
+      if (activity.counts.shell === 0) parts.push('nothing run yet')
+      return 'The agent\u2019s own terminal use in this conversation: ' + parts.join(', ')
+    }
+
+    // ---------------------------------------------------------------------
+    // The activity view: what the agent ran, drawn in the dock.
+    // ---------------------------------------------------------------------
+    /**
+     * Apply the view's filters to the model's groups.
+     *
+     * PURE, and separate from the fold on purpose: filtering is a VIEW choice,
+     * and a filter change must never re-read the conversation. `shellOnly` is
+     * the default because a command log that also lists every file read is no
+     * longer a command log; `failuresOnly` is the "what went wrong" switch.
+     *
+     * @param groups - the model's groups.
+     * @param options - `{ allTools, failuresOnly }`.
+     * @returns the groups that still have something to draw.
+     */
+    function filterActivity(groups, options) {
+      const allTools = options !== null && options !== undefined && options.allTools === true
+      const failuresOnly = options !== null && options !== undefined && options.failuresOnly === true
+      const out = []
+      for (const group of Array.isArray(groups) ? groups : []) {
+        if (group === null || typeof group !== 'object' || !Array.isArray(group.commands)) continue
+        const commands = group.commands.filter((entry) => {
+          if (entry === null || typeof entry !== 'object') return false
+          if (!allTools && entry.family === 'other') return false
+          if (failuresOnly && !(entry.status === 'failed' || entry.status === 'signal' || entry.status === 'error')) return false
+          return true
+        })
+        if (commands.length > 0) out.push({ key: group.key, prompt: group.prompt, promptTime: group.promptTime, turn: group.turn, commands })
+      }
+      return out
+    }
+
+    /** The pill one entry wears: its tone and its word. */
+    function statusInfo(entry) {
+      if (entry.status === 'running') return { tone: 'running', label: entry.background === true ? 'in background' : 'running' }
+      if (entry.status === 'error') return { tone: 'failed', label: entry.errorCode === '' ? 'error' : 'error \u00b7 ' + entry.errorCode }
+      if (entry.status === 'signal') return { tone: 'failed', label: 'killed \u00b7 ' + String(entry.signal) }
+      if (entry.status === 'failed') return { tone: 'failed', label: 'exit ' + String(entry.exitCode === null ? '?' : entry.exitCode) }
+      if (entry.exitCode !== null && entry.exitCode !== undefined) return { tone: 'ok', label: 'exit ' + String(entry.exitCode) }
+      return { tone: 'ok', label: 'done' }
+    }
+
+    /**
+     * A duration short enough for a pill: 950ms and under is milliseconds, under
+     * a minute is one decimal below ten seconds, and past that it is m/s. Pure.
+     */
+    function formatDuration(ms) {
+      if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return ''
+      if (ms < 950) return String(Math.max(1, Math.round(ms))) + 'ms'
+      if (ms < 10000) return (ms / 1000).toFixed(1) + 's'
+      if (ms < 60000) return String(Math.round(ms / 1000)) + 's'
+      const minutes = Math.floor(ms / 60000)
+      const seconds = Math.round((ms % 60000) / 1000)
+      return String(minutes) + 'm' + String(seconds).padStart(2, '0') + 's'
+    }
+
+    /**
+     * The agent's command log.
+     *
+     * Read-only by construction: it shows what the conversation recorded and
+     * offers exactly three actions per row - copy the command, copy the output,
+     * and type the command into your own shell WITHOUT pressing Enter.
+     *
+     * Following is a SCROLL POSITION, not a mode: the view follows the tail while
+     * the reader is at the bottom, stops the moment they scroll up, and the pill
+     * in the bar is the way back. Nothing here changes the layout or the geometry
+     * the terminal half owns, so opening it cannot disturb the PTYs.
+     *
+     * @param props - `sessionId`, `model`, `onRunInTerminal`, `canRunInTerminal`.
+     */
+    function ActivityView({ sessionId, model, onRunInTerminal, canRunInTerminal }) {
+      const [allTools, setAllTools] = useState(false)
+      const [failuresOnly, setFailuresOnly] = useState(false)
+      const [open, setOpen] = useState({})
+      const [copied, setCopied] = useState('')
+      const [follow, setFollow] = useState(true)
+      const bodyRef = useRef(null)
+      const groups = useMemo(() => filterActivity(model.groups, { allTools, failuresOnly }), [model, allTools, failuresOnly])
+
+      // The newest command is the point of a live log, so the box lands on it -
+      // but only while the reader is already at the bottom. A fixed auto-scroll
+      // would drag the view away from the output someone is reading.
+      useEffect(() => {
+        if (!follow) return
+        const box = bodyRef.current
+        if (box === null) return
+        box.scrollTop = box.scrollHeight
+      }, [model.revision, follow, groups.length])
+
+      const onScroll = useCallback(() => {
+        const box = bodyRef.current
+        if (box === null) return
+        const atEnd = box.scrollHeight - box.scrollTop - box.clientHeight <= 12
+        setFollow((prev) => (prev === atEnd ? prev : atEnd))
+      }, [])
+
+      const toggle = useCallback((key) => {
+        setOpen((prev) => {
+          const next = { ...prev }
+          if (next[key] === true) delete next[key]
+          else next[key] = true
+          return next
+        })
+      }, [])
+
+      const copy = useCallback((text, key) => {
+        void writeClipboard(text)
+        setCopied(key)
+        window.setTimeout(() => setCopied((prev) => (prev === key ? '' : prev)), 1200)
+      }, [])
+
+      const clock = (time) => {
+        if (typeof time !== 'number' || !Number.isFinite(time)) return ''
+        try {
+          return new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        } catch (err) {
+          return ''
+        }
+      }
+
+      const facts = []
+      facts.push(String(model.counts.shell) + (model.counts.shell === 1 ? ' command' : ' commands'))
+      if (model.counts.other > 0 && allTools) facts.push(String(model.counts.other) + ' other')
+      if (model.counts.running > 0) facts.push(String(model.counts.running) + ' running')
+      if (model.counts.failed > 0) facts.push(String(model.counts.failed) + ' failed')
+      if (model.hasMore) facts.push('older ones are outside this view')
+
+      const hint = (title, text, code) =>
+        h(
+          'div',
+          { className: 'dst-notice' },
+          h('div', { className: 'dst-noticeTitle' }, title),
+          text === '' ? null : h('div', null, text),
+          code === '' ? null : h('div', { className: 'dst-noticeCode' }, code),
+        )
+
+      const row = (entry) => {
+        const expanded = open[entry.key] === true
+        const lines = entry.output === '' ? [] : entry.output.split('\n')
+        const shown = expanded ? lines : lines.slice(0, OUTPUT_CLAMP_LINES)
+        const hidden = lines.length - shown.length
+        const info = statusInfo(entry)
+        const duration = formatDuration(entry.durationMs)
+        const multiLine = entry.command.includes('\n')
+        const canRun = canRunInTerminal && entry.command !== '' && !multiLine
+        return h(
+          'div',
+          {
+            key: entry.key,
+            className: 'dst-cmd',
+            'data-status': entry.status,
+            'data-family': entry.family,
+            'data-expanded': expanded ? '' : undefined,
+            'data-dsh-terminal-cmd': entry.callId,
+          },
+          h(
+            'div',
+            {
+              className: 'dst-cmdHead',
+              role: 'button',
+              tabIndex: 0,
+              'aria-expanded': expanded ? 'true' : 'false',
+              onClick: () => toggle(entry.key),
+              onKeyDown: (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  toggle(entry.key)
+                }
+              },
+            },
+            h('span', { className: 'dst-cmdMark' }, '\u276f'),
+            entry.tool === ''
+              ? h('span', { className: 'dst-cmdName' }, 'unknown tool')
+              : h('span', { className: 'dst-cmdName' }, entry.tool),
+            entry.family === 'other'
+              ? h('span', { className: 'dst-cmdLine', title: entry.summary }, entry.summary === '' ? '(no summary)' : entry.summary)
+              : h('span', { className: 'dst-cmdLine', title: entry.description === '' ? entry.command : entry.description }, entry.command.split('\n')[0]),
+            entry.workdir === '' ? null : h('span', { className: 'dst-cmdCwd', title: entry.workdir }, entry.workdir),
+            duration === '' ? null : h('span', { className: 'dst-cmdDur' }, duration),
+            h('span', { className: 'dst-pill', 'data-tone': info.tone }, info.label),
+          ),
+          expanded && multiLine ? h('pre', { className: 'dst-out dst-outCmd' }, entry.command) : null,
+          shown.length > 0
+            ? h('pre', { className: 'dst-out' }, shown.join('\n'))
+            : entry.status === 'running'
+              ? h('div', { className: 'dst-cmdWait' }, entry.background === true ? 'Running in the background\u2026' : 'Running\u2026')
+              : null,
+          hidden > 0 ? h('button', { type: 'button', className: 'dst-link', onClick: () => toggle(entry.key) }, 'Show all ' + String(lines.length) + ' lines') : null,
+          expanded && hidden === 0 && lines.length > OUTPUT_CLAMP_LINES
+            ? h('button', { type: 'button', className: 'dst-link', onClick: () => toggle(entry.key) }, 'Collapse')
+            : null,
+          h(
+            'div',
+            { className: 'dst-cmdActs' },
+            entry.command === ''
+              ? null
+              : h('button', { type: 'button', className: 'dst-link', onClick: () => copy(entry.command, entry.key + ':cmd') }, copied === entry.key + ':cmd' ? 'Copied' : 'Copy command'),
+            entry.output === ''
+              ? null
+              : h('button', { type: 'button', className: 'dst-link', onClick: () => copy(entry.output, entry.key + ':out') }, copied === entry.key + ':out' ? 'Copied' : 'Copy output'),
+            canRun
+              ? h('button', { type: 'button', className: 'dst-link', title: 'Type this command into your active terminal (it is not submitted)', onClick: () => onRunInTerminal(entry.command) }, 'Run in Terminal')
+              : null,
+            multiLine && canRunInTerminal && entry.command !== ''
+              ? h('span', { className: 'dst-linkNote', title: 'A multi-line command would run line by line as it is typed, so it is not offered' }, 'multi-line')
+              : null,
+          ),
+        )
+      }
+
+      return h(
+        'div',
+        { className: 'dst-activity', 'data-dsh-terminal-activity-view': '', 'data-available': model.available ? '' : undefined },
+        h(
+          'div',
+          { className: 'dst-actBar' },
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dst-mini',
+              'data-on': allTools ? '' : undefined,
+              'aria-pressed': allTools ? 'true' : 'false',
+              title: 'Show every tool call, not only the ones that run something',
+              onClick: () => setAllTools((prev) => !prev),
+            },
+            allTools ? 'All tools' : 'Commands',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dst-mini',
+              'data-on': failuresOnly ? '' : undefined,
+              'aria-pressed': failuresOnly ? 'true' : 'false',
+              title: 'Only show what failed',
+              onClick: () => setFailuresOnly((prev) => !prev),
+            },
+            'Failures',
+          ),
+          h('span', { className: 'dst-actFacts' }, facts.join(' \u00b7 ')),
+          follow ? null : h('button', { type: 'button', className: 'dst-mini', onClick: () => setFollow(true), title: 'Follow the newest command' }, 'Follow \u2193'),
+        ),
+        h(
+          'div',
+          { className: 'dst-actBody', ref: bodyRef, onScroll },
+          !model.available && model.reason !== null
+            ? hint('Agent activity is not readable here', model.reason, 'dsh-terminal ' + PLUGIN_VERSION)
+            : !model.available
+              ? hint('Reading the conversation\u2026', 'The commands appear as soon as this conversation\u2019s log answers.', '')
+              : groups.length === 0
+                ? hint(
+                    'No commands yet',
+                    failuresOnly || !allTools
+                      ? 'Nothing here matches the filter.'
+                      : 'When the agent runs something in this conversation, it appears here.',
+                    '',
+                  )
+                : h(
+                    'div',
+                    { className: 'dst-actList' },
+                    groups.map((group) =>
+                      h(
+                        'div',
+                        { className: 'dst-grp', key: group.key },
+                        group.prompt === '' && group.promptTime === null
+                          ? null
+                          : h(
+                              'div',
+                              { className: 'dst-grpHead' },
+                              h('span', { className: 'dst-grpTime' }, clock(group.promptTime)),
+                              typeof group.turn === 'number' ? h('span', { className: 'dst-grpTurn' }, 'turn ' + String(group.turn)) : null,
+                              h('span', { className: 'dst-grpPrompt', title: group.prompt }, group.prompt === '' ? '(no prompt)' : group.prompt),
+                            ),
+                        group.commands.map(row),
+                      ),
+                    ),
+                  ),
+        ),
+      )
+    }
+
     // ---------------------------------------------------------------------
     // The header control: toggles the dock for its own conversation.
     // ---------------------------------------------------------------------
     function TerminalButton({ sessionId }) {
       const rev = useRevision()
       const active = dock.open && dock.sessionId === sessionId
+      // The header control is the one part of this package that is on screen
+      // while the dock is CLOSED, so it is where the agent's own terminal use
+      // has to be visible: a pulsing dot while a command runs, and a quiet red
+      // one once the last thing that settled failed. Without it, "the agent is
+      // doing something" is only discoverable by opening the panel to look.
+      const activity = useActivity(sessionId)
+      const busy = activity.counts.running > 0
+      const failed = !busy && activity.counts.failed > 0
       // The conversation this button belongs to is the one on screen, so this is
       // where "switching conversation closes the dock" is enforced.
       useEffect(() => {
@@ -1139,10 +2200,12 @@ body.dst-dragging{cursor:row-resize;user-select:none}
             'aria-label': 'Terminal',
             'aria-pressed': active ? 'true' : 'false',
             'data-dsh-terminal-toggle': '',
-            style: { width: '28px', height: '28px', borderRadius: '28px' },
+            'data-agent-state': busy ? 'running' : failed ? 'failed' : undefined,
+            style: { width: '28px', height: '28px', borderRadius: '28px', position: 'relative' },
             onClick,
           },
           h('span', { className: 'dst-glyph' }, h(TerminalGlyph, { size: 15 })),
+          busy || failed ? h('span', { className: 'dst-headDot', 'data-state': busy ? 'running' : 'failed' }) : null,
         ),
       )
     }
@@ -1172,6 +2235,15 @@ body.dst-dragging{cursor:row-resize;user-select:none}
       // is the only honest way to see (and to check) which palette is in force.
       const [mode, setMode] = useState(appearance())
       const slots = open || sessionId === null ? slotsFor(sessionId) : []
+      // The agent's own terminal use, live. Subscribed even while the dock is
+      // closed: the chip's badge and the header control's dot are the whole
+      // point of "follow it without opening the panel", and the feed publishes
+      // at most once per new event this view actually draws.
+      const activity = useActivity(sessionId)
+      const showActivity = activityOn(sessionId)
+      const activityBusy = activity.counts.running > 0
+      const activityFailed = !activityBusy && activity.counts.failed > 0
+      const activityTone = activityBusy ? 'running' : activityFailed ? 'failed' : 'idle'
 
       // Geometry, part one: PLACE the dock and take its room from the middle and
       // right columns ONLY - never from the frame, whose single grid row is
@@ -1419,8 +2491,8 @@ body.dst-dragging{cursor:row-resize;user-select:none}
         let index = 0
         while (used.has(index)) index += 1
         list.push({ index, status: 'connecting', detail: '' })
-        dock.active.set(sessionId, index)
-        bump()
+        // "+" is a request for a SHELL, so it also leaves the activity view.
+        selectView(sessionId, index)
       }, [sessionId])
 
       const killTerminal = useCallback(
@@ -1430,13 +2502,19 @@ body.dst-dragging{cursor:row-resize;user-select:none}
           if (at !== -1) list.splice(at, 1)
           const runtime = runtimeRef.current
           if (runtime !== null) runtime.kill(index)
-          // The list may legitimately become empty: killing the last chip ends
-          // every shell and leaves the "+" as the way back in.
-          const nextActive = list.length === 0 ? 0 : list[Math.min(at <= 0 ? 0 : at, list.length - 1)].index
-          dock.active.set(sessionId, nextActive)
-          bump()
-          const live = runtimeRef.current
-          if (live !== null) live.show(nextActive)
+          // Killing a chip must not move a reader who is looking at the activity
+          // log: the log is not a slot, so the next view is only computed when a
+          // TERMINAL was the thing on screen.
+          if (dock.active.get(sessionId) !== ACTIVITY_VIEW) {
+            // The list may legitimately become empty: killing the last chip ends
+            // every shell and leaves the "+" as the way back in.
+            const nextActive = list.length === 0 ? 0 : list[Math.min(at <= 0 ? 0 : at, list.length - 1)].index
+            selectView(sessionId, nextActive)
+            const live = runtimeRef.current
+            if (live !== null) live.show(nextActive)
+          } else {
+            bump()
+          }
         },
         [sessionId],
       )
@@ -1449,15 +2527,57 @@ body.dst-dragging{cursor:row-resize;user-select:none}
       // re-rendered, so `data-active` stayed on the chip the reader had just left
       // - the terminal being shown changed, the highlight did not (reported
       // against alpha.3). One revision bump is what makes the two agree, and it
-      // is harmless on the path where no runtime exists yet.
+      // is harmless on the path where no runtime exists yet. `ACTIVITY_VIEW` is a
+      // legal argument for the same reason it is a legal cell: the runtime's
+      // `show()` matches no entry and hides every emulator.
       const selectSlot = useCallback(
         (index) => {
-          dock.active.set(sessionId, index)
+          selectView(sessionId, index)
           const runtime = runtimeRef.current
           if (runtime !== null) runtime.show(index)
-          bump()
         },
         [sessionId],
+      )
+
+      /**
+       * Switch the agent log on or off; switching it ON shows it.
+       *
+       * The toggle is not just a filter over the strip: it is a view, so turning
+       * it on has to be one gesture. Turning it off returns to the terminal that
+       * was last on screen rather than to slot 0, because a reader who was in
+       * terminal 3 is going back to terminal 3.
+       */
+      const toggleActivity = useCallback(() => {
+        const on = !activityOn(sessionId)
+        setActivityOn(sessionId, on)
+        selectSlot(on ? ACTIVITY_VIEW : targetSlot(sessionId) ?? 0)
+      }, [sessionId, selectSlot])
+
+      /** Type one recorded command into the active terminal, WITHOUT submitting it. */
+      const runInTerminal = useCallback(
+        (command) => {
+          const runtime = runtimeRef.current
+          const target = targetSlot(sessionId)
+          if (runtime === null || target === null) return
+          const entry = runtime.entries.get(target)
+          if (entry === undefined) return
+          selectSlot(target)
+          const text = String(command)
+          try {
+            if (entry.ws !== null && entry.ws.readyState === 1) entry.ws.send(text)
+            else if (typeof entry.term.paste === 'function') entry.term.paste(text)
+          } catch (err) {
+            /* a dead socket is reported on the chip, not here */
+          }
+          window.requestAnimationFrame(() => {
+            try {
+              entry.term.focus()
+            } catch (err) {
+              /* focus is best-effort */
+            }
+          })
+        },
+        [sessionId, selectSlot],
       )
 
       /** Re-read the strip's overflow. State is left untouched when unchanged. */
@@ -1544,9 +2664,14 @@ body.dst-dragging{cursor:row-resize;user-select:none}
         syncChips()
       }, [active, open, slots.length, syncChips])
 
-      const activeSlot = slots.find((slot) => slot.index === active) || slots[0] || null
+      // The activity view is not a slot, so it is not a candidate for the bar's
+      // own facts line: while the log is up the bar shows no terminal's cwd
+      // rather than the cwd of a terminal nobody is looking at.
+      const activeSlot = active === ACTIVITY_VIEW ? null : slots.find((slot) => slot.index === active) || slots[0] || null
       const facts = activeSlot && activeSlot.detail ? activeSlot.detail : ''
+      const showActivityView = showActivity && active === ACTIVITY_VIEW
       const notice = health !== null && health.available !== true ? health : engineError === null ? null : { reason: engineError }
+      const canRunInTerminal = slots.length > 0
 
       return h(
         'div',
@@ -1556,6 +2681,7 @@ body.dst-dragging{cursor:row-resize;user-select:none}
           'data-dsh-terminal-dock': '',
           'data-open': open ? '' : undefined,
           'data-appearance': mode,
+          'data-view': showActivityView ? 'activity' : 'terminals',
           role: 'region',
           'aria-label': 'Terminal',
         },
@@ -1564,9 +2690,51 @@ body.dst-dragging{cursor:row-resize;user-select:none}
           'div',
           { className: 'dst-bar' },
           h('span', { className: 'dst-brand' }, h('span', { className: 'dst-glyph' }, h(TerminalGlyph, { size: 14 })), 'Terminal'),
+          // The switch for the agent's own terminal use. It is a BUTTON, not a
+          // chip state: turning it on is what puts the Agent chip in the strip,
+          // and turning it off takes the chip away and hands the panel back to
+          // the terminal that was last on screen.
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dst-btn dst-actToggle',
+              'data-dsh-terminal-activity': '',
+              'data-on': showActivity ? '' : undefined,
+              'data-state': activityTone,
+              'aria-pressed': showActivity ? 'true' : 'false',
+              title: showActivity ? 'Hide the agent\u2019s commands' : 'Show the commands the agent ran in this conversation',
+              onClick: toggleActivity,
+            },
+            h('span', { className: 'dst-glyph' }, h(ActivityGlyph, { size: 13 })),
+            'Agent',
+            activityBusy ? h('span', { className: 'dst-pulse', 'data-state': 'running' }) : null,
+          ),
           h(
             'div',
             { className: 'dst-chips', ref: chipsRef },
+            showActivity
+              ? h(
+                  'div',
+                  {
+                    key: 'activity',
+                    ref: (el) => {
+                      if (el === null) chipRefs.current.delete(ACTIVITY_VIEW)
+                      else chipRefs.current.set(ACTIVITY_VIEW, el)
+                    },
+                    className: 'dst-chip dst-chipAct',
+                    'data-active': active === ACTIVITY_VIEW ? '' : undefined,
+                    'data-state': activityTone,
+                    title: activityFactsTitle(activity),
+                    onClick: () => selectSlot(ACTIVITY_VIEW),
+                  },
+                  h('span', { className: 'dst-dot', 'data-state': activityBusy ? 'connecting' : activityFailed ? 'error' : 'live' }),
+                  h('span', { className: 'dst-chipName' }, 'Agent'),
+                  activity.counts.failed > 0
+                    ? h('span', { className: 'dst-badge', 'data-tone': 'failed', title: String(activity.counts.failed) + ' failed' }, String(activity.counts.failed))
+                    : null,
+                )
+              : null,
             slots.map((slot) =>
               h(
                 'div',
@@ -1660,6 +2828,9 @@ body.dst-dragging{cursor:row-resize;user-select:none}
         h(
           'div',
           { className: 'dst-body' },
+          // Every emulator stays MOUNTED (its shell is a process: hiding it must
+          // not detach it) and `hidden` already follows the view, because the
+          // activity view is `-1` and no slot has that index.
           slots.map((slot) =>
             h('div', {
               key: slot.index,
@@ -1672,22 +2843,24 @@ body.dst-dragging{cursor:row-resize;user-select:none}
               },
             }),
           ),
-          notice !== null
-            ? h(
-                'div',
-                { className: 'dst-notice' },
-                h('div', { className: 'dst-noticeTitle' }, notice.available === false ? 'No terminal on this host' : 'The terminal engine did not load'),
-                h('div', { className: 'dst-noticeErr' }, String(notice.reason || 'unknown reason')),
-                h('div', { className: 'dst-noticeCode' }, 'dsh-terminal ' + PLUGIN_VERSION + ' · ' + String(health && health.platform ? health.platform : 'web')),
-              )
-            : slots.length === 0
+          showActivityView
+            ? h(ActivityView, { sessionId, model: activity, onRunInTerminal: runInTerminal, canRunInTerminal })
+            : notice !== null
               ? h(
                   'div',
                   { className: 'dst-notice' },
-                  h('div', { className: 'dst-noticeTitle' }, 'No terminals'),
-                  h('div', null, 'Use + in the bar above to open a shell in this conversation\u2019s folder.'),
+                  h('div', { className: 'dst-noticeTitle' }, notice.available === false ? 'No terminal on this host' : 'The terminal engine did not load'),
+                  h('div', { className: 'dst-noticeErr' }, String(notice.reason || 'unknown reason')),
+                  h('div', { className: 'dst-noticeCode' }, 'dsh-terminal ' + PLUGIN_VERSION + ' · ' + String(health && health.platform ? health.platform : 'web')),
                 )
-              : null,
+              : slots.length === 0
+                ? h(
+                    'div',
+                    { className: 'dst-notice' },
+                    h('div', { className: 'dst-noticeTitle' }, 'No terminals'),
+                    h('div', null, 'Use + in the bar above to open a shell in this conversation\u2019s folder.', h('br'), 'Or switch on Agent to see the commands the agent ran here.'),
+                  )
+                : null,
         ),
       )
     }
@@ -1757,6 +2930,10 @@ body.dst-dragging{cursor:row-resize;user-select:none}
             ),
           'dsh-terminal: dock',
         )
+        // A feed polls while something is subscribed (a timer, a fetch and a
+        // visibilitychange listener); unloading this bundle has to stop all of
+        // that explicitly.
+        ctx.effect(() => () => disposeFeeds(), 'dsh-terminal: activity feeds')
         ctx.logger?.debug?.('[dsh-terminal] dock control registered (' + PLUGIN_VERSION + ', order ' + String(HEADER_ORDER) + ')')
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -1772,7 +2949,28 @@ body.dst-dragging{cursor:row-resize;user-select:none}
     // render can exercise. The second one is the whole of the alpha.5 drag bug -
     // four numbers and two flags - so it is pinned behaviourally rather than by
     // the source shape that let it ship.
-    exports.__internals = { revealDelta, adoptDecision }
+    //
+    // alpha.7 adds the activity half for the same reason: every claim this
+    // feature makes about the agent's commands - which tools count as commands,
+    // what a missing `description` means, where the exit status comes from, what
+    // a result's output is, how prompts group them, and when the log has actually
+    // changed - is arithmetic over an event log, and a static render would see
+    // none of it.
+    exports.__internals = {
+      revealDelta,
+      adoptDecision,
+      parseExecCall,
+      parseExitMarker,
+      stripAnsi,
+      buildActivityFromEvents,
+      activitySignature,
+      filterActivity,
+      formatDuration,
+      // The view itself, so the tracked check can RENDER a hand-built log: the
+      // switch is off by default, so a static render of the dock can never reach
+      // a row, and "the panel draws a command" would otherwise be unchecked.
+      ActivityView,
+    }
     return module.exports
   },
 })

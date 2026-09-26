@@ -1,10 +1,12 @@
 # dsh-terminal bundle layer (alpha).
 #
 # One extra row owns the terminal dock: its Node half registers the
-# authenticated /api/dsh-terminal routes (the vendored xterm assets and a
-# health probe) plus ONE WebSocket upgrade route, /api/dsh-terminal/pty, which
-# attaches a browser xterm to a real PTY. The browser half contributes the
-# header button that opens the dock.
+# authenticated /api/dsh-terminal routes (the vendored xterm assets, a health
+# probe, and - alpha.7 - a READ-ONLY /activity route serving the tail of a
+# conversation's command-relevant session events) plus ONE WebSocket upgrade
+# route, /api/dsh-terminal/pty, which attaches a browser xterm to a real PTY.
+# The browser half contributes the header button that opens the dock and the
+# Agent view that folds those events.
 #
 # Nothing shipped is patched and no core row is disabled: this package adds
 # surface, it replaces nothing, so there is no `disabled: true` here and nothing

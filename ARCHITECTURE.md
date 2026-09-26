@@ -1222,12 +1222,82 @@ pass through the file-policy sandbox the model's tools obey. The gate is the
 connection's own authentication, and the dock exists only where `webServer` and
 `connection` do.
 
+**The agent's own terminal use (alpha.7; read from the host since alpha.8).**
+The dock's second view: a reading of the conversation, not a second shell. The
+agent's `bash`/`pwsh` run in the harness's own process through its shell tool and
+cannot be attached to the PTY in this panel, so the view is a *transcript* - it
+adds no PTY and no host state, and its one route is read-only. An `Agent` switch
+in the bar puts an `Agent` chip at the head of the existing strip and shows it;
+switching it off hands the panel back to the terminal that was last on screen.
+The view is `ACTIVITY_VIEW = -1`, an index no slot has, which is what lets it ride
+the SAME `dock.active` cell and the SAME `DockRuntime.show()` the terminals use:
+showing `-1` hides every emulator, and the emulators stay mounted behind it
+because a shell is a process that hiding must not detach. The toggle is remembered
+per origin in `localStorage` - and deliberately NOT in the pack's shared section,
+because promoting it would mean adding a field to `dsh-ui-state`'s durable schema,
+i.e. changing another package's data contract for a boolean.
+
+**Where those events come from, and why from the HOST.** The harness's client does
+expose a session's live event window (`sessions.binding(id).eventSource`), and
+alpha.7 read exactly that. It is the wrong source for a panel that must be useful
+the moment the app opens: the window opens only once the browser has taken that
+conversation onto its **stage**, so the panel sat on "Reading the conversation..."
+until something else moved the session along. The host owns the log, so this
+package serves it - `GET /api/dsh-terminal/activity?session=<id>` answers a
+filtered **tail** from the host's own `sessions` service (`get(id)` ->
+`snapshotEvents()`, the contiguous in-memory log) and the BROWSER folds it with the
+same pure fold the tracked check drives. That division is deliberate: the host is
+the only place that always has the log, and the fold stays one implementation, so
+the panel and the check cannot drift about what a command is. The route is
+read-only, filtered and bounded: only `tool/call`, `tool/result` and a HUMAN
+`user/message` are sent, at most 400 events and roughly 512 KiB from the newest
+end, `hasMore` says when older ones were left out, and the newest event is always
+included even when it alone is oversized, because one enormous command must not
+leave the panel with nothing to draw. A conversation that is not open on this host
+answers `NOT_LIVE` with a **200** - a fact about the host, not a bad request. The
+panel re-reads that route every 6 seconds, every 2 while a command is running,
+stops when nothing is subscribed, pauses in a hidden tab, and publishes nothing at
+all when the fold's signature is unchanged.
+
+The read model is **pure** and exported for the check: `parseExecCall` (the
+executing tools only - `bash`/`pwsh`, foreground *and* persistent, where a missing
+`description` marks the persistent one, plus `run_code` and `terminal_send`),
+`parseExitMarker` (the `[exit code: N]` / `[killed by signal: X]` contract
+`dsh-shell/render` owns, MIRRORED rather than imported exactly as the shipped
+terminal card does, and read only for a foreground shell - a persistent shell can
+report resets and partial output without any single exit status, so it claims
+none), `stripAnsi`, `formatDuration`, `filterActivity` (the filter is applied at
+render time, so changing it never re-reads the conversation) and
+`buildActivityFromEvents`. `activitySignature` is what makes the view affordable:
+the poll runs every few seconds and the log is append-only, so a signature over the
+seq of the events this view consumes changes only when something it DRAWS changed -
+otherwise a poll costs one idle request and no re-render.
+
+Every limit is drawn rather than smoothed over: output arrives at **settle**, not
+live (the harness has exactly two tool events and no output stream), a result
+whose `tool/call` is outside the tail is kept but names no tool and claims no exit
+status, older events outside the tail are named instead of paged, and
+`Run in Terminal` - which TYPES a command into your own shell without submitting
+it - is refused for a multi-line command, whose newlines would submit themselves as
+they were typed.
+
 **What the checks pin.** `check-node-routes.mjs` drives the real protocol against
 a real PTY (`init` -> `ready` -> a command answered -> `kill`), proves a JSON line
-is shell input rather than a control frame, and proves an unauthenticated upgrade
-is refused - skipping only the live part, loudly, on a host with no PTY.
-`check-client-bundles.mjs` pins the bundle id, both seats, the order and the
-rendered markup.
+is shell input rather than a control frame, proves an unauthenticated upgrade is
+refused - skipping only the live part, loudly, on a host with no PTY - and drives
+the activity route against a stubbed live session: only the three event types the
+panel draws are sent, injected context and assistant streams are dropped, the
+answer is in log order, a conversation that is not open answers `NOT_LIVE`, an
+unreadable log answers `UNREADABLE`, a missing session id is a 400, and a
+conversation past the budget answers with its TAIL with `hasMore` set (including
+the single oversized newest command). `check-client-bundles.mjs` pins the bundle
+id, both seats, the order and the rendered markup, plus (alpha.7) that the switch
+is a MODE, that the bundle reads the route rather than the browser's session
+window, that the poll stops when nothing is subscribed and pauses in a hidden tab -
+and then DRIVES the whole read model with hand-built session events (the
+executing-tool parse, the exit-marker contract, the fold's grouping and statuses,
+the signature) and RENDERS the view itself with a hand-built log, because the
+switch is off by default and a static render of the dock can never reach a row.
 
 ## 12. The installer
 

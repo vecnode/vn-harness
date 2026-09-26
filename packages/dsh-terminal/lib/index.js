@@ -5,11 +5,15 @@
  * dock:
  *
  *   GET  /api/dsh-terminal/health?session=<id>   is a PTY available on this host
+ *   GET  /api/dsh-terminal/activity?session=<id> the tail of this conversation's
+ *                                                command-relevant session events
+ *                                                (read-only; the agent view folds
+ *                                                them in the browser)
  *   GET  /api/dsh-terminal/vendor/xterm.js       the vendored xterm.js bundle
  *   GET  /api/dsh-terminal/vendor/xterm.css      its stylesheet
  *   WS   /api/dsh-terminal/pty?id=<conversation> the terminal itself
  *
- * The three HTTP routes go through `connection.fetch.register` like
+ * The four HTTP routes go through `connection.fetch.register` like
  * dsh-editor's and dsh-gittree's, so they inherit the connection's own
  * authentication. The WebSocket is an UPGRADE route, which the connection
  * service does not wrap: `ctx.webServer.registerUpgrade` hands us the raw
@@ -62,6 +66,7 @@ export const inject = ['connection']
 /** Keep in sync with the client's hard-coded route constants. */
 const API_ROOT = '/api/dsh-terminal'
 const HEALTH_ROUTE = API_ROOT + '/health'
+const ACTIVITY_ROUTE = API_ROOT + '/activity'
 const VENDOR_JS_ROUTE = API_ROOT + '/vendor/xterm.js'
 const VENDOR_CSS_ROUTE = API_ROOT + '/vendor/xterm.css'
 const PTY_ROUTE = API_ROOT + '/pty'
@@ -73,6 +78,17 @@ const CONTROL = '\u0000'
 const HIGH_WATER_BYTES = 4 * 1024 * 1024
 /** Dead sockets are dropped after this long without a pong. */
 const HEARTBEAT_MS = 30 * 1000
+/**
+ * The session events the agent-activity view consumes: the two tool events and
+ * a HUMAN message (the prompt a group is captioned with). Everything else in the
+ * log - assistant messages with their embedded streams above all - is neither
+ * sent nor needed, which is what keeps this route cheap enough to poll.
+ */
+const ACTIVITY_TYPES = { 'tool/call': true, 'tool/result': true, 'user/message': true }
+/** Most events one answer carries (a long conversation is read from its tail). */
+const ACTIVITY_LIMIT = 400
+/** Rough ceiling on the JSON one answer carries; older events are dropped. */
+const ACTIVITY_BYTES = 512 * 1024
 
 /** Respond with a JSON body and a status code. */
 function json(status, body) {
@@ -182,6 +198,130 @@ function handleHealth(state) {
     capacity: state.host === null ? 0 : state.maxSessions,
     platform: process.platform,
   })
+}
+
+// ---------------------------------------------------------------------------
+// The agent's own terminal use
+//
+// The dock's second view reads the commands the AGENT ran, which are not this
+// panel's: they execute in the harness's own process through its shell tool.
+// This route answers the conversation's OWN log instead, and it belongs on the
+// HOST for one decisive reason: the log is here whether or not a particular
+// browser has opened that conversation yet. A client-side read of the live
+// session window has to be STAGED first, and a panel that opens with the app
+// would have nothing to show until something else moved the session onto the
+// stage - which is exactly the bug this route removes.
+//
+// It is READ-ONLY, bounded and filtered: only the two tool events and a human
+// prompt are sent, from the TAIL of the log, at most ACTIVITY_LIMIT events and
+// roughly ACTIVITY_BYTES. Nothing is derived here - the browser folds these
+// events with the SAME pure fold it uses everywhere else, so the panel and the
+// check cannot drift about what a command is.
+// ---------------------------------------------------------------------------
+/**
+ * The live session for one conversation, or null.
+ *
+ * The host's own `sessions` service is the authority; it holds the in-memory log
+ * this route reads. `snapshotEvents` is the whole contiguous log (inherited seed
+ * history included), which is what makes a resumed or forked conversation show
+ * the commands its context already contains.
+ *
+ * @param ctx - the plugin context (services are re-read per request).
+ * @param sessionId - the conversation to read.
+ * @returns the session, or null when it is not live on this host.
+ */
+function liveSession(ctx, sessionId) {
+  const get = typeof ctx.get === 'function' ? (serviceName) => ctx.get(serviceName) : () => undefined
+  try {
+    const sessions = get('sessions')
+    if (sessions === null || sessions === undefined || typeof sessions.get !== 'function') return null
+    const session = sessions.get(sessionId)
+    if (session === null || session === undefined) return null
+    return typeof session.snapshotEvents === 'function' ? session : null
+  } catch (err) {
+    return null
+  }
+}
+
+/** One event's rough JSON weight, so the byte budget is a real bound. */
+function eventWeight(event) {
+  try {
+    return JSON.stringify(event).length + 1
+  } catch (err) {
+    return 1024
+  }
+}
+
+/**
+ * The tail of one conversation's log, filtered to what the panel draws.
+ *
+ * Walked BACKWARDS from the newest event and reversed at the end, so a
+ * conversation longer than the budget answers with its most recent commands -
+ * the ones a reader is looking for - plus `hasMore`, which the panel states
+ * instead of silently truncating.
+ *
+ * @param session - the live session.
+ * @returns `{ entries, hasMore }` in the wire shape the client folds.
+ */
+function activityEntries(session) {
+  const all = session.snapshotEvents()
+  const entries = []
+  let hasMore = false
+  let bytes = 0
+  for (let index = all.length - 1; index >= 0; index -= 1) {
+    const event = all[index]
+    if (event === null || typeof event !== 'object' || ACTIVITY_TYPES[event.type] !== true) continue
+    // Injected context is not a prompt: the panel groups commands under what a
+    // person asked for, and every other `user/message` is producer text.
+    if (event.type === 'user/message') {
+      const source = event.data === null || typeof event.data !== 'object' ? null : event.data.source
+      if (source === null || typeof source !== 'object' || source.kind !== 'user') continue
+    }
+    // The NEWEST event is always included, even alone and even oversized: a
+    // single enormous command must not leave the panel with nothing to draw.
+    // Past that first one, the count and the byte budget are what bound the
+    // answer, and `hasMore` is what says so instead of truncating silently.
+    const weight = eventWeight(event)
+    if (entries.length > 0 && (entries.length >= ACTIVITY_LIMIT || bytes + weight > ACTIVITY_BYTES)) {
+      hasMore = true
+      break
+    }
+    bytes += weight
+    entries.push({ type: 'event', event })
+  }
+  entries.reverse()
+  return { entries, hasMore }
+}
+
+/** GET /api/dsh-terminal/activity?session=<id> — the commands one conversation ran. */
+function handleActivity(request, ctx) {
+  let sessionId = ''
+  try {
+    sessionId = new URL(request.url).searchParams.get('session') || ''
+  } catch (err) {
+    sessionId = ''
+  }
+  if (sessionId === '') {
+    return json(400, { ok: false, error: { code: 'BAD_REQUEST', message: 'A session id is required.' } })
+  }
+  const session = liveSession(ctx, sessionId)
+  if (session === null) {
+    // A capability refusal, not a bad request: the conversation exists, it is
+    // just not open on this host (a stored conversation reads from its log
+    // through the session UI, and this panel is bound to what is live).
+    return json(200, {
+      ok: false,
+      reason: 'NOT_LIVE',
+      message: 'This conversation is not open on this host, so the commands it ran cannot be read here.',
+    })
+  }
+  let tail = { entries: [], hasMore: false }
+  try {
+    tail = activityEntries(session)
+  } catch (err) {
+    return json(200, { ok: false, reason: 'UNREADABLE', message: 'The conversation log could not be read: ' + String((err && err.message) || err) })
+  }
+  return json(200, { ok: true, session: sessionId, entries: tail.entries, hasMore: tail.hasMore })
 }
 
 // ---------------------------------------------------------------------------
@@ -403,6 +543,14 @@ export function apply(ctx) {
         methods: ['GET'],
         requestBody: 'buffered',
         fetch: () => handleHealth(state),
+      }),
+    )
+    disposers.push(
+      connection.fetch.register({
+        path: ACTIVITY_ROUTE,
+        methods: ['GET'],
+        requestBody: 'buffered',
+        fetch: (request) => handleActivity(request, ctx),
       }),
     )
     disposers.push(

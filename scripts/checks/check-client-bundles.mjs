@@ -1447,7 +1447,13 @@ check(
 //        be native and non-passive or its `preventDefault()` is a no-op.
 check(
   'terminal chip pick publishes to the store',
-  /const selectSlot = useCallback\([\s\S]*?dock\.active\.set\(sessionId, index\)[\s\S]*?bump\(\)[\s\S]{0,80}?\[sessionId\]/.test(termSource),
+  // alpha.7 moved the write into `selectView` (the activity view is a VIEW, not
+  // a slot, so picking one has to record the view and the terminal it left) -
+  // the invariant is unchanged: the store is written AND the revision bumps, and
+  // `selectSlot` is the only path either way.
+  /function selectView\(sessionId, view\)[\s\S]*?dock\.active\.set\(sessionId, view\)[\s\S]*?bump\(\)[\s\S]{0,40}?\}/.test(
+    termSource,
+  ) && /const selectSlot = useCallback\([\s\S]*?selectView\(sessionId, index\)[\s\S]*?runtime\.show\(index\)/.test(termSource),
 )
 check('terminal bar draws through selectSlot', termSource.includes('onClick: () => selectSlot(slot.index)'))
 check(
@@ -1500,7 +1506,236 @@ check('terminal adopt: a height already in force moves nothing', adopt({ shared:
 check('terminal adopt: an unready section waits', adopt({ ready: false }), null)
 check('terminal adopt: an absent value is not a height of zero', adopt({ shared: null }), null)
 check('terminal adopt: another window still moves the dock', adopt({ shared: 350, known: 400, current: 280 }), 350)
-check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.6'))
+check('terminal dock names the version', termDockMarkup.includes('dsh-terminal 0.1.0-alpha.8'))
+
+// ------------------------------------------------- the agent's own terminal use
+// alpha.7. The dock's second view is a TRANSCRIPT of what the conversation
+// recorded, read from the session's own durable event window through the
+// client's `sessions` service. Everything it claims is arithmetic over that log,
+// so the arithmetic is driven here with hand-built events - the shapes are the
+// ones the harness's own assembler reads (`event.data.message.content[0]` for a
+// result, `event.data.source.kind === 'user'` for a prompt).
+//
+// The switch is a MODE, not a filter over the strip: it is off by default, it is
+// what puts the Agent chip in the strip, and it wears the running/failed tone.
+check(
+  'terminal dock offers the agent switch',
+  termDockMarkup.includes('data-dsh-terminal-activity') && termDockMarkup.includes('aria-pressed="false"'),
+)
+check('terminal activity chip is off by default', termDockMarkup.includes('dst-chipAct') === false)
+check(
+  'terminal activity styles are injected',
+  termCss.includes('.dst-activity{position:absolute;inset:0;') &&
+    termCss.includes('.dst-cmd{') &&
+    termCss.includes('@keyframes dst-pulse{') &&
+    termCss.includes('.dst-pulse{') &&
+    termCss.includes('.dst-badge{') &&
+    // The shared notice is absolute/inset:0, so the body it sits in must be its
+    // containing block or "no commands yet" would cover the filters too.
+    termCss.includes('.dst-actBody{position:relative;'),
+)
+check(
+  'terminal header control shows agent activity',
+  termSource.includes("h('span', { className: 'dst-headDot'") &&
+    termSource.includes("'data-agent-state'") &&
+    termCss.includes('.dst-headDot{') &&
+    termCss.includes('.dst-chipAct[data-state=running] .dst-dot{'),
+)
+// The read moved to the HOST: a browser-side session window has to be STAGED
+// first, which is exactly what left the panel on "Reading the conversation..."
+// until something else moved the session along. The client's job is now: ask
+// this package's own read-only route for a filtered tail, fold it with the pure
+// fold below, and stop asking when nobody is watching or the tab is hidden.
+check(
+  'terminal reads the conversation from its own route',
+  termSource.includes("const ACTIVITY_ROUTE = '/api/dsh-terminal/activity'") &&
+    termSource.includes("fetch(ACTIVITY_ROUTE + '?session=' + encodeURIComponent(sessionId)") &&
+    termSource.includes('buildActivityFromEvents(entries)') &&
+    termSource.includes('serviceNow(') === false,
+)
+check(
+  'terminal polls only while something watches, and not in a hidden tab',
+  termSource.includes('const hidden = () =>') &&
+    termSource.includes('if (disposed || listeners.size === 0 || hidden()) return') &&
+    termSource.includes("document.addEventListener('visibilitychange', onVisible)") &&
+    termSource.includes('if (listeners.size === 0 && timer !== null)'),
+)
+check(
+  'terminal keeps the activity view when a chip is killed',
+  termSource.includes('if (dock.active.get(sessionId) !== ACTIVITY_VIEW)'),
+)
+// "Run in Terminal" TYPES a command into the panel's shell without submitting
+// it, so it must never be offered for a multi-line command: the newlines would
+// be submitted the moment they were typed.
+check(
+  'terminal run-in-terminal types without submitting',
+  termSource.includes('const canRun = canRunInTerminal && entry.command !== \'\' && !multiLine') &&
+    termSource.includes('entry.ws.send(text)') &&
+    termSource.includes('const text = String(command)'),
+)
+
+const { parseExecCall, parseExitMarker, stripAnsi, buildActivityFromEvents, activitySignature, filterActivity, formatDuration } =
+  terminal.exports.__internals
+
+const shellCall = parseExecCall('bash', '{"command":"ls -la","description":"list files"}')
+check('activity: a shell call keeps its command', shellCall.command, 'ls -la')
+check('activity: a described shell call is not persistent', shellCall.persistent, false)
+check('activity: a missing description marks the persistent shell', parseExecCall('pwsh', '{"command":"pwd"}').persistent, true)
+const workdirCall = parseExecCall('bash', '{"command":"npm test","description":"t","workdir":"/tmp/x","run_in_background":true}')
+check('activity: a workdir and a background flag survive', workdirCall.workdir + '|' + String(workdirCall.background), '/tmp/x|true')
+check('activity: terminal_send is a command', parseExecCall('terminal_send', '{"text":"ls\\n"}').family, 'terminal')
+check('activity: a non-command tool is not a command', parseExecCall('read', '{"file_path":"a.txt"}'), null)
+check('activity: a malformed call is not a command', parseExecCall('bash', '{oops'), null)
+check('activity: an empty command is not a command', parseExecCall('bash', '{"command":"  ","description":"d"}'), null)
+check('activity: exit markers are consumed', JSON.stringify(parseExitMarker('done\n[exit code: 3]')), '{"body":"done","exitCode":3}')
+check('activity: a signal marker is not an exit code', parseExitMarker('x\n[killed by signal: SIGKILL]').signal, 'SIGKILL')
+check('activity: output without a marker is a clean exit', parseExitMarker('hello').exitCode, 0)
+check('activity: marker-like text mid-output is left alone', parseExitMarker('a [exit code: 9] b').body, 'a [exit code: 9] b')
+check('activity: ansi is stripped', stripAnsi('\u001b[31mred\u001b[0m'), 'red')
+check('activity: an OSC title is stripped', stripAnsi('\u001b]0;title\u0007ok'), 'ok')
+check('activity: a bare carriage return becomes a newline', stripAnsi('a\rb'), 'a\nb')
+check(
+  'activity: duration reads as a duration',
+  [formatDuration(900), formatDuration(1500), formatDuration(65000), formatDuration(null)].join('/'),
+  '900ms/1.5s/1m05s/',
+)
+
+/** One `{ type: 'event', event }` window entry, the shape the source publishes. */
+const ev = (seq, type, data, time) => ({ type: 'event', event: { type, seq, time: time === undefined ? 1000 + seq : time, data } })
+const promptEvent = (seq, text) => ev(seq, 'user/message', { id: 'm' + seq, role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } })
+const callEvent = (seq, callId, command, name) =>
+  ev(seq, 'tool/call', { turn: 1, step: 1, callId, name: name === undefined ? 'bash' : name, arguments: JSON.stringify({ command, description: 'run' }) })
+const resultEvent = (seq, callId, text, isError) =>
+  ev(seq, 'tool/result', {
+    turn: 1,
+    step: 1,
+    message: {
+      role: 'user',
+      source: { kind: 'tool', callId },
+      content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }], isError: isError === true }],
+    },
+  })
+
+const log = [promptEvent(1, 'do the thing'), callEvent(2, 'c1', 'npm test'), resultEvent(3, 'c1', 'FAIL\n[exit code: 1]'), callEvent(4, 'c2', 'git status --short')]
+const activityModel = buildActivityFromEvents(log)
+check('activity: one group per prompt', activityModel.groups.length, 1)
+check('activity: the prompt captions the group', activityModel.groups[0].prompt, 'do the thing')
+check('activity: both commands are in the group', activityModel.groups[0].commands.length, 2)
+check('activity: a settled failure says so', activityModel.groups[0].commands[0].status, 'failed')
+check('activity: the exit code is read off the marker', activityModel.groups[0].commands[0].exitCode, 1)
+check('activity: the marker leaves the body', activityModel.groups[0].commands[0].output, 'FAIL')
+check('activity: a call with no result is still running', activityModel.groups[0].commands[1].status, 'running')
+check('activity: counts separate commands from failures', JSON.stringify(activityModel.counts), '{"shell":2,"other":0,"running":1,"failed":1}')
+const pagedOut = buildActivityFromEvents([resultEvent(9, 'gone', 'out\n[exit code: 0]')])
+check('activity: a result whose call was paged out is kept', pagedOut.groups[0].commands.length, 1)
+// The exit marker is read ONLY for a tool we know is a foreground shell: the
+// marker vocabulary belongs to those renderers, and a result whose `tool/call`
+// is outside the loaded window names no tool at all. Rather than guess, the row
+// keeps the rendered text the model actually saw, marker included.
+check('activity: an unnamed result keeps its marker text', pagedOut.groups[0].commands[0].output, 'out\n[exit code: 0]')
+check('activity: an unnamed result claims no exit status', String(pagedOut.groups[0].commands[0].exitCode), 'null')
+// A persistent shell (the same wire tool with no `description`) settles with no
+// single process exit status, so it must claim none.
+const persistentCall = ev(5, 'tool/call', { turn: 1, step: 1, callId: 'p1', name: 'pwsh', arguments: JSON.stringify({ command: 'pwd' }) })
+const persistentModel = buildActivityFromEvents([persistentCall, resultEvent(6, 'p1', '/home/x')])
+check('activity: a persistent shell claims no exit status', String(persistentModel.groups[0].commands[0].exitCode), 'null')
+check('activity: a persistent shell settles as done', persistentModel.groups[0].commands[0].status, 'ok')
+const infraModel = buildActivityFromEvents([callEvent(7, 'e1', 'boom'), resultEvent(8, 'e1', 'spawn failed', true)])
+check('activity: an infrastructure failure is an error', infraModel.groups[0].commands[0].status, 'error')
+const steeringLog = buildActivityFromEvents([promptEvent(1, 'first'), callEvent(2, 'c1', 'a'), promptEvent(3, 'second'), callEvent(4, 'c2', 'b')])
+check('activity: a second prompt opens a second group', steeringLog.groups.length, 2)
+check('activity: the second group is captioned too', steeringLog.groups[1].prompt, 'second')
+check(
+  'activity: injected context does not open a group',
+  buildActivityFromEvents([ev(1, 'user/message', { id: 'c', role: 'user', content: [{ type: 'text', text: 'ctx' }], source: { kind: 'plugin', plugin: 'x' } }), callEvent(2, 'c1', 'a')]).groups.length,
+  1,
+)
+const mixedLog = [promptEvent(1, 'x'), callEvent(2, 'c1', 'ls'), ev(3, 'tool/call', { turn: 1, step: 1, callId: 'c9', name: 'read', arguments: '{"file_path":"a/b.ts"}' })]
+const mixedModel = buildActivityFromEvents(mixedLog)
+check('activity: a non-command row summarizes itself', mixedModel.groups[0].commands[1].summary, 'a/b.ts')
+const countOf = (groups) => groups.reduce((total, group) => total + group.commands.length, 0)
+check('activity: the default filter is commands only', countOf(filterActivity(mixedModel.groups, {})), 1)
+check('activity: the All-tools filter adds the rest', countOf(filterActivity(mixedModel.groups, { allTools: true })), 2)
+check('activity: empty groups are dropped', countOf(filterActivity(buildActivityFromEvents([promptEvent(1, 'nothing ran')]).groups, {})), 0)
+check(
+  'activity: the failures filter keeps what failed',
+  countOf(filterActivity(activityModel.groups, { failuresOnly: true })),
+  1,
+)
+// The signature is what keeps a streamed token from re-folding the log.
+const signature = activitySignature(log)
+check('activity: an unchanged log keeps its model', activitySignature(log) === signature)
+check(
+  'activity: a streamed assistant token is not a change',
+  activitySignature(log.concat([ev(5, 'assistant/message', { turn: 1, step: 1, message: { role: 'assistant', content: [], source: { kind: 'model' } }, stream: [] })])) === signature,
+)
+check(
+  'activity: a transient entry is never a change',
+  activitySignature(log.concat([{ type: 'transient', event: { type: 'assistant/live-chunk', seq: 99, time: 1, data: {} } }])) === signature,
+)
+check('activity: a new result IS a change', activitySignature(log.concat([resultEvent(6, 'c2', 'ok\n[exit code: 0]')])) !== signature)
+
+// The panel itself. The switch is off by default, so a static render of the dock
+// can never reach a row - the view is rendered here with a hand-built log, which
+// is what proves a command, its exit pill, its working folder, the output clamp
+// and the actions actually draw.
+const ActivityView = terminal.exports.__internals.ActivityView
+const renderActivityView = (entries, props) =>
+  renderToStaticMarkup(
+    h(
+      ActivityView,
+      Object.assign(
+        {
+          sessionId: 's1',
+          model: Object.assign(buildActivityFromEvents(entries), { hasMore: false, available: true, reason: null, revision: 1 }),
+          onRunInTerminal: () => {},
+          canRunInTerminal: true,
+        },
+        props,
+      ),
+    ),
+  )
+const activityLongOutput = Array.from({ length: 20 }, (unused, index) => 'line ' + String(index + 1)).join('\n')
+const activityViewMarkup = renderActivityView([promptEvent(1, 'run the tests'), callEvent(2, 'c1', 'npm test'), resultEvent(3, 'c1', 'FAIL\n[exit code: 1]'), callEvent(4, 'c2', 'build'), resultEvent(5, 'c2', activityLongOutput + '\n[exit code: 0]')])
+check('activity view: the prompt captions the group', activityViewMarkup.includes('run the tests'))
+check('activity view: the group names its turn', activityViewMarkup.includes('turn 1'))
+check('activity view: a command draws', activityViewMarkup.includes('npm test') && activityViewMarkup.includes('data-dsh-terminal-cmd="c1"'))
+check('activity view: the exit pill draws', activityViewMarkup.includes('exit 1') && activityViewMarkup.includes('exit 0'))
+// 20 output lines (the exit marker is consumed), so the first 12 draw and line 13
+// must not - with the count of what is hidden offered as the way to see it.
+check(
+  'activity view: long output is clamped with a way to see it',
+  activityViewMarkup.includes('Show all 20 lines') && activityViewMarkup.includes('line 12') && activityViewMarkup.includes('line 13') === false,
+)
+check('activity view: the actions draw', activityViewMarkup.includes('Copy command') && activityViewMarkup.includes('Copy output') && activityViewMarkup.includes('Run in Terminal'))
+check('activity view: the filters draw', activityViewMarkup.includes('>Commands<') && activityViewMarkup.includes('>Failures<'))
+const activityMultiLineMarkup = renderActivityView([callEvent(1, 'm1', 'npm run a\nnpm run b'), resultEvent(2, 'm1', 'ok\n[exit code: 0]')])
+check('activity view: a multi-line command offers no Run in Terminal', activityMultiLineMarkup.includes('multi-line') && activityMultiLineMarkup.includes('Run in Terminal') === false)
+const activityRunningMarkup = renderActivityView([callEvent(1, 'r1', 'sleep 30')])
+check('activity view: a running command says so', activityRunningMarkup.includes('>running<') && activityRunningMarkup.includes('Running'))
+const activityUnavailableMarkup = renderToStaticMarkup(
+  h(ActivityView, {
+    sessionId: 's1',
+    model: { groups: [], counts: { shell: 0, other: 0, running: 0, failed: 0 }, hasMore: false, available: false, reason: 'no reader here', revision: 1 },
+    onRunInTerminal: () => {},
+    canRunInTerminal: false,
+  }),
+)
+check('activity view: an unreadable conversation says why', activityUnavailableMarkup.includes('Agent activity is not readable here') && activityUnavailableMarkup.includes('no reader here'))
+// "Nothing has run" and "the first read is still in flight" are different things
+// to a reader, and the model tells them apart by whether it has a reason yet.
+check('activity view: a log with nothing run says so', renderActivityView([], {}).includes('No commands yet'))
+check(
+  'activity view: a read still in flight says so',
+  renderToStaticMarkup(
+    h(ActivityView, {
+      sessionId: 's1',
+      model: { groups: [], counts: { shell: 0, other: 0, running: 0, failed: 0 }, hasMore: false, available: false, reason: null, revision: 0 },
+      onRunInTerminal: () => {},
+      canRunInTerminal: false,
+    }),
+  ).includes('Reading the conversation'),
+)
 
 // -------------------------------------------------------------- dsh-rightbar
 // The right bar is a GENERATED fork, so these are source-level checks (like the

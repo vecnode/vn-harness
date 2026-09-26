@@ -1,4 +1,4 @@
-# dsh-terminal (alpha.6)
+# dsh-terminal (alpha.8)
 
 **Terminal** is a **bottom dock** for the DeepSeek Harness web GUI: a real shell,
 in the app, under the conversation. A header button — the same 28px round control
@@ -13,6 +13,12 @@ WebSocket: ConPTY PowerShell on Windows, the login shell on macOS/Linux. Prompts
 colors, TUI programs, `Ctrl+C`, resizes and scrollback all behave like a terminal
 because it is one.
 
+Right beside it — behind one **Agent** switch — is a **live transcript of the
+agent's own terminal use**: every `bash`/`pwsh`/`run_code`/`terminal_send` call
+this conversation recorded, grouped under the prompt that asked for it, with its
+exit status, duration and output. It is a *second view of the conversation you
+are already in*, not a second shell: see below.
+
 ## How it plugs in
 
 Nothing shipped is patched, no core row is disabled, and nothing is forked:
@@ -25,8 +31,9 @@ this package adds surface. It contributes two things and owns one row.
 | dock | `shell.overlay` (the layout package's root-scoped **list**), `order: 50` |
 | client `inject` | `slots` (code), `@deepseek-ai/dsh-client-ui-conversation` (package) |
 | primitives used | `Tooltip` only — the terminal glyph is drawn here |
-| Node routes | `/api/dsh-terminal/health`, `/api/dsh-terminal/vendor/xterm.js`, `/api/dsh-terminal/vendor/xterm.css` |
+| Node routes | `/api/dsh-terminal/health`, `/api/dsh-terminal/activity` (read-only), `/api/dsh-terminal/vendor/xterm.js`, `/api/dsh-terminal/vendor/xterm.css` |
 | Node upgrade | `/api/dsh-terminal/pty` (WebSocket, authenticated) |
+| agent view (alpha.7) | read-only: the `/activity` route answers a filtered **tail** of the conversation's session events, folded in the browser by the same pure fold the check drives |
 
 **Why the header list and not the corner.** `conversation.session.header.corner`
 is a **single**-occupant slot that the right bar's toggle already owns, so
@@ -108,6 +115,11 @@ nodes into a React-managed container), so it positions itself:
   between them, `+` opens another, a chip's `×` kills that one shell. The dock
   is bound to the conversation that opened it; **switching conversation closes
   it**.
+- **The agent's own terminal use, beside your shell** (alpha.7): the bar's
+  **Agent** switch puts an `Agent` chip at the head of the strip whose view is a
+  read-only transcript of every command this conversation ran — grouped under the
+  prompt that asked for it, with the tool, the working folder, the duration, the
+  exit status and the output. See *The agent's own terminal use* below.
 - **The chip strip scrolls sideways** once the terminals outgrow it. While there
   is real overflow the strip grows a `‹` and a `›` — one page per click, and they
   dim at the ends — a bare wheel over the strip moves it, and the chip on screen
@@ -127,7 +139,117 @@ nodes into a React-managed container), so it positions itself:
   ever — an unattached session is reaped.
 - **Graceful degradation.** If the host has no PTY, the dock says so with the
   reason instead of failing; the row still mounts and the rest of the pack is
-  untouched.
+  untouched. The agent view degrades the same way: a host whose routes are not
+  reachable, or a conversation that is not open on this host, says so in the
+  panel instead of throwing in a render.
+
+## The agent's own terminal use
+
+Your shell and the agent's commands are **two different worlds**. The agent runs
+`bash`/`pwsh` through the harness's own shell tool, in the harness's own process;
+it never touches the PTY in this panel, and this panel cannot attach to it. So
+the second view is not a second terminal: it is a **transcript of what the
+conversation recorded**, drawn in the dock because that is where you are already
+looking. You keep your shell, and you can see — without reading a single message
+— what the agent ran.
+
+**The switch is a mode.** `Agent` in the dock's bar adds an `Agent` chip at the
+head of the strip and shows it; switching it off takes the chip away and hands
+the panel back to the terminal you were on (not to slot 1). The toggle is
+remembered per origin in `localStorage` — a *view* preference, which is exactly
+why it may be remembered while the dock's **open** state deliberately is not: the
+panel is a window onto a process, and a boolean that resets merely re-hides the
+log. It is `localStorage` and not the pack's durable section on purpose: promoting
+it would mean adding a field to `dsh-ui-state`'s schema, i.e. changing another
+package's data contract for a boolean.
+
+**What it shows.** One row per executing tool call — `bash`, `pwsh` (foreground
+*and* persistent), `run_code`, `terminal_send` — grouped under the human prompt
+that preceded it, so the log reads *what you asked, then what it ran*. Each row
+carries the tool, the command (or the sent text), the working folder when the
+call named one, the duration, and a status pill: `running`, `exit N`,
+`killed · SIG`, `error`, or `done`. Output is clamped to 12 lines with
+**Show all N lines**; long output is never hidden outright. A row expands on
+click (or on `Enter`/`Space` — the head is a `role="button"`), and carries three
+actions: **Copy command**, **Copy output**, and **Run in Terminal**.
+
+**Run in Terminal TYPES the command into your active shell; it does not submit
+it.** You get the agent's command line in your prompt, to read, edit or run —
+which is the whole point of having both halves in one panel. It is offered only
+for a **single-line** command: a multi-line command would have its newlines
+submitted as they were typed, so the row says `multi-line` instead of offering a
+foot-gun.
+
+**Filters.** `Commands` (the default) / `All tools` switches every other tool call
+into the log as a one-line row with its own status and a summary taken from its
+arguments (`file_path`, `pattern`, `query`, …); `Failures` narrows to what went
+wrong. The filter is applied at RENDER time: changing it never re-reads the
+conversation.
+
+**Following is a scroll position, not a mode.** The view follows the tail while
+you are at the bottom, stops the moment you scroll up (a **Follow ↓** pill appears
+in its bar to come back), and shows the newest command otherwise.
+
+**Where the data comes from** — the conversation's own durable session events,
+served by this package's read-only Node route `GET /api/dsh-terminal/activity`
+and folded **in the browser** by the same pure fold the tracked check drives:
+
+| Event | What it contributes |
+|---|---|
+| `tool/call` | `{ turn, step, callId, name, arguments }` — `arguments` is the RAW JSON string, so the command appears the moment the call is dispatched |
+| `tool/result` | `{ turn, step, message, error?, meta? }` — `message.content[0]` is the `ToolResultBlock`: its `content` is the output, its `isError` the failure flag |
+| `user/message` | a prompt when `source.kind === 'user'` (every other kind is injected context, and does not open a group) |
+
+**Why the route and not the browser's own session window.** The harness's client
+does expose a session's event window (`sessions.binding(id).eventSource`), and
+alpha.7's first cut read exactly that. It does not work for this panel: the
+window opens only once that conversation is *staged* by the browser, and a panel
+that is supposed to have something to show the moment the app opens instead sat
+on "Reading the conversation…" until something else moved the session along
+(sending a message did). The **host** always has the log — it is the log's owner —
+so the route answers from there, and the panel fills in on the first poll
+whatever the browser has or has not staged.
+
+The route is read-only, filtered and bounded: only those three event types are
+sent (an assistant message with its embedded stream is neither sent nor needed),
+injected context and non-human `user/message` events are dropped on the host, and
+the answer is the **tail** — at most 400 events and roughly 512 KiB, newest first
+— with `hasMore` stating that older ones were left out rather than truncating
+silently. The newest event is always included even if it alone is oversized: a
+single enormous command must not leave the panel with nothing to draw.
+
+The panel re-reads that route every 6 seconds, and every 2 while a command is
+running. The poll stops when nothing is subscribed (the header control of the
+conversation on screen is the usual subscriber), pauses in a hidden tab and
+resumes on the next visit, and publishes **nothing** when the fold's signature is
+unchanged — a steady conversation costs an idle request and no re-render.
+
+The exit status is recovered from the `\n[exit code: N]` / `\n[killed by
+signal: X]` markers that `@deepseek-ai/dsh-shell/render` appends — the same
+mirror-not-import the shipped terminal card does. It is read **only for a
+foreground shell tool**: a persistent shell can report resets and partial output
+without any single process exit status, so it claims none and settles as `done`.
+A result whose `tool/call` is outside the tail still becomes a row (its
+output is worth seeing) but names no tool and claims no exit status. Output
+passes through the same kind of filter the host's own `TerminalSanitizer` is:
+OSC, two-character escapes and CSI are removed before anything is drawn.
+
+**Why the event log and not the Chat assembly.** `uiConversation`'s assembled
+snapshot would hand over paired nodes for free, but it is a *view* registry —
+a node can be hidden by a presentation choice that has nothing to do with what
+happened, and reaching it means depending on another package's render layer.
+The event log is the durable truth underneath it, and folding it in the browser
+means this panel and the transcript can only disagree about *presentation* —
+and the fold lives in one place, so the panel and the tracked check cannot
+disagree about what a command is.
+
+**What it deliberately does not do.** It does not stream. The harness has exactly
+two tool events and no live output channel, so a command shows as `running` from
+the moment it is dispatched and its output lands in one shot at settle — a real
+"live stdout" feed would need a host-side tap on the shell executor (and a new
+socket), which is a much larger change than a view. Long-running commands are
+usually backgrounded anyway, and then the agent's own `job_output` calls appear
+here as rows, which is where their output is read.
 
 ## The PTY comes from the harness, not from this pack
 
@@ -184,7 +306,8 @@ cordis.patch.yml      bundle layer: inserts the 'terminal' row (nothing else)
 lib/index.js          Node half: the routes above + the authenticated upgrade
 lib/shell.js          the ONE per-OS file: which shell this host runs
 lib/pty.js            node-pty resolution, the session registry, the reaper
-lib/client.js         browser half (module-table bundle, no build step)
+lib/client.js         browser half (module-table bundle, no build step): the dock,
+                      the terminals, and the agent-activity view + its feed
 lib/vendor/xterm.js   GENERATED - vendored xterm.js classic bundle (window.DSHTerminal)
 lib/vendor/xterm.css  GENERATED - its stylesheet, served beside it
 vendor/package.json + vendor/entry.js - reproducible build inputs
@@ -206,7 +329,7 @@ the stylesheet.) The bundle is **generated**: never edit `lib/vendor/*` by hand.
 ## Checks
 
 ```sh
-node scripts/checks/check-client-bundles.mjs   # bundle id, both seats, order 30, markup, geometry invariants
+node scripts/checks/check-client-bundles.mjs   # bundle id, both seats, order 30, markup, geometry invariants, the activity arithmetic
 node scripts/checks/check-node-routes.mjs     # routes, etag, and a LIVE shell over a real socket
 ```
 
@@ -238,8 +361,75 @@ dock's top edge, that growing then shrinking the dock takes the visible rows fro
 an **animated** sidebar collapse and expand (the case that failed in alpha.2: with
 the tracking removed, that check reports the dock stuck at its old edge).
 
+The agent view (alpha.7) is pinned on both sides. The **Node** check drives the
+route itself: that only the three event types the panel draws are sent, injected
+context and assistant streams are dropped, the answer is in log order, a
+conversation that is not open answers `NOT_LIVE` (with a 200, because that is a
+fact about the host and not a bad request), an unreadable log answers
+`UNREADABLE`, a missing session id is a 400, a conversation past the budget
+answers with its **tail** (newest kept, `hasMore` set) and one oversized newest
+command is still sent. The **client** check pins that the bundle reads that route
+and no longer reaches for the browser's own session window, that the poll stops
+when nothing is subscribed and pauses in a hidden tab, that the switch is a
+**mode** (off by default, `aria-pressed`, and no `Agent` chip in the strip until
+it is on), that the stylesheet carries the view's rules, that killing a chip does
+not move a reader looking at the log, and that **Run in Terminal** refuses a
+multi-line command. Then the bundle's pure half is **driven** with hand-built
+events — `parseExecCall` (including that a missing `description` marks the
+persistent shell and that `read` is not a command), `parseExitMarker` (the marker
+consumed, a signal not an exit code, marker-like text mid-output left alone),
+`stripAnsi` (CSI, OSC, a bare CR), `formatDuration`, `filterActivity`
+(commands-only is the default, `All tools` adds the rest, empty groups drop) and
+`buildActivityFromEvents` (grouping by prompt, injected context NOT opening a
+group, a failure read off its marker, a call with no result still running, a
+persistent shell claiming no exit status, a result outside the tail kept but
+unnamed) — plus `activitySignature`, which is what keeps a poll that returns the
+same log from re-folding it.
+
 ## Alpha notes
 
+- **alpha.8** — the agent view showed nothing: `Reading the conversation…`, and
+  it only filled in after a new message was sent. The read was the bug, not the
+  drawing. alpha.7 read the **browser's** session window
+  (`sessions.binding(id).eventSource`), and that window opens only once the
+  conversation has been taken onto the client's **stage** — so a panel that is
+  supposed to have something to show the moment the app opens had nothing to read
+  yet, and it stayed that way until something else (a new message) moved the
+  session along. The events now come from the **host**, which owns the log:
+  `GET /api/dsh-terminal/activity` answers a filtered tail of it and the browser
+  folds that, so the panel fills in on the first poll of a freshly opened app.
+  Two consequences worth naming: the view now sees the **whole** conversation
+  rather than the loaded page (bounded to a tail of 400 events / ~512 KiB, with
+  `hasMore` stating what was left out), and the harness must be **restarted** for
+  the new route to exist — a host row is loaded at boot, so a page refresh alone
+  would answer `The terminal routes are not reachable` until it is.
+- **alpha.7** — the agent's own terminal use, in the dock (see the section
+  above). Five decisions worth naming:
+  1. **a transcript, not a second shell.** The agent's `bash`/`pwsh` run in the
+     harness's process and cannot be attached to this panel's PTY, so the view
+     reads the conversation's own durable events instead. It adds **no PTY and no
+     host state**, and its one route is read-only — an "observation" feature must
+     never become a second execution path.
+  2. **the log from the HOST, not the browser's session window.** The client does
+     expose one (`sessions.binding(id).eventSource`), and the first cut read it —
+     then sat on "Reading the conversation…" until something staged the session,
+     because that window only opens for a conversation the browser has taken onto
+     its stage. The host owns the log, so the panel asks the host, and it fills in
+     on the first poll of a freshly opened app.
+  3. **the fold in the browser, exported for the check.** Keeping it client-side
+     means one implementation of "what a command is" — the panel and the tracked
+     check cannot drift — while the host stays a filtered, bounded reader.
+  4. **the view is the toggle.** An `Agent` chip at the head of the strip reads
+     as one more thing to switch to, reuses the strip's own scrolling, arrows and
+     scroll-into-view, and needs no geometry change: `ACTIVITY_VIEW = -1` is an
+     index no slot has, so the runtime hides every emulator with the code it
+     already had and the emulators stay mounted (a shell is a process — hiding it
+     must not detach it).
+  5. **honest about what a terminal cannot know.** Output arrives at settle, not
+     live (the harness has no tool-output stream); a persistent shell claims no
+     exit status; a call outside the tail names no tool; `Run in Terminal` refuses
+     a multi-line command because its newlines would submit themselves. Each is
+     drawn as what it is rather than smoothed over.
 - **alpha.6** — dragging the dock's top edge "did not work well": the panel
   jumped, kept moving after the release, and the only way out was to hide it.
   Three causes, all in the resize path:
@@ -310,3 +500,17 @@ the tracking removed, that check reports the dock stuck at its old edge).
   needs `columnsFor` updated (there is no layout service API for a bottom region).
 - A fullscreen right bar suspends the dock while it is up.
 - Windows reports `pid: null` in the first `ready` frame (see above).
+- The agent view shows the **tail** of the conversation's log: at most 400
+  relevant events and roughly 512 KiB, newest kept. A conversation past that says
+  so (`older ones are outside this view`) rather than offering to page them.
+- The agent view reads the conversation only while it is **live on this host** (a
+  stored conversation that no process has open answers `NOT_LIVE`), it is
+  refreshed by polling rather than pushed — 6 s, or 2 s while a command is
+  running — and it names commands by tool: a call whose `tool/call` event is
+  outside the tail is shown as an unnamed result with its raw output, and
+  sub-agent commands belong to the sub-agent's own session (the root `subagent`
+  call is what appears here).
+- The activity switch is remembered per origin (`localStorage`), not in the
+  pack's durable section: making it survive across the Chrome tab and the desktop
+  window needs a `terminalActivity` field in `dsh-ui-state`'s schema, which is a
+  change to another package's data contract rather than a change to this one.

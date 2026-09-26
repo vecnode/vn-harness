@@ -67,7 +67,23 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
     scrolling box with `+` outside it, the arrows are gated on measured overflow
     and the wheel listener is native and non-passive - and the strip's
     scroll-into-view arithmetic is DRIVEN, through the bundle's pure
-    `__internals.revealDelta`;
+    `__internals.revealDelta`. alpha.7 adds the agent view on the same terms: the
+    switch is a MODE (off by default, no `Agent` chip until it is on), the bundle
+    reads this package's own `/activity` route rather than the browser's session
+    window and polls only while something is subscribed and the tab is visible,
+    killing a chip must not move a reader who is looking at the log, and **Run in
+    Terminal** must refuse a multi-line command - and then the whole read model is
+    DRIVEN with hand-built session events: `parseExecCall` (a missing
+    `description` marks the persistent shell, `read` is not a command),
+    `parseExitMarker` (consumed, a signal is not an exit code, marker-like text
+    mid-output left alone), `stripAnsi`, `formatDuration`, `filterActivity` and
+    `buildActivityFromEvents` (grouping by prompt, injected context does not open
+    a group, a failure read off its marker, a call with no result still running, a
+    persistent shell claiming no exit status, a result outside the tail kept but
+    unnamed), the view itself RENDERED from a hand-built log (since the switch is
+    off by default no static render of the dock can reach a row), plus
+    `activitySignature`, which is what keeps an unchanged poll from re-folding the
+    log;
   - `dsh-rightbar` - the forked bar's own source invariants (module-table id,
     the module-table surface other bundles inject);
   - `dsh-diagrams` - both tab types and their seats, all six tool cards, and the
@@ -117,7 +133,14 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
   - **terminal** - the route family, the ETag, and a LIVE shell over a real
     socket (init -> ready -> a command answered -> kill, a JSON line proven to
     be shell input rather than a control frame, and an unauthenticated upgrade
-    refused);
+    refused). alpha.7 adds the agent view's read: the `/activity` route is driven
+    against a stubbed live session and must send only the three event types the
+    panel draws (injected context and assistant streams dropped), in log order,
+    answer `NOT_LIVE` for a conversation that is not open on this host (a 200 -
+    a fact about the host, not a bad request), `UNREADABLE` for a log that will
+    not read, 400 without a session id, and answer a conversation past the budget
+    with its **tail** (`hasMore` set, the newest kept, and one oversized newest
+    command still sent);
   - **themes** - the screenshot route's type/signature/size refusals and the
     create-exclusive write onto a redirected Desktop;
   - **ui-state** - the pack's settings namespace with no route to capture: the
