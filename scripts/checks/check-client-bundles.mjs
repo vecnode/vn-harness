@@ -387,6 +387,19 @@ check(
     // `CM.<name>(...)` call is what a future mapping would add back by accident.
     !/return CM\.[A-Za-z]+\(/.test(editorSource),
 )
+// The guard is TWO lookups, because the engine answers in two SHAPES: a Lezer
+// language is a factory function, a CM5-style legacy mode is a StreamParser
+// OBJECT with a `token()`. alpha.13 sent the five stream modes through the
+// function test as well - so the engine was asked for `rust()` where it exports
+// an object, every stream mode resolved to null, and .sh/.ps1/.bat/.rs/.toml all
+// opened with no language while the engine carried every one of them.
+check(
+  'the stream modes are looked up as mode objects, not factories',
+  editorSource.includes('function engineStreamMode(CM, name)') &&
+    editorSource.includes("typeof mode.token !== 'function'") &&
+    editorSource.includes('const mode = engineStreamMode(CM, name)') &&
+    !editorSource.includes('const mode = engineLanguage(CM, name)'),
+)
 check(
   'the guarded lookup reports the REBUILD, not a restart',
   editorSource.includes('The route re-reads and re-ETags that artifact per request, so REBUILD it') &&
@@ -430,6 +443,28 @@ check(
   // The other half of the mapping: these are called through the same guard, so a
   // generated artifact missing one of them has to fail here rather than in a tab.
   ['javascript', 'json', 'markdown', 'python', 'html', 'css', 'yaml'].every((name) => typeof cmVendor[name] === 'function'),
+)
+// ...and the guard must ACCEPT what the engine really answers with, which is the
+// assertion whose absence let alpha.13 ship: the source-shape checks above were
+// satisfied by a function-only lookup while the artifact exports objects for all
+// five stream modes. The client's own lookup functions are therefore extracted
+// from the SHIPPED source and run against the SHIPPED engine - the two halves a
+// source-only or engine-only assertion can never compare.
+const editorLookups = new Function(
+  'CM',
+  'reportMissingMode',
+  editorSource.slice(
+    editorSource.indexOf('function engineLanguage(CM, name)'),
+    editorSource.indexOf('function languageExtensionFor(CM, fileName)'),
+  ) + '\nreturn { engineLanguage, engineStreamMode, lezerLanguage, streamLanguage }',
+)(cmVendor, () => {})
+check(
+  'the editor\'s own lookup accepts every language the engine carries',
+  ['shell', 'powerShell', 'batch', 'rust', 'toml'].every((name) => Boolean(editorLookups.streamLanguage(cmVendor, name))) &&
+    ['javascript', 'json', 'markdown', 'python', 'html', 'css', 'yaml'].every((name) => Boolean(editorLookups.lezerLanguage(cmVendor, name))) &&
+    // ...and still answers null, rather than throwing, for a name no engine has.
+    editorLookups.streamLanguage(cmVendor, 'notAMode') === null &&
+    editorLookups.lezerLanguage(cmVendor, 'notALanguage') === null,
 )
 const registered = {}
 const types = []

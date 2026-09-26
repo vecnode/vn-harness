@@ -569,6 +569,16 @@ window.__ModuleLoader__.load({
     // lookup now goes through `engineLanguage`. A document that opens
     // unhighlighted beats a tab that cannot open at all, so the missing mode
     // degrades to no language and says which one and why.
+    //
+    // The two families are looked up by TWO functions because they are two
+    // different SHAPES, and alpha.13 conflated them: a Lezer language is a
+    // FACTORY FUNCTION (`CM.yaml(options)`), while a CM5-style legacy mode is a
+    // plain StreamParser OBJECT carrying `token()` (`typeof CM.rust` is
+    // "object"), handed whole to `StreamLanguage.define()`. alpha.13 sent the
+    // stream modes through the function test as well, so every one of the five
+    // - shell, powerShell, batch, rust, toml - resolved to null and the file
+    // opened with no language at all: "the engine exports no rust()". They are
+    // the five the engine DOES carry, so nothing about that reading was true.
     // ---------------------------------------------------------------------
     const missingModesReported = new Set()
 
@@ -587,8 +597,9 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * A language factory out of the loaded engine, or null when it does not carry
-     * one. The ONE place a language name is looked up.
+     * A language FACTORY out of the loaded engine, or null when it does not carry
+     * one. Lezer languages only: it is a function test, and every stream mode is
+     * an object (see `engineStreamMode`).
      */
     function engineLanguage(CM, name) {
       const factory = CM[name]
@@ -597,6 +608,23 @@ window.__ModuleLoader__.load({
         return null
       }
       return factory
+    }
+
+    /**
+     * A CM5-style stream MODE out of the loaded engine, or null when it does not
+     * carry one. A legacy mode is a StreamParser OBJECT with a `token()` and is
+     * never a function, so it cannot be found by `engineLanguage`: the token test
+     * is what tells a real mode from the `undefined` a shorter engine answers
+     * with, and it is what keeps `StreamLanguage.define()` off an undefined - the
+     * alpha.11 crash this whole guard exists for.
+     */
+    function engineStreamMode(CM, name) {
+      const mode = CM[name]
+      if (!mode || typeof mode.token !== 'function') {
+        reportMissingMode(name, 'the engine exports no ' + name + ' mode')
+        return null
+      }
+      return mode
     }
 
     /** A Lezer language from the engine, with the optional flags it takes. */
@@ -613,7 +641,7 @@ window.__ModuleLoader__.load({
 
     /** A CM5-style stream mode from the engine, wrapped as a CM6 language. */
     function streamLanguage(CM, name) {
-      const mode = engineLanguage(CM, name)
+      const mode = engineStreamMode(CM, name)
       if (mode === null) return null
       if (!CM.StreamLanguage || typeof CM.StreamLanguage.define !== 'function') {
         reportMissingMode(name, 'the engine exports no StreamLanguage.define()')
