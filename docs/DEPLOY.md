@@ -20,19 +20,19 @@ Keep all four; every change below has to preserve them.
 | | |
 |---|---|
 | **One ship list** | `scripts/dist-manifest.txt`, read by both halves, with a tracked check that fails when a bundle appears under `packages/` that the list does not carry |
-| **One implementation per host, no drift** | `distribute.bat` â†’ `scripts/dist.ps1` is literally the file `windows-latest` runs with `-Verify` |
+| **One implementation per host, no drift** | `distribute.bat` → `scripts/dist.ps1` is literally the file `windows-latest` runs with `-Verify` |
 | **`-Verify` is a real proof** | copies the folder elsewhere, installs from the copy into a throwaway home, asserts the profile lists every bundle the folder carries, boots the pinned harness, waits for the ready line, proves the port is free again |
 | **The launch token rules** | read in memory, never written, echoed or shelled; a non-loopback ready line refused rather than opened (`Test-LoopbackUrl`, `readyline.rs`) |
 
 The distribution is also honestly small today: **27.4 MB / 355 files** on disk and
-about 7 MB zipped. Both properties are about to change, which is why Â§4 is a
+about 7 MB zipped. Both properties are about to change, which is why §4 is a
 ladder rather than a jump.
 
 ---
 
 ## 2. What is missing, in the order it matters
 
-### G1 â€” the runtime lives outside the folder (the serious one)
+### G1 — the runtime lives outside the folder (the serious one)
 
 `$DSH_HOME/profiles/node_modules` is a set of **junctions into the npm/npx cache**,
 and the harness rebuilds them at every boot from an anchor relative to itself:
@@ -45,7 +45,7 @@ const INSTALL_ANCHOR = fileURLToPath(new URL("../package.json", import.meta.url)
 Measured today:
 
 ```text
-$DSH_HOME/profiles/node_modules/zod  ->  â€¦\npm-cache\_npx\1da1392061ab1944\node_modules\zod
+$DSH_HOME/profiles/node_modules/zod  ->  …\npm-cache\_npx\1da1392061ab1944\node_modules\zod
 ```
 
 So the app that runs is **the npm cache** plus a profile holding patch files and
@@ -54,11 +54,11 @@ So the app that runs is **the npm cache** plus a profile holding patch files and
 - the distribution folder is not self-contained, and moving it does not move the
   installation;
 - `npm cache clean --force`, a cache eviction or a different `npm_config_cache`
-  leaves every junction dangling â€” a broken app with an intact-looking home;
+  leaves every junction dangling — a broken app with an intact-looking home;
 - the AppData/`~/.npm` tree grows ~223 MB per pin, per user, for an app the user
   installed in a folder they chose.
 
-### G2 â€” installing needs the network, for exactly two reasons
+### G2 — installing needs the network, for exactly two reasons
 
 Both were traced to the code, and the second is smaller than the docs imply:
 
@@ -69,7 +69,7 @@ Both were traced to the code, and the second is smaller than the docs imply:
    `dsh plugin add` is a thin forwarder that spawns **`pnpm` from PATH**
    (`dsh/lib/plugin-*.js`).
 
-That is the whole list. **The registry is not consulted for the profile** â€”
+That is the whole list. **The registry is not consulted for the profile** —
 `$DSH_HOME/profiles/web/pnpm-lock.yaml` contains *only* `link:` specs, with no
 registry resolution anywhere, and `profiles/web/node_modules/.pnpm/` holds nothing
 but `lock.yaml`. The base bundles (`@deepseek-ai/dsh-base`,
@@ -78,49 +78,49 @@ installed into the profile: they resolve through the installation fallback. A
 profile install therefore needs the installation closure and a pnpm, and nothing
 else.
 
-### G3 â€” the target machine needs Node.js 22+
+### G3 — the target machine needs Node.js 22+
 
 `START-HERE.bat` refuses to run without it (`where node`), and the shell spawns
 `npx.cmd` / `npx` (`app/src-tauri/src/main.rs`). Measured: `node.exe` is
 **81.6 MB**; the official `node-v22.20.0-win-x64.zip` is **36 MB**. The macOS and
-Linux archives are 26â€“31 MB.
+Linux archives are 26–31 MB.
 
-### G4 â€” the target machine needs a pnpm it has never heard of
+### G4 — the target machine needs a pnpm it has never heard of
 
 Even with Node present, `dsh plugin` wants `pnpm` on PATH. A reader who has never
 used pnpm gets `error: pnpm not found on PATH` in the middle of an install the
 pack started for them.
 
-### G5 â€” the launchers are not adaptive
+### G5 — the launchers are not adaptive
 
 The current batch files are correct but plain: they hardcode `powershell` (5.1),
 never set a code page, print no colour, always `pause`, and open in `conhost`
 even when Windows Terminal is the default terminal application. `run-desktop.bat`
-is worse than the others â€” it is **not shipped in the distribution at all** (it is
+is worse than the others — it is **not shipped in the distribution at all** (it is
 absent from `dist-manifest.txt`, verified in the built folder), it embeds its own
-build logic in batch, and its echo wording differs from the other four. Â§5 is the
+build logic in batch, and its echo wording differs from the other four. §5 is the
 contract that fixes this.
 
-### G6 â€” no map of where things live
+### G6 — no map of where things live
 
 Answered by [`PATHS.md`](PATHS.md), which is new in this change. It also states
-the rule (Â§5 of that page) the rest of this plan implements.
+the rule (§5 of that page) the rest of this plan implements.
 
-### G7 â€” the CI matrix cannot run as written
+### G7 — the CI matrix cannot run as written
 
 `.github/workflows/distribute.yml` names `macos-13` for `mac-x64`. That image no
-longer exists â€” the current runner list has no macOS 13, and `macos-14` is
+longer exists — the current runner list has no macOS 13, and `macos-14` is
 deprecated ([actions/runner-images](https://github.com/actions/runner-images)). The
 first run of the workflow as pushed would fail on the Intel macOS leg. The
 Windows Server 2025 image is `windows-latest`; ARM64 runners exist for all three
-OSes (`windows-11-arm`, `macos-15`, `ubuntu-22.04-arm`). Â§7 is the corrected
+OSes (`windows-11-arm`, `macos-15`, `ubuntu-22.04-arm`). §7 is the corrected
 matrix.
 
 Two smaller workflow gaps: `run-desktop.bat` is not in the `paths:` filter (a push
 touching only it rebuilds nothing), and the 60-minute timeout is thin once each
 leg installs a 223 MB closure that no cache currently holds.
 
-### G8 â€” release hygiene
+### G8 — release hygiene
 
 The whole distribution feature is **untracked** (`git status`: `.github/`,
 `distribute.bat`, `distribute.sh`, `docs/DISTRIBUTE.md`, `scripts/dist.ps1`,
@@ -128,7 +128,7 @@ The whole distribution feature is **untracked** (`git status`: `.github/`,
 `scripts/checks/check-dist-layout.mjs`), on `main` at `origin`
 `https://github.com/vecnode/vn-harness.git`. Nothing CI-related has ever run.
 Code signing, notarization, `.msi`/`.dmg`/`.deb` and a `.app` bundle stay
-deliberately out of scope (`bundle.active: false`) â€” that is a decision to
+deliberately out of scope (`bundle.active: false`) — that is a decision to
 revisit, not an oversight to fix here.
 
 ---
@@ -137,13 +137,13 @@ revisit, not an oversight to fix here.
 
 ### 3.1 Should the distribution ship a Node engine?
 
-**Yes â€” as rung 2 of the ladder, not as the first move.** The argument is about
+**Yes — as rung 2 of the ladder, not as the first move.** The argument is about
 what the folder *promises*:
 
 - today the folder promises "a launcher for an app you must already have
-  installed" â€” three prerequisites (Node, npm/npx, pnpm) to satisfy before the app
+  installed" — three prerequisites (Node, npm/npx, pnpm) to satisfy before the app
   runs at all;
-- with a vendored runtime it promises "run me" â€” which is what the built
+- with a vendored runtime it promises "run me" — which is what the built
   `vn-harness.exe` already looks like to the person who double-clicks it.
 
 Costs, measured, all six targets:
@@ -160,13 +160,13 @@ Costs, measured, all six targets:
 Rules that keep this honest:
 
 - **Only `node` is shipped.** `npm`, `npx` and `corepack` are not needed at
-  runtime once the harness is vendored (Â§4), and dropping them saves the bulk of
+  runtime once the harness is vendored (§4), and dropping them saves the bulk of
   the launcher scripts and a few MB.
 - **Verify the download.** The official `SHASUMS256.txt` is the source of truth;
   the build fails on a mismatch rather than shipping an unverified binary.
 - **Never shadow the user's Node on PATH.** The launcher runs the vendored
   interpreter by absolute path, and only falls back to `node` on PATH when
-  `runtime/node/` is absent (which is the source checkout case â€” Â§8).
+  `runtime/node/` is absent (which is the source checkout case — §8).
 - **Say what it is.** `DIST-README.txt` and `BUILD-INFO.json` record the exact
   Node version and its checksum, so a reader can audit the runtime they are
   running.
@@ -174,19 +174,19 @@ Rules that keep this honest:
 ### 3.2 Should the app carry the pinned dsh code inside itself?
 
 **Yes, and the harness is already built for exactly this.** `INSTALL_ANCHOR` is
-relative to the dsh package (Â§2 G1), so *wherever `@deepseek-ai/dsh` is run from
+relative to the dsh package (§2 G1), so *wherever `@deepseek-ai/dsh` is run from
 is the installation*: put the closure in the distribution folder, run the CLI from
 there, and `healProfilesModuleFallback` links the profile into **your folder**
-instead of the npm cache. No harness change, no patching, no core file touched â€”
+instead of the npm cache. No harness change, no patching, no core file touched —
 the same rule the pack already holds everywhere else.
 
 What "vendoring dsh" concretely means, measured:
 
 | | |
 |---|---|
-| the tree | `runtime/dsh/node_modules/{@deepseek-ai/dsh, â€¦}` plus the rest of the closure |
+| the tree | `runtime/dsh/node_modules/{@deepseek-ai/dsh, …}` plus the rest of the closure |
 | size (Windows x64) | **223 MB / ~25 400 files** |
-| produced by | `npm install --prefix runtime/dsh @deepseek-ai/dsh@<pin> --omit=dev --no-audit --no-fund`, run **on each OS in CI** â€” not copied between them |
+| produced by | `npm install --prefix runtime/dsh @deepseek-ai/dsh@<pin> --omit=dev --no-audit --no-fund`, run **on each OS in CI** — not copied between them |
 | why per-OS | the closure contains native modules: `node-pty` (26.8 MB, the terminal dock), `sharp` + `@img/sharp-win32-x64` (28.0 MB), `koffi` (1.6 MB). A win-x64 tree cannot serve a mac-arm64 machine |
 
 Three traps worth writing down before starting:
@@ -195,18 +195,18 @@ Three traps worth writing down before starting:
    runner does the right thing; a tree copied from another OS does not.
 2. **Do not prune by guess.** The large members are `@deepseek-ai/*` (32.7 MB),
    `@img` (27.3 MB), `node-pty` (26.8 MB), `@opentelemetry` (20.3 MB),
-   `@google`/`openai`/`@anthropic-ai`/`@octokit` (8â€“14 MB each). Some are optional
+   `@google`/`openai`/`@anthropic-ai`/`@octokit` (8–14 MB each). Some are optional
    in principle (telemetry) and some are load-bearing (the terminal's PTY), and
    the only safe way to shrink the tree is to remove one thing, run `-Verify`, and
    keep the change only if the boot and the profile are still green.
 3. **`node_modules/.bin` shims and `package.json` `bin` entries point at the CLI.**
-   Run `node runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js â€¦` explicitly â€”
+   Run `node runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js …` explicitly —
    do not rely on a shebang or a `.cmd` shim surviving the copy.
 
 The payoff is large and immediate: the folder becomes the installation, the
-profile's junctions point inside it, and **the whole app becomes relocatable** â€”
+profile's junctions point inside it, and **the whole app becomes relocatable** —
 which is the property `DIST-README.txt` already claims ("this folder must stay
-where it is") and the one `PATHS.md` Â§5 turns into a rule.
+where it is") and the one `PATHS.md` §5 turns into a rule.
 
 ---
 
@@ -214,14 +214,14 @@ where it is") and the one `PATHS.md` Â§5 turns into a rule.
 
 Each rung is independently useful and independently verifiable, so they can ship
 one at a time. Sizes are the folder on disk; the archive figure is an estimate
-from the current 27.4 MB â†’ ~7 MB ratio.
+from the current 27.4 MB → ~7 MB ratio.
 
 | Rung | What changes | Folder | Archive | Host needs | Network to install |
 |---|---|---|---|---|---|
-| **L0** today | â€” | 27.4 MB | ~7 MB | Node 22+, npm/npx, pnpm | yes (npx + pnpm bootstrap) |
-| **L1** | vendor the dsh closure into `runtime/dsh/`; launchers run it by absolute path, `npx` only as the source-checkout fallback | ~250 MB | ~70â€“80 MB | Node 22+ | **no** |
-| **L2** | vendor the Node runtime into `runtime/node/` (per RID, checksum-verified, npm/npx/corepack trimmed) | ~350 MB | ~100â€“115 MB | **nothing** | no |
-| **L3** | vendor pnpm into `runtime/pnpm/`, point the installer at it, keep the store inside `$DSH_HOME` and run the profile install `--offline` | ~365 MB | ~105â€“120 MB | nothing | **no â€” the model is the only thing that talks to the internet** |
+| **L0** today | — | 27.4 MB | ~7 MB | Node 22+, npm/npx, pnpm | yes (npx + pnpm bootstrap) |
+| **L1** | vendor the dsh closure into `runtime/dsh/`; launchers run it by absolute path, `npx` only as the source-checkout fallback | ~250 MB | ~70–80 MB | Node 22+ | **no** |
+| **L2** | vendor the Node runtime into `runtime/node/` (per RID, checksum-verified, npm/npx/corepack trimmed) | ~350 MB | ~100–115 MB | **nothing** | no |
+| **L3** | vendor pnpm into `runtime/pnpm/`, point the installer at it, keep the store inside `$DSH_HOME` and run the profile install `--offline` | ~365 MB | ~105–120 MB | nothing | **no — the model is the only thing that talks to the internet** |
 
 The ladder is ordered so that the *goal* (L3) is reached by two changes that each
 pay for themselves, and so the expensive one (the 223 MB closure) lands first
@@ -237,8 +237,8 @@ sh scripts/dist.sh -Verify -Offline          # macOS / Linux
 distribute.bat -Verify -Offline              # Windows
 ```
 
-`-Offline` runs the whole existing verify â€” copy the folder, install from the
-copy into a throwaway home, boot the pinned harness, read the ready line â€” with
+`-Offline` runs the whole existing verify — copy the folder, install from the
+copy into a throwaway home, boot the pinned harness, read the ready line — with
 the network closed on purpose:
 
 - `npm_config_registry=http://127.0.0.1:9/` and `npm_config_offline=true` in the
@@ -259,7 +259,7 @@ reason, which is the point.
 ## 5. The launcher contract
 
 The five Windows entry points should behave like the install files of a serious
-program, and behave the *same* way â€” that sameness is what makes them learnable.
+program, and behave the *same* way — that sameness is what makes them learnable.
 The POSIX halves (`*.sh`) mirror the behaviour, never the mechanism: plain
 `/bin/sh`, no PowerShell, ever.
 
@@ -271,8 +271,8 @@ The POSIX halves (`*.sh`) mirror the behaviour, never the mechanism: plain
 | `uninstall.bat` / `uninstall.sh` | both | remove only what this pack added |
 | `run-web.bat` / `run-web.sh` | both | start the pinned harness and open it in Chrome (default browser as fallback) |
 | `run-desktop.bat` | Windows | the same harness in the native window (`vn-harness.exe`) |
-| `distribute.bat` / `distribute.sh` | both | maintainer only â€” build/assemble/verify a distribution; not shipped |
-| `START-HERE.bat` / `START-HERE.sh` | generated | install, then run â€” the one file a recipient double-clicks |
+| `distribute.bat` / `distribute.sh` | both | maintainer only — build/assemble/verify a distribution; not shipped |
+| `START-HERE.bat` / `START-HERE.sh` | generated | install, then run — the one file a recipient double-clicks |
 
 > **Naming — DECIDED, and done.** The browser launcher is now `run-web.bat` /
 > `run-web.sh`: clearer beside `run-desktop.bat`, and it matches the flag split
@@ -284,7 +284,7 @@ The POSIX halves (`*.sh`) mirror the behaviour, never the mechanism: plain
 
 1. **The console it opens in.** If the process is not already inside Windows
    Terminal (`WT_SESSION` unset) and `wt.exe` resolves, re-launch itself inside
-   it â€” `wt.exe -w 0 nt --title "vn-harness" cmd /c ""%~f0" %*` â€” with a marker
+   it — `wt.exe -w 0 nt --title "vn-harness" cmd /c ""%~f0" %*` — with a marker
    variable set so the child does not recurse, then `exit /b` **without** pausing
    (the new window owns the output). Otherwise continue in `conhost`. On Windows
    11 with Terminal as the default terminal application this is a no-op; on a
@@ -296,7 +296,7 @@ The POSIX halves (`*.sh`) mirror the behaviour, never the mechanism: plain
    unguarded `$IsWindows` and no hardcoded `npx.cmd`.
 3. **Encoding.** `chcp 65001 >nul` in the batch half; `[Console]::OutputEncoding`
    and `$OutputEncoding` to UTF-8 in the worker. A path with an accent, a Chinese
-   username or a `â†’` in a message is then not mojibake.
+   username or a `→` in a message is then not mojibake.
 4. **Colour only where it exists.** Emit ANSI only when the console reports virtual
    terminal support (`$Host.UI.SupportsVirtualTerminal`, `WT_SESSION`, `TERM`),
    honour `NO_COLOR`, and emit none at all when stdout is redirected. Status
@@ -305,9 +305,9 @@ The POSIX halves (`*.sh`) mirror the behaviour, never the mechanism: plain
    was double-clicked (stdin is a console and the parent is Explorer); never with
    `-NoPause` / `-Quiet`, never when stdin is not a terminal, and never after a
    Ctrl+C (the current `run-web.bat` already gets this right by keying on exit code
-   1 â€” keep that trick, it is the correct one).
+   1 — keep that trick, it is the correct one).
 6. **No elevation.** The install is per-user. Say so once, in the banner. If the
-   user happens to be elevated, note it and carry on â€” never ask for admin.
+   user happens to be elevated, note it and carry on — never ask for admin.
 7. **Flags, uniformly.** `-Help`, `--help`, `-h`, `/?` all print the same help in
    every file (today `run-desktop.bat` handles more spellings than the others);
    add `-Quiet` and `-NoPause` everywhere, and `-NoBuild` to `run-desktop.bat`.
@@ -319,15 +319,15 @@ The POSIX halves (`*.sh`) mirror the behaviour, never the mechanism: plain
    `scripts/console/adapt.cmd` holds the console/shell decisions and
    `scripts/console/theme.ps1` the colour/width ones, dot-sourced by the workers.
    The five entry files stay thin forwarders, and `check-dist-layout.mjs` pins the
-   parity â€” five copies of a 15-line header is exactly how launchers drift.
+   parity — five copies of a 15-line header is exactly how launchers drift.
 10. **`run-desktop.bat` finally ships**, and it does the *right* thing in a
     distribution: when `vn-harness.exe` is present and `app/src-tauri/target/`
-    (or a Rust toolchain) is not, it runs the binary directly â€” no cargo, no
+    (or a Rust toolchain) is not, it runs the binary directly — no cargo, no
     build, no error. In a source checkout it builds as it does today.
 11. **macOS double-click parity (optional).** Finder does not run `.sh`. If
     double-click parity is wanted on macOS, ship `START-HERE.command` and
-    `install.command` next to the `.sh` files â€” same scripts, Finder-run wrapper.
-    Listed as an open decision in Â§10.
+    `install.command` next to the `.sh` files — same scripts, Finder-run wrapper.
+    Listed as an open decision in §10.
 
 ---
 
@@ -343,14 +343,14 @@ What each rung changes on that map:
 | Rung | Map change |
 |---|---|
 | L0 | three runtime locations outside the home: the npm/npx cache (into which every profile junction points), the pnpm store, `<folder>/tools/pnpm<N>` |
-| L1 | the npm cache **leaves the map**: `profiles/node_modules` junctions point into `<folder>/runtime/dsh/â€¦` |
-| L2 | host Node leaves the map; `runtime/node/` is added, and the launcher resolves `runtime/node` â†’ PATH |
+| L1 | the npm cache **leaves the map**: `profiles/node_modules` junctions point into `<folder>/runtime/dsh/…` |
+| L2 | host Node leaves the map; `runtime/node/` is added, and the launcher resolves `runtime/node` → PATH |
 | L3 | the pnpm store and the `./tools` bootstrap leave the map; the store moves inside the home (`$DSH_HOME/.pnpm-store`, pinned by the installer rather than inherited from the OS default) so the *only* writable location the app owns stays the home |
 
 After L3 the map reads: **`$DSH_HOME` (all state, all caches, all profiles) plus
 the distribution folder (code and runtime), plus the Desktop for exports.** That
 is the state the page should be edited to describe, and each rung's PR updates it
-in the same commit â€” the map is only "well defined" while it is current.
+in the same commit — the map is only "well defined" while it is current.
 
 ---
 
@@ -367,28 +367,28 @@ to what exists.
 | `win-arm64` | `windows-11-arm` | new: WASM/ARM desktop has no distribution today |
 | `mac-x64` | `macos-15-intel` | **replaces the retired `macos-13`** |
 | `mac-arm64` | `macos-15` | replaces the deprecated `macos-14` |
-| `linux-x64` | `ubuntu-22.04` | the oldest glibc, on purpose â€” keep |
+| `linux-x64` | `ubuntu-22.04` | the oldest glibc, on purpose — keep |
 | `linux-arm64` | `ubuntu-22.04-arm` | new |
 
-Note that `check-dist-layout.mjs` currently *requires* the retired labels â€”
-it fails when `macos-13` or `macos-14` is absent from the workflow â€” so the check
+Note that `check-dist-layout.mjs` currently *requires* the retired labels —
+it fails when `macos-13` or `macos-14` is absent from the workflow — so the check
 and the matrix have to move in the same commit, which is exactly the property that
 made the check worth writing.
 
 `fail-fast: false` stays. Recommended staging: keep the four existing rids
 required, and let the two ARM64 legs start as `continue-on-error` targets so a
-toolchain surprise on a preview image cannot block a release â€” then promote them
+toolchain surprise on a preview image cannot block a release — then promote them
 once they have been green twice.
 
 ### 7.2 Caching, and the new timeout math
 
-Each leg now installs a 223 MB closure and downloads a 26â€“36 MB Node archive.
-Without caching, L2 costs ~4â€“8 minutes of pure download per leg.
+Each leg now installs a 223 MB closure and downloads a 26–36 MB Node archive.
+Without caching, L2 costs ~4–8 minutes of pure download per leg.
 
 - cache `runtime/dsh` keyed on `<OS>-<rid>-<dsh pin>`; cache the downloaded Node
   archive keyed on `<rid>-<node version>` (the archive, not the extracted tree);
 - `Swatinem/rust-cache` for `app/src-tauri` stays as it is;
-- raise `timeout-minutes` to 90 for the build job â€” a cold macOS Intel leg
+- raise `timeout-minutes` to 90 for the build job — a cold macOS Intel leg
   compiling Tauri *and* populating a 25 000-file tree is not a 60-minute job.
 
 ### 7.3 The checks job grows the new invariants
@@ -423,7 +423,7 @@ tag-equals-`package.json`-version guard. Two additions worth making:
 An unsigned Windows binary and an unquarantined macOS binary behave differently
 on a runner than on a desktop: SmartScreen and Gatekeeper do not fire for a
 headless run. The first-launch experience stays a manual check on a real machine
-(recorded in `DISTRIBUTE.md` Â§5), and signing/notarization stays the deliberate
+(recorded in `DISTRIBUTE.md` §5), and signing/notarization stays the deliberate
 next step it is.
 
 ---
@@ -442,7 +442,7 @@ therefore resolves in this order:
 |---|---|---|
 | the interpreter | `<root>/runtime/node/node[.exe]` | `node` on PATH |
 | the harness | `<root>/runtime/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js` | `npx --yes @deepseek-ai/dsh@<pin>` |
-| pnpm | `<root>/runtime/pnpm/â€¦` | `pnpm` on PATH, else the `./tools` bootstrap |
+| pnpm | `<root>/runtime/pnpm/…` | `pnpm` on PATH, else the `./tools` bootstrap |
 
 In the repository, `runtime/` is absent, so every fallback is taken and the loop
 is byte-for-byte what it is today:
@@ -457,28 +457,28 @@ is byte-for-byte what it is today:
 - nothing in `packages/` learns that a distribution exists.
 
 The only visible change in the repository is the launchers' console behaviour
-(Â§5) â€” which is improvement, not a new workflow.
+(§5) — which is improvement, not a new workflow.
 
 ---
 
 ## 9. The ordered work plan
 
-Each step lands on its own, with its own proof. Steps 1â€“2 need no architectural
+Each step lands on its own, with its own proof. Steps 1–2 need no architectural
 decision; step 3 is the big one.
 
 | # | Work | Proof |
 |---|---|---|
-| 1 | **Fix the matrix** (`macos-13` â†’ `macos-15-intel`, `macos-14` â†’ `macos-15`), add `run-desktop.bat` to the `paths:` filter, raise the timeout, teach `check-dist-layout.mjs` to validate runner labels | `node scripts/checks/check-dist-layout.mjs`; a `workflow_dispatch` run that goes green on four legs |
-| 2 | **The launcher contract** (Â§5): `scripts/console/adapt.cmd` + `theme.ps1`, rewrite the five entry points, ship `run-desktop.bat`, add `-Quiet` / `-NoPause`, unify help and exit codes, keep the POSIX halves PowerShell-free | a new tracked check for parity + flag coverage; a manual double-click pass on Windows (Terminal present and absent) |
-| 3 | **L1 â€” vendor the harness**: `runtime/dsh` built per OS in CI, launchers resolve it first, manifest carries it, `-Verify -Offline` gate added | `distribute.bat -Verify -Offline` green, and `profiles/node_modules` junctions visibly pointing inside the folder |
-| 4 | **L2 â€” vendor the Node runtime** per RID, checksum-verified against the official `SHASUMS256.txt`, npm/npx/corepack trimmed, `BUILD-INFO.json` records version + hash | `-Verify -Offline` green with `node` removed from `PATH` |
-| 5 | **L3 â€” vendor pnpm**, point the installer at it, pin the store inside `$DSH_HOME`, run the profile install `--offline` | `-Verify -Offline` green from a cold scratch home with the registry pointed at a dead address |
-| 6 | **Shrink the closure** â€” measure, prune one package at a time (telemetry first), keep only what `-Verify` still passes with | size reported per run; the verify is the only acceptance test |
-| 7 | **Docs sweep**: `PATHS.md` (Â§6 table), `DISTRIBUTE.md` (requirements, sizes, the ladder), `README.md`, `AGENTS.md` (the launcher/Naming decision, the `runtime/` rule) | `node scripts/checks/check-dist-layout.mjs` + a read-through |
+| 1 | **Fix the matrix** (`macos-13` → `macos-15-intel`, `macos-14` → `macos-15`), add `run-desktop.bat` to the `paths:` filter, raise the timeout, teach `check-dist-layout.mjs` to validate runner labels | `node scripts/checks/check-dist-layout.mjs`; a `workflow_dispatch` run that goes green on four legs |
+| 2 | **The launcher contract** (§5): `scripts/console/adapt.cmd` + `theme.ps1`, rewrite the five entry points, ship `run-desktop.bat`, add `-Quiet` / `-NoPause`, unify help and exit codes, keep the POSIX halves PowerShell-free | a new tracked check for parity + flag coverage; a manual double-click pass on Windows (Terminal present and absent) |
+| 3 | **L1 — vendor the harness**: `runtime/dsh` built per OS in CI, launchers resolve it first, manifest carries it, `-Verify -Offline` gate added | `distribute.bat -Verify -Offline` green, and `profiles/node_modules` junctions visibly pointing inside the folder |
+| 4 | **L2 — vendor the Node runtime** per RID, checksum-verified against the official `SHASUMS256.txt`, npm/npx/corepack trimmed, `BUILD-INFO.json` records version + hash | `-Verify -Offline` green with `node` removed from `PATH` |
+| 5 | **L3 — vendor pnpm**, point the installer at it, pin the store inside `$DSH_HOME`, run the profile install `--offline` | `-Verify -Offline` green from a cold scratch home with the registry pointed at a dead address |
+| 6 | **Shrink the closure** — measure, prune one package at a time (telemetry first), keep only what `-Verify` still passes with | size reported per run; the verify is the only acceptance test |
+| 7 | **Docs sweep**: `PATHS.md` (§6 table), `DISTRIBUTE.md` (requirements, sizes, the ladder), `README.md`, `AGENTS.md` (the launcher/Naming decision, the `runtime/` rule) | `node scripts/checks/check-dist-layout.mjs` + a read-through |
 | 8 | **First release**: commit the feature, tag == `package.json` version, `gh release create`, six archives + checksums attached | the release page, and the per-OS smoke job green |
 
 Step 3 is where the folder stops being a launcher-with-prerequisites and becomes
-the application; steps 4â€“5 are what make it run on a machine with nothing
+the application; steps 4–5 are what make it run on a machine with nothing
 installed at all.
 
 ---

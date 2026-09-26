@@ -111,7 +111,7 @@ still mounts exactly one bar.
 > capsules, host bridge and the `file-reference-local` row override - was
 > retired in the editor's alpha.2, and the pack moved to registering tab types
 > into the shipped bar. It now goes further and **owns the bar itself** by
-> forking it (see Â§4). Both install scripts carry
+> forking it (see §4). Both install scripts carry
 > `$legacyNames = @('dsh-focus','dsh-files')` and prune those names from every
 > profile they touch, so an upgrade cannot leave a stale bundle mounted.
 
@@ -225,17 +225,17 @@ kit's own again:
 | the `splitPane` store intent: `dockPaneIds(state).length >= 2` | the kit's `canSplit` only |
 | the `dropTab` store intent: refuses `top`/`bottom`, and any edge drop at two panes | the kit's `planDropTab`, which checks `canSplit` itself |
 | the surface's `canSplit` prop: `canSplit(layout) && dockPaneIds(layout).length < 2` | `canSplit(layout)` |
-| the `split()` command guard: `canSplit(layout) \|\| â€¦ >= 2 \|\| !canSplitPane(target)` | `canSplit(layout) \|\| !canSplitPane(target)` |
+| the `split()` command guard: `canSplit(layout) \|\| … >= 2 \|\| !canSplitPane(target)` | `canSplit(layout) \|\| !canSplitPane(target)` |
 | the `dock.splitPaneDisabled` hint: "Two panes is the limit" / the zh twin | "Four panes is the limit" / its zh twin |
 
 Two consequences worth knowing. The **Split control is still row-only** - the
-kit's `planSplitPane` hardcodes `axis: "row", direction: "after"` - so a 2Ã—2 is
+kit's `planSplitPane` hardcodes `axis: "row", direction: "after"` - so a 2×2 is
 built by **dragging a tab into a pane's top or bottom quarter**; the hints for
 those bands ("Add top split" / "Add bottom split") and their glyphs were already
 in the core bundle and its locale dictionaries, and only the fork's own refusal
 kept them from ever being drawn. And **room still beats count**: the kit hides the
 Split control and refuses a drop when a pane cannot hold two strips
-(`SPLIT_MINIMUMS` â‰ˆ 100px chip + 48px body each side), so four panes want a
+(`SPLIT_MINIMUMS` ≈ 100px chip + 48px body each side), so four panes want a
 widened bar or the panel's fullscreen mode. Floating panels were never counted
 against the dock ceiling, so they remain the way past four.
 
@@ -294,11 +294,11 @@ and this one in its place. It registers the `files` tab kind (guide entry
 `order: 10`) and lists the session workspace through the `remote.workspaceFiles`
 Remote (`list(sessionId, path, signal)`), one level at a time; a file row calls
 `tabActions.openResource(fileAddressFor(sessionId, root, path))`. Routing that
-address to a viewer is the registry's job - which is exactly the hook Â§6 uses.
+address to a viewer is the registry's job - which is exactly the hook §6 uses.
 
 That Remote is read-only: `read`, `readBytes`, `readAll`, `readRelated`,
 `stat`, `list`, `changes` - and **no mutation operation**. The editor's save
-path therefore needs a route of its own (Â§6).
+path therefore needs a route of its own (§6).
 
 ## 6. The editor tab type (dsh-editor)
 
@@ -321,11 +321,11 @@ pack's file routes.
 
 Behaviours that follow from that table:
 
-- Clicking a `.ts`, `.json`, `.py`, `.md`, â€¦ anywhere the Sidebar opens files
+- Clicking a `.ts`, `.json`, `.py`, `.md`, … anywhere the Sidebar opens files
   (the Files tree, a file link in the conversation) claims to this type and shows
   the editor. Re-opening the same address reveals the same tab.
-- Clicking a `.png`, `.pdf`, `.html`, â€¦ is vetoed, so the shipped preview keeps
-  it. Paths outside the session workspace (including `absolute/â€¦` addresses,
+- Clicking a `.png`, `.pdf`, `.html`, … is vetoed, so the shipped preview keeps
+  it. Paths outside the session workspace (including `absolute/…` addresses,
   which carry no authorizing session) are vetoed too.
 - **Markdown is editable, and `Preview` is the way back** (alpha.6). The toolbar
   button (shown only while an `md`/`markdown` file is open) asks the right bar's
@@ -373,7 +373,7 @@ uses for its ZIP download:
 
 | Route | Behavior |
 |---|---|
-| `GET /api/dsh-editor/file?session&path` | resolves the session's workspace root, realpath-containment inside it; strict UTF-8 decode + NUL rejection (`NOT_TEXT`); â‰¤ 2 MiB; returns `{text, version, mtimeMs, size}` |
+| `GET /api/dsh-editor/file?session&path` | resolves the session's workspace root, realpath-containment inside it; strict UTF-8 decode + NUL rejection (`NOT_TEXT`); ≤ 2 MiB; returns `{text, version, mtimeMs, size}` |
 | `PUT /api/dsh-editor/file` | same containment; atomic temp-file + rename; optimistic guard - the echoed `mtimeMs`/`size` must match or it answers `409 CHANGED_ON_DISK` instead of clobbering |
 | `PUT /api/dsh-editor/file` with `{create: true}` | **create** a new file: the PARENT folder must exist inside the workspace and is realpath-checked (a symlinked folder cannot smuggle the write out), the target must not exist (`409 EXISTS`), and the publish is create-exclusive (hard link, then a `COPYFILE_EXCL` copy fallback) so a create never replaces a file the user did not open |
 | `GET /api/dsh-editor/vendor` | streams the vendored CodeMirror 6 classic bundle (committed `lib/vendor/cm6.min.js`, generated from `vendor/entry.js`, see the package README) |
@@ -457,14 +457,14 @@ opaque dark canvas no token can lighten. The surface therefore configures
 inside a CodeMirror `Compartment`, and it re-configures on the fly when the
 appearance flips. The text colour is `--dsw-alias-label-primary` in both modes,
 which is what keeps a document with **no syntax language** (`.ps1`,
-`.gitignore`, `.txt` â€” its colour comes from that token, not from a highlight
+`.gitignore`, `.txt` — its colour comes from that token, not from a highlight
 style) readable; before alpha.5 it painted the light theme's near-black text on
 oneDark's dark canvas. Scheme truth order: the shipped
 `@deepseek-ai/dsh-client-ui-theme` snapshot (`active.colorScheme`, resolved
 lazily through `ctx.get('theme')` and followed via its `theme/change` event),
 else the `body[data-ds-dark-theme]` marker ui-layout writes (also observed, for
 a profile where ui-theme never lands), else `prefers-color-scheme`, else dark.
-The header control that switches the preference itself is Â§9.
+The header control that switches the preference itself is §9.
 
 ## 7. The History tab (dsh-gittree)
 
@@ -475,9 +475,9 @@ It is a **page type** - no `patterns` - so it never competes for a file address:
 `sidebar://gittree` is its only address. It registers one guide entry (`order: 30`,
 after Files at 10 and Editor at 20), and both the chip and the guide capsule read
 "History" - the label only: the package, the row, the kind and the address keep the `dsh-gittree` / `gittree` name. The body is registered in the keyed `sidebar.right.pane.tab` seat under
-the same id, so it follows the two-stage contract every other type follows (Â§4).
+the same id, so it follows the two-stage contract every other type follows (§4).
 
-**What it shows.** The **commit history** of the tabâ€™s own conversation folder:
+**What it shows.** The **commit history** of the tab’s own conversation folder:
 short id, subject, author and date per row, newest first. Picking a commit opens its
 full id, author, date, message body and the files it touched, each of which opens that
 file in whatever claims it. The file bar above the list carries the branch, the short
@@ -486,19 +486,19 @@ the version marker. There is no working-tree listing: the Files tab already brow
 folder, and the tab reads the state route with `brief=1`, so no file list is ever built
 into an answer it would not show.
 
-**How a row opens a file.** Every file row - a commitâ€™s changed file - opens the same way a click in the Files tab does: the tab
+**How a row opens a file.** Every file row - a commit’s changed file - opens the same way a click in the Files tab does: the tab
 record's own `openResource` action with a `dsh-resource://file/session/<id>/<path>`
 address and **no options**, so the registry's ranking decides - the editor for
 text, a shipped preview for an image or a PDF. The package therefore depends on
 neither, and it publishes no service of its own.
 
 **Where the data comes from.** Its Node half owns three authenticated,
-**read-only** routes registered through `connection.fetch` - the mechanism Â§6
+**read-only** routes registered through `connection.fetch` - the mechanism §6
 uses for the editor's file routes:
 
 | Route | Git behind it |
 |---|---|
-| `state` (`brief=1` is the tabâ€™s form) | `rev-parse --show-toplevel` / `--short HEAD`, `status --porcelain=v2 -z --untracked-files=all --branch`; `ls-files -z` and the entry merge only in the full form |
+| `state` (`brief=1` is the tab’s form) | `rev-parse --show-toplevel` / `--short HEAD`, `status --porcelain=v2 -z --untracked-files=all --branch`; `ls-files -z` and the entry merge only in the full form |
 | `history` | `log -n N --date=short --pretty=format:...`, scoped with `-- <workspace>` when the workspace is a subfolder |
 | `commit` | `show -s --pretty=format:...` plus `diff-tree --root --no-commit-id --name-status -r -z` |
 
@@ -533,7 +533,7 @@ The rules that make that safe to own:
   its answer only while it is still the newest one. alpha.1 returned a cleanup from the
   effect instead, so the next render - the one its own `setState` caused - ran that
   cleanup, marked the request stale and dropped the answer, and the panel sat on
-  "Reading the historyâ€¦" forever. That is the shape the request code in
+  "Reading the history…" forever. That is the shape the request code in
   `lib/client.js` warns about.
 - **Lazy.** Nothing runs until the tab is shown, and the History request waits for
   the History view. Every answer is `no-store`.
@@ -580,14 +580,14 @@ Design points worth keeping:
 ## 9. The conversation header (dsh-themes)
 
 `dsh-themes` is the pack's **conversation-header package**: it owns the four
-controls described below â€” the Themes button, the Session-log download seat, the
-Screenshot control and the Page-zoom control â€” plus the appearance overrides that
+controls described below — the Themes button, the Session-log download seat, the
+Screenshot control and the Page-zoom control — plus the appearance overrides that
 dress the bar and the frame.
 
 The conversation header's right-hand group is a slot list
-(`conversation.session.header.utilities`): the shipped **Open Inâ€¦** split button
+(`conversation.session.header.utilities`): the shipped **Open In…** split button
 registers there at `order: -10`, the Session-log download seat at the default `0`
-(that seat used to draw a three-dot button â€” see the download seat below), the
+(that seat used to draw a three-dot button — see the download seat below), the
 **Screenshot** control at **`-30`**, the Themes control at **`-20`** and the
 **Page-zoom** control at **`-40`**, the leftmost of the pack's four. The list
 renders in ascending order, so the row reads zoom | capture | themes | download
@@ -599,10 +599,10 @@ next to Open In. Nothing shipped is patched or reordered.
 |---|---|
 | `id` | `dsh-themes` (the occupant's slot id) |
 | slot | `conversation.session.header.utilities` (list, session scope) |
-| `order` | `-20` â€” left of Open In (-10), right of the capture and zoom controls |
-| body | one icon button (28Ã—28, 28px radius, 6px padding, 15px glyph, and the group's `.5px` hairline ring since alpha.9) opening a `Menu` of Light / Dark / System plus **every theme registered into the shipped registry** (alpha.12). The button wears one static appearance mark (a half-filled disc), not the active preference's sun/moon |
+| `order` | `-20` — left of Open In (-10), right of the capture and zoom controls |
+| body | one icon button (28×28, 28px radius, 6px padding, 15px glyph, and the group's `.5px` hairline ring since alpha.9) opening a `Menu` of Light / Dark / System plus **every theme registered into the shipped registry** (alpha.12). The button wears one static appearance mark (a half-filled disc), not the active preference's sun/moon |
 | state | the shipped `theme` client service's snapshot, read through `ctx.get('theme')` |
-| write | `theme.setTheme(id)` â€” the same call the Settings â†’ General â†’ Appearance row makes |
+| write | `theme.setTheme(id)` — the same call the Settings → General → Appearance row makes |
 
 **Why a thin control and not a second theme system: the preference has one
 owner.** `@deepseek-ai/dsh-client-ui-theme` (row `ui-theme` in the web roster)
@@ -616,7 +616,7 @@ from Settings, so this package reads and writes the same service instead.
 Design points worth keeping:
 
 - **The service is optional and resolved lazily.** `theme` is read with
-  `ctx.get('theme')` at use time and is NOT in the exported `inject` list â€” the
+  `ctx.get('theme')` at use time and is NOT in the exported `inject` list — the
   same rule `dsh-editor` follows for `modals`. A profile that never mounts
   ui-theme keeps its header: the button renders disabled with "The theme service
   is unavailable", and a write throws instead of silently doing nothing.
@@ -636,10 +636,10 @@ Design points worth keeping:
   presenter writes the definition's alias tokens as inline `body` variables over
   the base palette `colorScheme` selects, and `getTheme().themes` publishes the
   registry. The control iterates that list and appends `system` last, so
-  `THEME_EXTENSIONS` (this package's **Nord**, **Monokai** since alpha.13 â€” the
-  classic TextMate palette â€” and **Hacker** since alpha.19, the phosphor terminal,
+  `THEME_EXTENSIONS` (this package's **Nord**, **Monokai** since alpha.13 — the
+  classic TextMate palette — and **Hacker** since alpha.19, the phosphor terminal,
   all registered in that order in the same 93-token shape)
-  is the only place a palette is declared â€” and a theme another plugin registers
+  is the only place a palette is declared — and a theme another plugin registers
   shows up too, named by its id with the generic mark. Registration is idempotent
   and retried on the post-boot microtask and on every `theme/change`, because
   ui-theme may provide its service a tick after this row. An extension theme is
@@ -665,7 +665,7 @@ injected rule that **re-declares ui-theme's own light declarations** on that
 container and paints it white:
 
 ```css
-body [data-document-markdown]{ /* the theme's light layer, verbatim */ background:#fff; â€¦ }
+body [data-document-markdown]{ /* the theme's light layer, verbatim */ background:#fff; … }
 ```
 
 - **Read, not hardcoded.** The light layer is copied at boot out of the theme
@@ -692,7 +692,7 @@ body [data-document-markdown]{ /* the theme's light layer, verbatim */ backgroun
   land late), and again on every `theme/change` (a palette swap re-registers the
   sheets); the style tag is reused, so repeated installs are idempotent.
 
-The way to this view for a Markdown file is the editor's **Preview** button (Â§6).
+The way to this view for a Markdown file is the editor's **Preview** button (§6).
 
 **The Markdown chrome (alpha.3).** The same package carries the pack's second
 appearance override, and it is about shape rather than palette: a rendered
@@ -700,7 +700,7 @@ Markdown page has exactly **one** viewer, but the shipped preview header builds 
 viewer menu from *every* candidate implementation it resolved for the file - the
 Markdown body plus the plain-text fallback - so a Markdown tab offered
 "Markdown" / "Plain text". The pack's answer to that file is the editor (the
-**Edit** button on the page, Â§6), never a second renderer, so the menu is hidden:
+**Edit** button on the page, §6), never a second renderer, so the menu is hidden:
 
 ```css
 body [data-document-preview="@deepseek-ai/dsh-client-ui-sidebar-documentpreview/markdown"]
@@ -769,10 +769,10 @@ where the mark was, and the product text **vn-harness** (alpha.14; it read **VN 
 
 **The header ring (alpha.9).** The conversation header's icon buttons are meant
 to read as one group, and the group's dress is a **round hairline outline**:
-28Ã—28, `border-radius:28px`, `.5px solid var(--dsw-alias-border-l3)`, held inside
+28×28, `border-radius:28px`, `.5px solid var(--dsw-alias-border-l3)`, held inside
 the box by `box-sizing:border-box`. The terminal control has always worn it and
 the pack's Session-log download seat does too; this package's own button did not,
-so it sat bare among them â€” it does now (its own `.dst-button` rule, no
+so it sat bare among them — it does now (its own `.dst-button` rule, no
 override needed). The ONE button on that bar that cannot draw the ring where it
 lives is the right bar's own collapse/expand toggle in the header corner: it
 belongs to a **GENERATED** forked bundle that is never hand-edited, so one rule
@@ -789,41 +789,41 @@ carries ui-conversation's own `data-conversation-header-corner` marker, so the
 rule survives class-name churn. `box-sizing` is part of it because the toggle's
 own dress does not set it (without it the outline would grow the button by half a
 pixel per side). The corner is a `single` slot, so the rule cannot leak onto
-unrelated controls, and the rule set is installed once â€” there is no palette in
+unrelated controls, and the rule set is installed once — there is no palette in
 it.
 
 **The Session-log download seat (alpha.9).** The same package also owns the
 header's **download seat**, because that seat is the other half of this group and
 the two controls share one dress. The shipped
 `@deepseek-ai/dsh-session-log-export` browser half put a **three-dot "more
-actions" button** there whose menu held exactly one item, "Download session log" â€”
+actions" button** there whose menu held exactly one item, "Download session log" —
 one click to open a menu, a second to pick the only thing in it.
 
 | Piece | Value |
 |---|---|
 | slot | `conversation.session.header.utilities` (list, session scope) |
-| `id` | **`session-log-download`** â€” the SHIPPED occupant's own id |
+| `id` | **`session-log-download`** — the SHIPPED occupant's own id |
 | `priority` | **`-10`** (the shipped occupant sits at the default `0`) |
-| `order` | `0` â€” the shipped occupant's own order, so the button does not move |
+| `order` | `0` — the shipped occupant's own order, so the button does not move |
 | export | the shipped `sessionLogDownload` controller, resolved with `ctx.get(...)` |
-| dress | the same `.dst-button` as the Themes control (28Ã—28, 15px glyph, the ring) |
+| dress | the same `.dst-button` as the Themes control (28×28, 15px glyph, the ring) |
 
 **The seat is taken by the slot system's shadowing rule, not by CSS.** A list
 slot renders the **lowest priority** registration for a given `id` and keeps one
 occupant per id, so registering the *same* id one priority lower makes this
 component the rendered one and leaves the shipped registration in the registry,
 unrendered (`entriesOfSlot` is what the renderer walks). Nothing is hidden with a
-hashed class â€” a harness bump that renames classes cannot resurrect the three-dot
-button beside this one â€” and no DOM is touched. `dsh-editor` shadows the rendered
+hashed class — a harness bump that renames classes cannot resurrect the three-dot
+button beside this one — and no DOM is touched. `dsh-editor` shadows the rendered
 Markdown body the same way (`key` + a lower `priority` in a keyed slot).
 
 **The export is not reimplemented.** The shipped row stays mounted *because* it
 is dual-face: its host half owns the authenticated `/api/session.export` stream
 and the `/export` slash command, so disabling the row would take the feature away
 rather than the button. Its browser half publishes the `sessionLogDownload`
-controller â€” the one-export-per-Session state machine that HEADs the export URL,
+controller — the one-export-per-Session state machine that HEADs the export URL,
 hands the browser its own download and publishes `downloading` / `success` /
-`error` â€” and this control calls `download(sessionId)` / `dismiss(sessionId)` on
+`error` — and this control calls `download(sessionId)` / `dismiss(sessionId)` on
 it. Both surfaces therefore share ONE implementation and ONE busy state: the
 button renders disabled while the controller reports `downloading`, and `/export`
 behaves as it always did.
@@ -850,15 +850,15 @@ longer a no-op row.
 |---|---|
 | slot | `conversation.session.header.utilities` (list, session scope) |
 | `id` | `dsh-themes-screenshot` |
-| `order` | `-30` â€” left of the Themes control (`-20`), right of the Page-zoom control (`-40`) |
+| `order` | `-30` — left of the Themes control (`-20`), right of the Page-zoom control (`-40`) |
 | capture | `navigator.mediaDevices.getDisplayMedia({preferCurrentTab:true, selfBrowserSurface:'include', video:{displaySurface:'browser'}, audio:false})`, one frame `drawImage`'d into a canvas and encoded as `image/png` |
-| save | `POST /api/dsh-themes/screenshot` (this package's host row) â†’ `%USERPROFILE%\Desktop` / `~/Desktop` / XDG desktop / home, as `vn-harness-<timestamp>.png` |
+| save | `POST /api/dsh-themes/screenshot` (this package's host row) → `%USERPROFILE%\Desktop` / `~/Desktop` / XDG desktop / home, as `vn-harness-<timestamp>.png` |
 | fallback | the browser's own download, when the host route answers nothing |
 | feedback | the shipped `Toast`, anchored to the button: the saved path, or the reason it failed |
 
 **100% width and 100% height is the tab's box.** The Web GUI is a
-**fixed-viewport shell**: the document itself does not scroll â€” the middle and
-right columns do, each keeping its own scroll position â€” so the page's full width
+**fixed-viewport shell**: the document itself does not scroll — the middle and
+right columns do, each keeping its own scroll position — so the page's full width
 and full height are exactly what fills the tab. One frame of the tab's own surface
 is therefore the whole picture: nothing is stitched, and there is no scrolled-out
 remainder to guess at.
@@ -884,7 +884,7 @@ as it stands, this package's own header controls included**: they are part of th
 header being photographed, and alpha.10's rule that took them out of the frame left
 a hole in the record, which alpha.11 closes. The one thing the injected
 `themes.css` rule keeps out (`html[data-dsh-screenshot] [role=tooltip]`) is the
-**open tooltip bubble** â€” a hover card is not part of the interface, and the
+**open tooltip bubble** — a hover card is not part of the interface, and the
 pointer is usually still on the button that started the capture. That button also
 passes `disabled` to its own `Tooltip` while the capture runs (the shipped
 primitive's close-and-stay-closed switch, keyed on a prop), so its bubble is gone
@@ -894,39 +894,39 @@ other `Tooltip` in the app, and it is keyed on the tooltip's semantic
 
 **The file lands on the host's Desktop, not in the download folder.** The PNG is
 POSTed to this package's own authenticated route
-(`connection.fetch.register`, `methods: ['POST']`, `requestBody: 'buffered'` â€”
+(`connection.fetch.register`, `methods: ['POST']`, `requestBody: 'buffered'` —
 the same carrier contract dsh-editor and the shipped file-upload plugin use; the
 bridge buffers bodies up to 300 MiB). The handler, in order:
 
 1. requires `content-type: image/png` (else `415`),
 2. reads the body and refuses an empty one (`400`) or more than 64 MiB (`413`),
-3. requires the real **PNG signature** (`415` otherwise â€” the file is written to
+3. requires the real **PNG signature** (`415` otherwise — the file is written to
    the user's Desktop, so it has to be worth writing),
 4. resolves the Desktop **per request**: `%USERPROFILE%\Desktop`,
    `%USERPROFILE%\OneDrive\Desktop`, `$HOME/Desktop`, the freedesktop
    `XDG_DESKTOP_DIR`, `os.homedir()/Desktop`, OneDrive again, and the home folder
-   as the last resort â€” read fresh every time, because the Desktop can be
+   as the last resort — read fresh every time, because the Desktop can be
    redirected (OneDrive) or configured (XDG) at any moment,
 5. writes it **create-exclusively** (`flag: 'wx'`) and answers
-   `{ ok, path, directory, bytes }`, taking `-2`, `-3`, â€¦ when the timestamped
+   `{ ok, path, directory, bytes }`, taking `-2`, `-3`, … when the timestamped
    name is already there (a second shot inside the same second never clobbers
    the first).
 
 The client never names a path, so the route has no traversal surface and no way
 to overwrite a file the user already had; a host with no Desktop and no home
 answers a typed failure (`500` + code) rather than throwing. When the host row is
-absent â€” an older profile, or `-Plugin dsh-themes` against a partial install â€”
+absent — an older profile, or `-Plugin dsh-themes` against a partial install —
 `deliverPng` falls back to an `<a download>` of the blob, so the control always
 produces a picture; the toast says which of the two paths happened.
 
 **The Page-zoom control (alpha.15).** The fourth occupant of the same list, at
-**`order: -40`** â€” one more step left, so it is the first control in the group â€”
+**`order: -40`** — one more step left, so it is the first control in the group —
 which drops a `Menu` holding the level in force plus the two steps, **Zoom in** and
 **Zoom out**.
 
 It exists because the gesture it mirrors is the *browser's*: `Ctrl+` / `Ctrl-`
 (and Ctrl+wheel) page zoom belongs to Chrome, and the **native window**
-`run-desktop.bat` opens â€” a Tauri shell over the very same `dsh web` â€” has no such
+`run-desktop.bat` opens — a Tauri shell over the very same `dsh web` — has no such
 gesture at all. No page can invoke the browser's own zoom, so this control writes
 the equivalent itself.
 
@@ -934,20 +934,20 @@ the equivalent itself.
 |---|---|
 | slot | `conversation.session.header.utilities` (list, session scope) |
 | `id` | `dsh-themes-zoom` |
-| `order` | `-40` â€” the group's leftmost occupant, left of the Screenshot control (`-30`) |
+| `order` | `-40` — the group's leftmost occupant, left of the Screenshot control (`-30`) |
 | what it writes | ONE inline declaration on `document.documentElement`: `zoom: <percent/100>`, and `removeProperty('zoom')` at the resting level |
 | ladder | Chrome's own zoom steps, cut at **50%** and **200%** |
 | memory | `localStorage['dsh-themes.page-zoom']`, per origin, re-applied before the control's first render |
 | gesture | the mode click opens the menu; a step keeps it open (the shipped `Menu` still closes on a press outside or on Escape) |
 
-**Why `zoom` on the root, and not a transform.** `zoom` is engine-neutral CSS â€”
-Chromium and WebKit have carried it for years, Firefox since 126 â€” so ONE code path
+**Why `zoom` on the root, and not a transform.** `zoom` is engine-neutral CSS —
+Chromium and WebKit have carried it for years, Firefox since 126 — so ONE code path
 zooms a Chrome tab and the shell's WebView: no host half, no Tauri API, no
 permission, and the bundle stays browser-only. Chromium divides the initial
 containing block by the root's zoom, so the shell's own dress
 (`html,body,#root{height:100%}`) still fills the window exactly and the **layout
-viewport really does become the narrower one** â€” media queries and fl/grid
-reflow â€” which is what makes this a page zoom rather than a magnifier. A CSS
+viewport really does become the narrower one** — media queries and fl/grid
+reflow — which is what makes this a page zoom rather than a magnifier. A CSS
 `transform: scale()` would have moved pixels without reflowing anything, and a
 page laid out at full width but drawn at 200% has to be scrolled sideways to be
 read.
@@ -955,9 +955,9 @@ read.
 **The ceiling is measured, not stylistic.** The control lives inside the page it
 zooms, and the utilities row it sits in is a crumb plus four 28px buttons (~400px
 of min-content). Since a root `zoom` shrinks the layout viewport, a high enough
-rung pushes that row â€” this button included â€” past the window's right edge, and
+rung pushes that row — this button included — past the window's right edge, and
 the shell does not scroll, so the only way back down would be gone. Measured on
-the real shell at a 1378Ã—802 window: 200% and 250% leave the button at xâ‰ˆ870,
+the real shell at a 1378×802 window: 200% and 250% leave the button at x≈870,
 300% at 1044, **400% at 1392 (past the edge)** and 500% pushes the whole header
 out. The ladder therefore stops at 200%, a rung that still fits with room to
 spare, and the bottom stops at 50% (25% renders a shell an agent works in
@@ -966,14 +966,14 @@ levels the keyboard gesture would. `check-client-bundles.mjs` pins the array.
 
 **What it deliberately does not do.** It never listens for a key: swallowing
 `Ctrl+` / `Ctrl-` in the page would **double** the zoom in a browser, where the
-gesture already works. It writes nothing at 100% â€” the declaration is removed, not
-set to `1` â€” so an unzoomed page keeps exactly the `style` attribute the harness
+gesture already works. It writes nothing at 100% — the declaration is removed, not
+set to `1` — so an unzoomed page keeps exactly the `style` attribute the harness
 shipped. And a stored level that is not on the ladder is ignored rather than
 applied, because the ladder is the only thing this control ever writes.
 
 **Two honest limits, both measured.** `vh` is resolved against the real viewport
 and CSS `zoom` does not change it, while `window.innerWidth` keeps reporting
-unscaled pixels â€” nothing in the frame's own dress is affected (it is laid out in
+unscaled pixels — nothing in the frame's own dress is affected (it is laid out in
 percentages), but the few `max-height: calc(100vh - X)` rules on the shipped menus
 and dialogs are a little more generous than a browser zoom at the same level, and
 `position: fixed; inset: 0` surfaces still span the window exactly. Pointer
@@ -988,11 +988,11 @@ that has to stay plain.
 
 **The third one was a broken core control, and it is fixed (alpha.16).** That same
 scaling splits one piece of frame geometry in half: `ui-layout` solves its three
-column widths from the frame's `getBoundingClientRect().width` â€” **scaled** by a
-root `zoom` â€” but places the right bar's **outer resize seam** with
+column widths from the frame's `getBoundingClientRect().width` — **scaled** by a
+root `zoom` — but places the right bar's **outer resize seam** with
 `left: viewport - rightbar`, which is **layout pixels**. At 100% the two are the
 same number and nothing shows; with a level in force the seam slides towards the
-middle of the conversation â€” 288px off at 80% on a 1440px frame â€” and the bar can
+middle of the conversation — 288px off at 80% on a 1440px frame — and the bar can
 no longer be dragged, which in the native window (the one host this control exists
 for) reads as "the right bar stops being resizable after I zoom". The **left** bar
 was never affected, and that asymmetry is the tell: its `left` is a layout-pixel
@@ -1018,7 +1018,7 @@ one `dsh-terminal` already follows) and on the handle's own `data-side` attribut
 **never a hashed class**; and the `!important` beats the inline `left` the frame
 keeps writing. A browser without CSS anchor positioning drops both declarations and
 keeps the behaviour of before this change. Nothing is forked and no core row is
-disabled â€” this is dress, the same shape as the header-ring override. Measured in
+disabled — this is dress, the same shape as the header-ring override. Measured in
 the desktop window at 80%, 100% and 125% driving the control's own menu and the
 drag with real pointer input: the seam sits on the column's left edge to 0.00px and
 a drag still resizes the panel, and back at 100% the marker is cleared and the
@@ -1026,7 +1026,7 @@ computed `left` falls back to the frame's inline value.
 
 ## 10. The file-manager half of Open In (dsh-open-in-app)
 
-The Session header's **"Open Inâ€¦"** split button comes from the shipped
+The Session header's **"Open In…"** split button comes from the shipped
 `@deepseek-ai/dsh-client-ui-open-in-app` + `@deepseek-ai/dsh-host-open-in-app`
 pair. Its file-manager entries (File Explorer / Finder / Files) are opened by the
 host through the OS shell's *open verb* - `Invoke-Item` inside a spawned
@@ -1070,8 +1070,8 @@ the generated banner lists the applied patches.
 The pack's first surface that is not in a column. A real shell in a **bottom
 dock**: one horizontal panel that starts at the right edge of the left bar, runs
 to the full width of the page, and sits **under** the middle and right columns -
-which make room for it instead of being covered. Like Â§7 it forks nothing,
-disables no core row and publishes no service; unlike Â§7 it does vendor a browser
+which make room for it instead of being covered. Like §7 it forks nothing,
+disables no core row and publishes no service; unlike §7 it does vendor a browser
 engine and does own an upgrade route.
 
 **Where it registers.** Two seats, both through `ctx.slots.inject` so neither is
@@ -1147,8 +1147,8 @@ horizontally **scrolling** box. alpha.3 clipped what ran past the right edge
 (`overflow:hidden`) and kept `+` *inside* the clipped region, so the control that
 opens a terminal could scroll out of reach with the chips. Two rules keep it
 honest: the strip measures its own overflow (`scrollWidth > clientWidth`, plus
-each end, so a click at an end dims) and grows a `â€¹`/`â€º` pair only while there
-really is some â€” the arrows are the affordance the strip wears **instead of** a
+each end, so a click at an end dims) and grows a `‹`/`›` pair only while there
+really is some — the arrows are the affordance the strip wears **instead of** a
 native scrollbar, which on a 24px row costs more height than it explains and
 would shift the whole bar the first time a chip overflowed. A bare wheel over the
 strip moves it (the pack's other scrollable surfaces do the same, and that
@@ -1157,13 +1157,13 @@ passive and a `preventDefault()` inside it is a no-op), and the chip on screen i
 scrolled into view by the smallest amount that reveals it, measured against the
 strip's own `getBoundingClientRect`. That last piece is a **pure function**
 (`revealDelta`), exported as the bundle's `__internals` so the tracked check can
-drive the arithmetic directly â€” a sign error there scrolls the strip *further
+drive the arithmetic directly — a sign error there scrolls the strip *further
 away* from the chip it was asked to show, which no static render can see, and the
 check asserts both directions, the 8px of air and the no-op case.
 
 Picking a chip **publishes** the pick. `runtime.show()` writes `dock.active`
 straight into the store's map and re-fits the visible emulator, but it bumps no
-revision â€” so a pick routed through it alone left React's `data-active` on the
+revision — so a pick routed through it alone left React's `data-active` on the
 chip the reader had just left: the terminal being shown changed and the highlight
 did not (reported against alpha.3, fixed in alpha.4 by routing every pick through
 one `selectSlot()` that writes the store, asks the runtime to show the slot and
@@ -1184,14 +1184,14 @@ first-class outcome: `health` answers `available:false` with the reason, the doc
 renders it, and the boot is untouched.
 
 **The routes.** Four authenticated HTTP routes through `connection.fetch` - the
-mechanism Â§6 uses - and ONE **upgrade** route, which that mechanism does not
+mechanism §6 uses - and ONE **upgrade** route, which that mechanism does not
 cover:
 
 | Route | What it is |
 |---|---|
 | `GET /api/dsh-terminal/health` | PTY availability, the shell's label, the capacity, the platform |
 | `GET /api/dsh-terminal/activity` | the agent view's read: this conversation's command-relevant session events, filtered and bounded (read-only) |
-| `GET /api/dsh-terminal/vendor/xterm.js` / `xterm.css` | the vendored engine (ETag-cached), like Â§6's CodeMirror bundle |
+| `GET /api/dsh-terminal/vendor/xterm.js` / `xterm.css` | the vendored engine (ETag-cached), like §6's CodeMirror bundle |
 | `WS /api/dsh-terminal/pty` | the terminal itself |
 
 `ctx.webServer.registerUpgrade` hands the raw socket over, so this package
@@ -1206,7 +1206,7 @@ and `cat` of a JSON file must never be mistaken for a control message
 drops dead sockets.
 
 **Sessions.** One PTY per (conversation, slot), at most 8 per conversation, cwd
-resolved exactly as Â§6/Â§7 resolve it. Output is retained in a 256 KiB scrollback
+resolved exactly as §6/§7 resolve it. Output is retained in a 256 KiB scrollback
 ring, and a session whose last socket goes away is kept for five minutes before
 the reaper ends it - so a reload (or closing the dock) reattaches and replays
 instead of losing the shell. Every timer is `unref`ed: a terminal can never hold
@@ -1214,7 +1214,7 @@ the harness process open. `pid` is reported `null` in the first `ready` frame on
 Windows, where node-pty answers `0` until ConPTY has attached.
 
 **The vendored engine.** xterm.js 5.5.0 plus `@xterm/addon-fit` 0.10.0, built by
-`packages/dsh-terminal/vendor/` exactly the way Â§6 builds CodeMirror (npm install
+`packages/dsh-terminal/vendor/` exactly the way §6 builds CodeMirror (npm install
 + one documented esbuild line), producing `lib/vendor/xterm.js`
 (`window.DSHTerminal`) and its stylesheet. The browser half fetches them lazily
 the first time a dock opens and injects the script through a blob URL.
@@ -1384,9 +1384,9 @@ accept the same flags (`-Port`, `-DshHome`, `-DshVersion`, `-NoBrowser`,
    session looks exactly like a hand-typed `dsh web` (the PowerShell half leaves
    stderr unmerged - `2>&1` into the pipeline turns npm warnings into a
    terminating `NativeCommandError`; the shell half pipes both through a FIFO);
-2. **watch** it for the ready line, `dsh web: http://127.0.0.1:<port>/?token=â€¦`
+2. **watch** it for the ready line, `dsh web: http://127.0.0.1:<port>/?token=…`
    (printed by `dsh-web-app` when `printUrl` is on, which is the default, and
-   kept apart from the optional `(LAN: â€¦)` tail that follows it);
+   kept apart from the optional `(LAN: …)` tail that follows it);
 3. **check it is loopback** (`127.0.0.1`, `::1`, `localhost`) and refuse
    anything else - the query carries the process's launch token, the value the
    server exchanges for the browser session cookie, so it must never be handed
@@ -1439,8 +1439,8 @@ passes that through as the batch's own exit code).
   `effective_version()` in shell). A plain `install.bat` / `./install.sh` after a
   version bump therefore re-adds the bundle, so development changes actually
   reach the profile.
-- **Live links**: the web profile installs every bundle (`dsh-vn-master` â€” the
-  blank master, so a profile that lists it still gets no client half â€” plus
+- **Live links**: the web profile installs every bundle (`dsh-vn-master` — the
+  blank master, so a profile that lists it still gets no client half — plus
   `dsh-rightbar`, `dsh-rightbar-files`, `dsh-editor`, `dsh-gittree`,
   `dsh-image`, `dsh-audio`, `dsh-diagrams`, `dsh-pdf`, `dsh-terminal`, `dsh-modal`,
   `dsh-ui-state`, `dsh-themes`, `dsh-open-in-app`) as `pnpm link:` symlinks straight into this repo (detected by
@@ -1449,7 +1449,7 @@ passes that through as the batch's own exit code).
   `npx @deepseek-ai/dsh web` plus a hard browser refresh is all it takes; the
   installer prints that instead of re-adding.
 - **Fork re-sync**: `scripts/sync-vendored.ps1` is the installer's sibling for
-  the three forked client bundles (Â§4, Â§10). It is *not* run by the installers -
+  the three forked client bundles (§4, §10). It is *not* run by the installers -
   moving a fork forward is a reviewed change, not an install step. Its candidate
   roots cover the profile, the Windows npm cache (`%LOCALAPPDATA%`/`%APPDATA%`),
   `~/.npm/_npx`, and the POSIX global module directories.
@@ -1474,7 +1474,7 @@ passes that through as the batch's own exit code).
   the keyed tab seats with their framework props (`useTabInfo`, `sessionId`,
   `useSessions`) - both of which this pack now owns, so a change there is a
   merge into the fork rather than a break - the patched `launch()` of the
-  open-in-app client bundle (Â§10, the re-sync fails loudly when it moves), and, on
+  open-in-app client bundle (§10, the re-sync fails loudly when it moves), and, on
   the Node side, the route registration surface (`connection.fetch.register`,
   where a route must declare `requestBody` or its handler never runs) and the
   session-root lookup.
@@ -1490,18 +1490,18 @@ passes that through as the batch's own exit code).
 | Two Files panels / a stray dock after upgrading | the retired `dsh-files` (or `dsh-focus`) bundle is still in the profile; re-run the installer (its prune removes both) |
 | No "Editor" in the "+" / Start page | the client bundle did not activate: check the browser console for `[dsh-editor]`; a `sidebarRightTabs` service that never appears leaves activation pending |
 | Editor says "Editor unavailable (HTTP 400)" on the engine | the Node route is missing `requestBody: 'buffered'`, so Connection's bridge throws before the handler runs and the web server answers a bare 400 |
-| Clicking a file opens the read-only preview instead of the editor | the address was vetoed by `canOpen`: a preview-owned extension (html/image/pdf/â€¦), a path outside the session workspace, or an `absolute/â€¦` address. Markdown is NOT one of them - it opens in the editor |
+| Clicking a file opens the read-only preview instead of the editor | the address was vetoed by `canOpen`: a preview-owned extension (html/image/pdf/…), a path outside the session workspace, or an `absolute/…` address. Markdown is NOT one of them - it opens in the editor |
 | Save-as says the name is taken / the folder is missing | `409 EXISTS` (pick another name - the dialog stays open with what you typed) or `404 NO_FOLDER` (a subfolder path must already exist; nothing creates directories) |
 | The rendered Markdown page has no **Edit** button | the editor's shadow body is not rendering: confirm the boot HTML lists `dsh-editor/client.js` at alpha.7+, and that the shipped body still registers under `sidebar.right.tab.document` keyed `@deepseek-ai/dsh-client-ui-sidebar-documentpreview/markdown` (the key this pack's lower-priority entry shadows) |
 | The Markdown page is double-spaced, or its **Edit** pill looks monospaced | the preview's plain-text scrollport is leaking in (`[data-textpreview-body]` declares `white-space:pre` + a mono stack) - the pack's wrapper reset it from alpha.8 on; confirm the served `dsh-editor` bundle prints alpha.8+ and hard-refresh |
-| A Markdown tab still shows a "Markdown / Plain text" viewer menu | `dsh-themes` alpha.3 hides it (`body [data-document-preview="â€¦/markdown"] [data-document-viewer-menu]`); reinstall so that version is in the profile, then restart |
+| A Markdown tab still shows a "Markdown / Plain text" viewer menu | `dsh-themes` alpha.3 hides it (`body [data-document-preview="…/markdown"] [data-document-viewer-menu]`); reinstall so that version is in the profile, then restart |
 | Save-as shows no dialog, only a browser prompt | `dsh-modal` is not mounted, so the editor fell back to `window.prompt`; re-run the installer with `-Force` and restart to add the bundle |
-| The "Open Inâ€¦" File Explorer entry still does nothing | the forked row is not the one running: confirm the boot HTML lists `dsh-open-in-app/client.js` and not `@deepseek-ai/dsh-client-ui-open-in-app`, and that `dsh-open-in-app`'s layer still disables `ui-open-in-app` |
+| The "Open In…" File Explorer entry still does nothing | the forked row is not the one running: confirm the boot HTML lists `dsh-open-in-app/client.js` and not `@deepseek-ai/dsh-client-ui-open-in-app`, and that `dsh-open-in-app`'s layer still disables `ui-open-in-app` |
 | Editor tab says "Could not open the file" / `NO_WORKSPACE` | the session root could not be resolved (session not live and not persisted yet) or the path is outside the conversation folder; open the conversation once so its header is available |
 | Save answers "Changed on disk" | the file moved under you; use **Reload** (take the disk copy) or **Save anyway** (overwrite it) in the banner |
 | Code text is black-on-dark in the light theme | the editor did not follow the scheme: confirm the bundle is alpha.5+ (`dsh-editor` prints its version in the tab's file bar) and that ui-layout still writes `body[data-ds-dark-theme]` |
 | No Themes button in the header | `dsh-themes` is not mounted (a new package needs one install run: `install.bat` / `./install.sh`, or `-Force`), or the row did not land: check the console for `[dsh-themes]` |
-| No Page-zoom button in the header | the same row as the Themes button â€” all four controls are one bundle. Inside the native window it is the only way to zoom at all (the shell has no Ctrl+ / Ctrl- page zoom); confirm the served `dsh-themes` bundle prints alpha.15+ |
+| No Page-zoom button in the header | the same row as the Themes button — all four controls are one bundle. Inside the native window it is the only way to zoom at all (the shell has no Ctrl+ / Ctrl- page zoom); confirm the served `dsh-themes` bundle prints alpha.15+ |
 | The page is stuck at a zoom level in the native window | the level is remembered per origin in `localStorage['dsh-themes.page-zoom']`; the button walks it back (it is the leftmost of the four, and the ladder stops at 200% precisely so it cannot go off-screen), and clearing that key resets it to 100% |
 | The right bar cannot be dragged after zooming | the bug alpha.16 fixed: the frame's own pixel arithmetic placed the right seam from the SCALED rect it measures, so a level in force slid the seam off the column's edge (the LEFT bar was fine, its `left` being layout pixels). Confirm the served `dsh-themes` bundle prints alpha.16+ and that the browser supports CSS anchor positioning (Chrome/Edge 125+); the seam override is inert at 100%, so returning to the resting level also restores the old behaviour |
 | The Themes button is greyed out | the `theme` service never appeared, so `@deepseek-ai/dsh-client-ui-theme` (row `ui-theme`) is not in the boot graph; the tooltip says "The theme service is unavailable" |
@@ -1512,7 +1512,7 @@ passes that through as the batch's own exit code).
 | The History list is empty although the repository has commits | the folder lives inside a repository whose root is higher up, so commits that never touch this folder are deliberately hidden; check `git log` in that folder |
 | No Terminal button in the conversation header | `dsh-terminal` is not mounted (a new package needs one install run: `install.bat` / `./install.sh`, or `-Force`), or the bundle did not activate - check the console for `[dsh-terminal]` |
 | The dock says "No terminal on this host" | the harness installation's `node-pty` could not be resolved from this process (`process.argv[1]`, `$DSH_HOME/profiles`, or beside the package); the dock's notice carries the reason, and `GET /api/dsh-terminal/health` reports `available:false` with it. The rest of the pack is unaffected |
-| The dock does not open, or opens at the wrong place | the frame it measures is gone: the dock positions itself from `[data-shell-overlay]`'s parent and that frame's resolved `gridTemplateColumns`, so a harness line that stops using grid columns for the layout needs Â§11 updated |
+| The dock does not open, or opens at the wrong place | the frame it measures is gone: the dock positions itself from `[data-shell-overlay]`'s parent and that frame's resolved `gridTemplateColumns`, so a harness line that stops using grid columns for the layout needs §11 updated |
 | The terminal panel covers the conversation instead of pushing it up | the middle/right columns' inline `height: calc(100% - <dock>px)` was removed or overridden by something else writing their `style.height` |
 | Opening the dock moves the LEFT bar (its items slide up) | regression of alpha.1, where the room came from the frame's own height: the frame has ONE grid row shared with the left bar, so only the two columns the dock spans may be inset. The check `terminal never resizes the frame` pins this |
 | The terminal shows the wrong number of lines, or the newest output is out of view after a resize | the emulator was not re-fitted: a size change must recompute rows/cols from the new box, send `resize` to the PTY, and `scrollToBottom()`. Pinned by the check `terminal refits on resize and follows the end` |
