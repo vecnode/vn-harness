@@ -87,7 +87,15 @@ case "$target_arg" in
     ;;
 esac
 
-step() { printf '[vn-harness] %s\n' "$1"; }
+# Progress goes to STDERR, and that is load-bearing, not cosmetic: ensure_pnpm is
+# called as `pnpm_bin_dir=$(ensure_pnpm ...)`, so anything this writes to stdout is
+# captured INTO the path. It was, and the captured value was three lines - the
+# bootstrap message, npm's "added 1 package", and the path - which made
+# `PATH="$pnpm_bin_dir:$PATH"` garbage and made `dsh plugin add` fail with
+# "pnpm not found on PATH" on every macOS and Linux machine that had no system
+# pnpm. The Windows half never had the bug because Write-Host writes to the host
+# and a function returns its value separately.
+step() { printf '[vn-harness] %s\n' "$1" >&2; }
 fail() {
   printf 'vn-harness: %s\n' "$1" >&2
   exit 1
@@ -238,7 +246,9 @@ ensure_pnpm() {
   bin_dir="$prefix/node_modules/.bin"
   if [ ! -x "$bin_dir/pnpm" ]; then
     step "Bootstrapping local pnpm@$1 under ./tools (no admin needed)..."
-    npm install --prefix "$prefix" "pnpm@$1" --no-audit --no-fund || return 1
+    # npm's own chatter is stdout too, and this function's stdout IS its return
+    # value. Send it to stderr with the progress line above.
+    npm install --prefix "$prefix" "pnpm@$1" --no-audit --no-fund >&2 || return 1
     if [ ! -x "$bin_dir/pnpm" ]; then
       return 1
     fi

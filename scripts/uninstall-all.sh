@@ -78,7 +78,10 @@ case "$target_arg" in
     ;;
 esac
 
-step() { printf '[vn-harness] %s\n' "$1"; }
+# Progress goes to STDERR: ensure_pnpm is called as
+# `pnpm_bin_dir=$(ensure_pnpm ...)`, so anything on stdout is captured INTO the
+# path and turns PATH into garbage. See scripts/install-all.sh for the whole story.
+step() { printf '[vn-harness] %s\n' "$1" >&2; }
 fail() {
   printf 'vn-harness: %s\n' "$1" >&2
   exit 1
@@ -179,7 +182,7 @@ ensure_pnpm() {
   bin_dir="$prefix/node_modules/.bin"
   if [ ! -x "$bin_dir/pnpm" ]; then
     step "Bootstrapping local pnpm@$1 under ./tools (no admin needed)..."
-    npm install --prefix "$prefix" "pnpm@$1" --no-audit --no-fund || return 1
+    npm install --prefix "$prefix" "pnpm@$1" --no-audit --no-fund >&2 || return 1
     if [ ! -x "$bin_dir/pnpm" ]; then
       return 1
     fi

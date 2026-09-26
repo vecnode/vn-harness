@@ -79,7 +79,10 @@ usage() {
     'built shell, and archives it beside itself. dist/ is never committed.'
 }
 
-step() { printf '\033[36m[vn-harness] %s\033[0m\n' "$1"; }
+# Progress goes to STDERR, like the installer halves': a status line on stdout is
+# captured by any `$( )` that happens to wrap a function calling this, and that is
+# exactly how install-all.sh lost its pnpm path for every macOS/Linux user.
+step() { printf '\033[36m[vn-harness] %s\033[0m\n' "$1" >&2; }
 note() { printf '  %s\n' "$1"; }
 fail() {
   printf '\n[vn-harness] %s\n' "$1" >&2
