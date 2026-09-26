@@ -476,11 +476,14 @@ the details.
   fallback. Restart and hard-refresh; the version changed, so a plain install run
   (or `-Force`) re-adds the bundle.
 
-- **themes alpha.12 / alpha.13**: the Themes menu is the **shipped registry's own
-  list** now. `dsh-themes` registers its own palettes through
+- **themes alpha.12 / alpha.13 / alpha.19**: the Themes menu is the **shipped
+  registry's own list** now. `dsh-themes` registers its own palettes through
   `ctx.theme.register` - ui-theme's documented third-party surface - starting with
-  **Nord** (alpha.12) and adding **Monokai** (alpha.13) in the same 93-token alias
-  shape on the dark base. The header button wears one static appearance mark
+  **Nord** (alpha.12), adding **Monokai** (alpha.13) and then **Hacker** (alpha.19)
+  in the same 93-token alias shape on the dark base. Hacker is the phosphor
+  terminal - a near-black green-cast page, phosphor-green text, one amber and one
+  cyan accent - so the menu reads Light / Dark / Nord / Monokai / Hacker / System.
+  The header button wears one static appearance mark
   instead of the active preference's sun/moon, and the choice is in-process: the
   durable preference schema accepts `light` / `dark` / `system` only, so a reload
   returns to the durable built-in. Adding another theme is one entry in

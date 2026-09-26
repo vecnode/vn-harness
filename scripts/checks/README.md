@@ -45,7 +45,8 @@ the git routes need `git` on `PATH`, and the TikZ cases need a TeX engine.
   - `dsh-open-in-app` - the route split (file managers to the pack route,
     everything else to the shipped one);
   - `dsh-themes` - the header seats and their orders, the theme registry
-    snapshot, the Nord/Monokai extensions (their token maps and glyphs), the
+    snapshot, the Nord/Monokai/Hacker extensions (their token maps, their shared
+    token names and their glyphs), the
     Session-log download seat, the screenshot control, the **Markdown paper**
     (the light declarations it copies out of fake theme stylesheets, and the
     dark ones it must skip), the left-top-bar branding and the header ring; plus -

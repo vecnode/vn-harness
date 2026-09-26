@@ -636,8 +636,9 @@ Design points worth keeping:
   presenter writes the definition's alias tokens as inline `body` variables over
   the base palette `colorScheme` selects, and `getTheme().themes` publishes the
   registry. The control iterates that list and appends `system` last, so
-  `THEME_EXTENSIONS` (this package's **Nord** and, since alpha.13, **Monokai** —
-  the classic TextMate palette, registered after Nord in the same 93-token shape)
+  `THEME_EXTENSIONS` (this package's **Nord**, **Monokai** since alpha.13 — the
+  classic TextMate palette — and **Hacker** since alpha.19, the phosphor terminal,
+  all registered in that order in the same 93-token shape)
   is the only place a palette is declared — and a theme another plugin registers
   shows up too, named by its id with the generic mark. Registration is idempotent
   and retried on the post-boot microtask and on every `theme/change`, because

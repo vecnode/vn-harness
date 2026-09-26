@@ -722,6 +722,7 @@ const themesCopy = {
   'theme.system': 'System',
   'theme.nord': 'Nord',
   'theme.monokai': 'Monokai',
+  'theme.hacker': 'Hacker',
   'theme.current': 'Theme: {name}',
   'theme.unavailable': 'The theme service is unavailable',
   'download.title': 'Download session log',
@@ -762,19 +763,21 @@ check('themes adopts the written value', themesFacade.themeState.getSnapshot().p
 for (const listener of themeEvents) listener({ preference: 'system', active: { id: 'system', colorScheme: 'dark' }, revision: 9 })
 check('themes follows theme/change', themesFacade.themeState.getSnapshot().preference, 'system')
 
-// ------------------------------------- the theme extensions (Nord, Monokai)
+// ------------------------------------- the theme extensions (Nord, Monokai, Hacker)
 // alpha.12: this package REGISTERS its own palettes into the shipped registry
 // and the control's menu is built FROM that registry, so a theme this pack adds
 // becomes selectable by being registered - there is no second list to keep in
 // step. Nord rides the dark base palette and recolors the alias layer only;
-// Monokai (alpha.13) sits after it in THEME_EXTENSIONS, which is the order the
-// registration loop walks and therefore the order the menu draws.
+// Monokai (alpha.13) sits after it in THEME_EXTENSIONS, and Hacker (alpha.19)
+// after Monokai - that is the order the registration loop walks and therefore
+// the order the menu draws.
 const nord = themeRegistrations.find((theme) => theme.id === 'nord')
 const monokai = themeRegistrations.find((theme) => theme.id === 'monokai')
+const hacker = themeRegistrations.find((theme) => theme.id === 'hacker')
 check(
-  'the registered themes are nord then monokai',
+  'the registered themes are nord then monokai then hacker',
   themeRegistrations.map((theme) => theme.id).join(','),
-  'nord,monokai',
+  'nord,monokai,hacker',
 )
 check('nord rides the dark base palette', nord && nord.colorScheme, 'dark')
 check(
@@ -811,9 +814,35 @@ check(
 check('monokai paints the classic comment grey', monokai && monokai.tokens['--shiki-token-comment'], '#75715e')
 check('monokai brings its own copy', themeLocales.themes.en['theme.monokai'], 'Monokai')
 check('monokai copy is in both dictionaries', themeLocales.themes.zh['theme.monokai'], 'Monokai')
+check('hacker rides the dark base palette', hacker && hacker.colorScheme, 'dark')
+check(
+  'hacker overrides token variables only',
+  hacker &&
+    Object.keys(hacker.tokens).every(
+      (name) => name.startsWith('--dsw-alias-') || name.startsWith('--dsw-specific-') || name.startsWith('--shiki-token-'),
+    ),
+  true,
+)
+check('hacker paints the near-black green-cast page', hacker && hacker.tokens['--dsw-alias-bg-base'], '#0a0e0a')
+check('hacker paints the phosphor body', hacker && hacker.tokens['--dsw-alias-label-primary'], '#d8ffe0')
+check('hacker paints the signal-green accent', hacker && hacker.tokens['--dsw-alias-brand-primary'], '#00ff41')
+check(
+  'hacker keeps the sidebar on the page colour',
+  hacker && hacker.tokens['--dsw-specific-sidebar-fill'],
+  '#0a0e0a',
+)
+check('hacker paints the dim green comments', hacker && hacker.tokens['--shiki-token-comment'], '#3f6b4a')
+check('hacker brings its own copy', themeLocales.themes.en['theme.hacker'], 'Hacker')
+check('hacker copy is in both dictionaries', themeLocales.themes.zh['theme.hacker'], 'Hacker')
+check(
+  'hacker is its own palette, not a Monokai copy',
+  hacker && monokai && hacker.tokens['--dsw-alias-bg-base'] !== monokai.tokens['--dsw-alias-bg-base'],
+  true,
+)
 check(
   'the registered themes cover the same token names',
-  JSON.stringify(Object.keys(monokai.tokens).sort()) === JSON.stringify(Object.keys(nord.tokens).sort()),
+  JSON.stringify(Object.keys(monokai.tokens).sort()) === JSON.stringify(Object.keys(nord.tokens).sort()) &&
+    JSON.stringify(Object.keys(hacker.tokens).sort()) === JSON.stringify(Object.keys(nord.tokens).sort()),
   true,
 )
 // The button wears ONE static appearance mark: it used to paint the active
@@ -827,6 +856,10 @@ check('the control reads the registered theme', themesFacade.themeState.getSnaps
 check(
   'the control reads the second registered theme',
   themesFacade.themeState.getSnapshot().themes.some((theme) => theme.id === 'monokai'),
+)
+check(
+  'the control reads the third registered theme',
+  themesFacade.themeState.getSnapshot().themes.some((theme) => theme.id === 'hacker'),
 )
 check('themes button wears the static mark', nordMarkup.includes('M8 2.4A5.6 5.6 0 0 1 8 13.6Z'))
 // The dictionaries really carry the download copy (the renders below use the
@@ -3709,9 +3742,10 @@ if (coreThemeBundle === null) {
   await new Promise((resolve) => setTimeout(resolve, 20))
 
   check(
-    'the pack registered both extension themes into the real registry',
-    realThemeService.getTheme().themes.filter((theme) => theme.id === 'nord' || theme.id === 'monokai').length,
-    2,
+    'the pack registered all three extension themes into the real registry',
+    realThemeService.getTheme().themes.filter((theme) => theme.id === 'nord' || theme.id === 'monokai' || theme.id === 'hacker')
+      .length,
+    3,
   )
   const realSeat = sharedSeats['conversation.session.header.utilities#dsh-themes']
   check('the Themes seat took the header', realSeat !== undefined, true)

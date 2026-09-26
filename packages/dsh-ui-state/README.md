@@ -36,7 +36,7 @@ A settings section is one document both hosts read. That is the whole idea.
 | Field | Default | Owner |
 |---|---|---|
 | `pageZoom` | `100` | [`dsh-themes`](../dsh-themes) — the header's Page-zoom control |
-| `theme` | `''` | [`dsh-themes`](../dsh-themes) — an **extension** theme id (Nord / Monokai) |
+| `theme` | `''` | [`dsh-themes`](../dsh-themes) — an **extension** theme id (Nord / Monokai / Hacker) |
 | `dockHeight` | `280` | [`dsh-terminal`](../dsh-terminal) — the bottom dock |
 | `sidebarWidth` | `-1` | this package — the left column |
 | `rightbarWidth` | `-1` | this package — the right bar |
@@ -71,9 +71,9 @@ Two conventions matter when reading it by hand:
 
 Light/dark/system and the content font size are therefore **not** this package's
 business — they already persist. What did not persist, and does now, is an
-extension theme such as Nord or Monokai: ui-theme's durable schema accepts the
-built-in three only, so those used to be an in-process choice that a reload threw
-away.
+extension theme such as Nord, Monokai or Hacker: ui-theme's durable schema accepts
+the built-in three only, so those used to be an in-process choice that a reload
+threw away.
 
 ## The `uiState` service
 

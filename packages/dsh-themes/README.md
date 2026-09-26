@@ -1,4 +1,4 @@
-# dsh-themes (alpha.18)
+# dsh-themes (alpha.19)
 
 **The pack's conversation-header package.** It owns four controls on that header
 and the appearance overrides that dress it.
@@ -8,9 +8,10 @@ the size and dress of the header's other icon buttons, sitting immediately **lef
 of the shipped "Open In…" control**. Pressing it opens a menu with the three
 appearances the product already offers — **Light**, **Dark** and **System** — plus
 every theme **registered into the shipped theme registry** (alpha.12), which is
-where this package's own **Nord** and **Monokai** (alpha.13) come from. The button
+where this package's own **Nord**, **Monokai** (alpha.13) and **Hacker**
+(alpha.19) come from. The button
 wears one static appearance mark rather than the active preference's sun/moon. See
-[Registered themes](#registered-themes-nord-alpha12-and-monokai-alpha13).
+[Registered themes](#registered-themes-nord-alpha12-monokai-alpha13-and-hacker-alpha19).
 
 **2. The Session-log download seat** (alpha.9) — the shipped
 `@deepseek-ai/dsh-session-log-export` browser half put a **three-dot "more
@@ -70,13 +71,13 @@ It is a thin control, not a second theme system:
   control: there is one preference, one persistence path for it, and one palette.
   The one choice that schema cannot hold — a **registered** theme — is remembered
   in this pack's own section instead (alpha.17/18); see
-  [Registered themes](#registered-themes-nord-alpha12-and-monokai-alpha13).
+  [Registered themes](#registered-themes-nord-alpha12-monokai-alpha13-and-hacker-alpha19).
 
 It can also **register** themes through that same service (`ctx.theme.register`,
 ui-theme's documented third-party surface) — see
-[Registered themes](#registered-themes-nord-alpha12-and-monokai-alpha13).
+[Registered themes](#registered-themes-nord-alpha12-monokai-alpha13-and-hacker-alpha19).
 
-## Registered themes: Nord (alpha.12) and Monokai (alpha.13)
+## Registered themes: Nord (alpha.12), Monokai (alpha.13) and Hacker (alpha.19)
 
 The **registry is the extension point**, and this package uses it.
 `@deepseek-ai/dsh-client-ui-theme` exposes `register({ id, colorScheme, tokens })`;
@@ -141,6 +142,37 @@ its dimmed fill is the pink darkened 28% (`#b31b52`), the cyan's hover is the cy
 lifted a fifth toward white (`#85e1f2`), and the two text tiers between the body
 and the comment grey are the body darkened 12% (`#dadad5`) and the comment grey
 lifted halfway back to the body (`#b6b4a8`).
+
+### Hacker (alpha.19)
+
+**Hacker** is the phosphor terminal — the palette a monochrome CRT and a hacker
+film are both drawn with — registered on the **dark** base palette with the same
+93 token overrides Nord and Monokai carry (73 alias, 11 `--dsw-specific-*` and
+the nine shiki syntax tokens). It sits after Monokai in `THEME_EXTENSIONS`, so
+the menu reads Light / Dark / Nord / Monokai / Hacker / System:
+
+| Hacker | Values | What they paint here |
+|---|---|---|
+| Surfaces | `#0a0e0a` `#101710` `#162116` `#1c2c1c` | the page and the sidebar alike, the raised step, menus, bubbles and code blocks, then the selection and the toolbar one step above |
+| Text | `#d8ffe0` `#bee0c5` `#8bb595` `#3f6b4a` | the phosphor body, its 12% darker step, the quiet tier halfway back to the body, and the dim green as the quietest tier |
+| Signal green | `#00ff41` `#33ff67` `#00b82f` | brand, primary button, focus rings, switches, success, and the keyword and function syntax tokens (hover and dimmed derived from the green) |
+| Amber | `#ffb000` `#ffd166` | the warn state and its label, and the string tokens |
+| Cyan | `#00d9ff` `#33e1ff` `#7dd3fc` | links, the info/business state, the ghost-active border, constants, parameters |
+| Error red | `#ff4d4d` | the error state — Monokai's pink would be off-palette here |
+
+`#0a0e0a` is the page for the conversation **and** the sidebar, `#162116` is the
+step a menu, a bubble and a code fence sit on, and `#1c2c1c` is the selection and
+the inline chip, so a menu, a fence and a selected row are all steps of one
+near-black with a green cast. The syntax tokens are one terminal's worth of
+colour — keywords and functions green, strings amber, parameters and constants
+cyan, comments the dim green, punctuation the phosphor body.
+
+Steps the palette does not define are **derived from its own colours** by the
+same arithmetic the Monokai section documents rather than invented: the signal
+green lifts a fifth toward white for its hover (`#33ff67`) and darkens 28% when
+dimmed (`#00b82f`), the cyan lifts the same fifth (`#33e1ff`), and the two text
+tiers between the body and the dim green are the body darkened 12% (`#bee0c5`)
+and the dim green lifted halfway back to the body (`#8bb595`).
 
 **Why the alias layer and not the `--dsw-static-*` ramp.** A static is shared by
 roles that are not the same role — in the dark palette `neutral-bluish-50` is both
@@ -717,12 +749,12 @@ lib/client.js      Browser half: the Page-zoom button + menu (one inline `zoom` 
                    <html>, Chrome's ladder cut at 50/200, remembered in the
                    `vn-harness` section with the `localStorage` copy underneath),
                    the Screenshot button (capture + save), the Themes
-                   button + menu, the registered themes (THEME_EXTENSIONS: Nord's
-                   and Monokai's token maps and menu glyphs, registered through
-                   ctx.theme), the Session-log download seat (same slot, shipped id
-                   at a lower priority) with its export dialog, the theme snapshot
-                   reader, and the appearance overrides (the Markdown paper, the
-                   Markdown chrome, the left column's top bar, the header ring)
+                   button + menu, the registered themes (THEME_EXTENSIONS: Nord's,
+                   Monokai's and Hacker's token maps and menu glyphs, registered
+                   through ctx.theme), the Session-log download seat (same slot,
+                   shipped id at a lower priority) with its export dialog, the theme
+                   snapshot reader, and the appearance overrides (the Markdown paper,
+                   the Markdown chrome, the left column's top bar, the header ring)
 ```
 
 ## Behaviour worth keeping
@@ -746,8 +778,9 @@ lib/client.js      Browser half: the Page-zoom button + menu (one inline `zoom` 
   its id, with the generic appearance mark, since this package has no words or
   glyph for it.
 - **Extension themes do not touch ui-theme's durable preference.** `setTheme` only
-  writes `light` / `dark` / `system` through the settings scope, so selecting Nord
-  or Monokai leaves the stored preference alone; the id it wants in force lives in
+  writes `light` / `dark` / `system` through the settings scope, so selecting Nord,
+  Monokai or Hacker leaves the stored preference alone; the id it wants in force
+  lives in
   the pack's own `vn-harness` section (alpha.17), is put back on the next load,
   and is kept applied against ui-theme's own re-adopt (alpha.18), and picking a
   built-in clears it.

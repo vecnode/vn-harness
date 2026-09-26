@@ -11,7 +11,8 @@
  *    this one at -20). Pressing it opens a menu holding the appearances the
  *    product already offers - Light, Dark, System, exactly the choice Settings >
  *    General > Appearance presents - plus every theme REGISTERED into the shipped
- *    registry (this pack's own **Nord** and **Monokai**, alpha.12/alpha.13). The
+ *    registry (this pack's own **Nord**, **Monokai** and **Hacker**,
+ *    alpha.12/alpha.13/alpha.19). The
  *    button wears ONE static "appearance" mark (alpha.12) rather than the active
  *    preference's sun/moon: a
  *    registered palette has no shipped glyph to wear, and the menu - and the
@@ -152,7 +153,7 @@ window.__ModuleLoader__.load({
     /** The slot id of the Themes occupant in the header utilities list. */
     const THEMES_ID = 'dsh-themes'
     /** Version marker, logged at activation so a fresh bundle is easy to verify. */
-    const PLUGIN_VERSION = '0.1.0-alpha.18'
+    const PLUGIN_VERSION = '0.1.0-alpha.19'
     /** The client service (@deepseek-ai/dsh-client-ui-theme) that owns the preference. */
     const THEME_SERVICE = 'theme'
     /**
@@ -337,6 +338,7 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       'theme.system': '跟随系统',
       'theme.nord': 'Nord',
       'theme.monokai': 'Monokai',
+      'theme.hacker': 'Hacker',
       'theme.current': '主题：{name}',
       'theme.menu': '选择应用主题',
       'theme.unavailable': '主题服务不可用',
@@ -370,6 +372,7 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
       'theme.system': 'System',
       'theme.nord': 'Nord',
       'theme.monokai': 'Monokai',
+      'theme.hacker': 'Hacker',
       'theme.current': 'Theme: {name}',
       'theme.menu': 'Choose the app theme',
       'theme.unavailable': 'The theme service is unavailable',
@@ -532,6 +535,32 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
         h('path', {
           d: 'M9.5 2.5c1.5 0 2 1 2 2.2 0 1.3.2 1.9 1.5 2.3-1.3.4-1.5 1-1.5 2.3 0 1.2-.5 2.2-2 2.2',
         }),
+      )
+    }
+
+    /**
+     * Hacker's own glyph in the menu: the prompt - a chevron and a cursor bar,
+     * `>_`, the mark a terminal is drawn with and the palette is named for. Same
+     * 16px box and the same 1.2px weight as every other glyph in that menu.
+     */
+    function IconTerminalOutline16(props) {
+      const size = props && typeof props.size === 'number' ? props.size : 16
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': 'true',
+          focusable: 'false',
+        },
+        h('path', { d: 'M3.2 4.6 6.2 8l-3 3.4' }),
+        h('path', { d: 'M8.4 11.4h4.4' }),
       )
     }
 
@@ -820,6 +849,159 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
     })
 
     /**
+     * HACKER (alpha.19) on the DARK base palette: the phosphor terminal - a
+     * near-black page with a green cast, signal-green text and one amber and one
+     * cyan accent, the palette a monochrome CRT and a hacker film are both drawn
+     * with.
+     *
+     * Same rules as Nord and Monokai above: every name is an alias the app
+     * already asks for, so the palette reaches the bars, panes, menus, buttons,
+     * code blocks, scrollbars, tooltips and the four state colours, and the
+     * aliases NOT named here keep their shipped dark value (the scheme-neutral
+     * scrims, elevation strokes and shadow scale). The 93 names are Monokai's
+     * own list, unchanged - the tracked check pins that three registered themes
+     * cover the SAME token names, so one theme cannot quietly become a subset.
+     *
+     * The four surfaces are one near-black and its green-cast steps: the page and
+     * the sidebar share `#0a0e0a`, the raised step is `#101710`, the overlay (a
+     * menu, a bubble, a code block) is `#162116` and `#1c2c1c` is the highest -
+     * the selection, the toolbar and a ghost-active fill. The text ladder is the
+     * phosphor white `#d8ffe0`, its 12% darker step, the quiet tier halfway back
+     * to the body, and the dimmest is the scrolled-past green `#3f6b4a`.
+     *
+     * Where the palette has no second step for a hover or a pressed fill, the
+     * step is DERIVED from the palette's own colour rather than invented, by the
+     * same arithmetic Monokai documents: the signal green lifts a fifth toward
+     * white for its hover (`#33ff67`) and darkens 28% when dimmed (`#00b82f`),
+     * the cyan lifts the same fifth (`#33e1ff`), the two text tiers between the
+     * body and the dim green are the body darkened 12% (`#bee0c5`) and the dim
+     * green lifted halfway back to the body (`#8bb595`).
+     */
+    const HACKER_TOKENS = Object.freeze({
+      // The surfaces. The page is a near-black with a green cast, and the ladder
+      // above it is the same black raised - so a menu, a bubble and a selected
+      // row read as steps of one dark, the way a terminal reads.
+      '--dsw-alias-bg-base': '#0a0e0a',
+      '--dsw-specific-sidebar-fill': '#0a0e0a',
+      '--dsw-alias-bg-layer-1': '#101710',
+      '--dsw-alias-bg-layer-2': '#101710',
+      '--dsw-alias-bg-layer-3': '#162116',
+      '--dsw-alias-bg-overlay': '#162116',
+      '--dsw-alias-bg-module-platform': '#101710',
+      '--dsw-alias-bg-multi-select': '#162116',
+      '--dsw-alias-bg-skeleton': '#d8ffe014',
+      '--dsw-specific-menu': '#162116',
+      '--dsw-specific-selector': '#162116',
+      '--dsw-specific-bubble': '#101710',
+      '--dsw-specific-bubble-highlight': '#162116',
+      '--dsw-specific-input-major': '#101710',
+      '--dsw-specific-login-input': '#0a0e0a',
+      '--dsw-specific-sidebar-nav-item-hover': '#101710',
+      '--dsw-specific-sidebar-nav-item-active': '#162116',
+      '--dsw-specific-sidebar-nav-item-active-accent': '#1c2c1c',
+      '--dsw-specific-tip': '#101710',
+      '--dsw-alias-tooltip-bg': '#162116',
+      '--dsw-alias-toast-bg': '#162116',
+      // The text ladder: the phosphor white `#d8ffe0` is the body, the two
+      // quieter tiers its 12% darker step and the dim green lifted halfway back
+      // to it, and the quietest is the scrolled-past green itself.
+      '--dsw-alias-label-primary': '#d8ffe0',
+      '--dsw-alias-label-primary-bluish': '#d8ffe0',
+      '--dsw-alias-label-primary-dimmed': '#bee0c5',
+      '--dsw-alias-label-primary-inverted': '#0a0e0a',
+      '--dsw-alias-label-primary-foreground': '#0a0e0a',
+      '--dsw-alias-label-secondary': '#bee0c5',
+      '--dsw-alias-label-tertiary': '#8bb595',
+      '--dsw-alias-label-caption': '#8bb595',
+      '--dsw-alias-label-dimmed': '#3f6b4a',
+      // The accent. The signal green is the brand (switches, focus rings, the
+      // primary button) and the near-black page keeps the fill legible; links
+      // take the cyan, which reads better than green for body copy.
+      '--dsw-alias-brand-primary': '#00ff41',
+      '--dsw-alias-brand-primary-invert': '#0a0e0a',
+      // The right bar's active-tab caret and the dock hint accent read this one,
+      // not `brand-primary` (ui-sidebar-right's own generated token name), so
+      // Hacker has to name it too or a DeepSeek blue would mark the active tab.
+      '--dsw-alias-brand-primary-new-colorprimary-new-color': '#00ff41',
+      '--dsw-alias-brand-text': '#00ff41',
+      '--dsw-alias-link': '#00d9ff',
+      '--dsw-alias-button-primary-fill': '#00ff41',
+      '--dsw-alias-button-primary-hover': '#33ff67',
+      '--dsw-alias-button-primary-dimmed': '#00b82f',
+      '--dsw-alias-button-info-fill': '#00d9ff',
+      '--dsw-alias-button-info-hover': '#33e1ff',
+      '--dsw-alias-button-contrast-fill': '#d8ffe0',
+      '--dsw-alias-button-elevated-fill': '#1c2c1c',
+      // The floating tool-bar chip (the code block's own toolbar) is a
+      // translucent grey by default: the same weight, tinted with the selection.
+      '--dsw-alias-button-tool-bar-fill': '#1c2c1c80',
+      '--dsw-alias-button-tool-bar-hover': '#1c2c1c99',
+      '--dsw-alias-button-floating-fill': '#162116',
+      '--dsw-alias-button-floating-hover': '#1c2c1c',
+      '--dsw-alias-button-ghost-active-border': '#00d9ff',
+      '--dsw-alias-button-ghost-active-fill': '#1c2c1c',
+      '--dsw-alias-button-ghost-active-hover': '#162116',
+      // The interaction washes and the card borders: the shipped palette uses
+      // white alphas on dark, so these are the same weights tinted with the
+      // phosphor body instead.
+      '--dsw-alias-interactive-bg-hover': '#d8ffe01a',
+      '--dsw-alias-interactive-bg-hover-solid': '#1c2c1c',
+      '--dsw-alias-interactive-bg-hover-accent': '#00ff4140',
+      '--dsw-alias-interactive-bg-hover-danger': '#ff4d4d2e',
+      '--dsw-alias-interactive-bg-active': '#d8ffe026',
+      '--dsw-alias-border-inverted': '#d8ffe00f',
+      '--dsw-alias-border-inverted2': '#d8ffe014',
+      '--dsw-alias-border-l1': '#d8ffe00f',
+      '--dsw-alias-border-l2': '#d8ffe021',
+      '--dsw-alias-border-l2-darkmode-thin': '#d8ffe00f',
+      '--dsw-alias-border-l3': '#d8ffe02e',
+      '--dsw-alias-border-l4': '#d8ffe038',
+      // The four states: green is success (it is the signal), amber the warning
+      // a terminal paints a caution in, cyan the business/info step, and a plain
+      // red reads as the failure - Monokai's pink would be off-palette here.
+      '--dsw-alias-state-error-primary': '#ff4d4d',
+      '--dsw-alias-state-error-secondary': '#ff4d4d',
+      '--dsw-alias-state-success-primary': '#00ff41',
+      '--dsw-alias-state-success-secondary': '#00ff41',
+      '--dsw-alias-state-success-tertiary': '#00ff412e',
+      '--dsw-alias-state-warn-primary': '#ffb000',
+      '--dsw-alias-state-warn-secondary': '#ffd166',
+      '--dsw-alias-state-warn-label': '#ffb000',
+      '--dsw-alias-state-warn-tertiary': '#ffb0002e',
+      '--dsw-alias-state-business-primary': '#00d9ff',
+      '--dsw-alias-state-business-tertiary': '#7dd3fc',
+      // Code: a block sits one step ABOVE the page, its banner and the inline
+      // chip one more, so a fence is visible without a border.
+      '--dsw-alias-markdown-code-block': '#162116',
+      '--dsw-alias-markdown-code-block-banner': '#1c2c1c',
+      '--dsw-alias-markdown-code-segment-selected': '#1c2c1c',
+      '--dsw-alias-markdown-code-segment-unselected': '#162116',
+      '--dsw-alias-markdown-inline-code': '#1c2c1c',
+      '--dsw-alias-markdown-placeholder': '#162116',
+      '--dsw-alias-markdown-tag': '#1c2c1c',
+      '--dsw-alias-markdown-citation': '#162116',
+      // Syntax highlighting: one phosphor terminal's worth of colour - keywords
+      // and functions green (the signal, the lighter step), strings and
+      // parameters amber/cyan, constants cyan, comments the dim green, and
+      // punctuation the phosphor body.
+      '--shiki-token-keyword': '#00ff41',
+      '--shiki-token-constant': '#00d9ff',
+      '--shiki-token-string': '#ffb000',
+      '--shiki-token-string-expression': '#ffb000',
+      '--shiki-token-comment': '#3f6b4a',
+      '--shiki-token-parameter': '#7dd3fc',
+      '--shiki-token-function': '#5cff85',
+      '--shiki-token-punctuation': '#d8ffe0',
+      '--shiki-token-link': '#00d9ff',
+      // Scrollbars: the shipped pair is bound to the l1/l2 surface tokens, so
+      // the thumb is a Hacker surface step and its hover the signal green.
+      '--dsw-alias-scrollbar-bg-l1': '#162116',
+      '--dsw-alias-scrollbar-bg-l2': '#1c2c1c',
+      '--dsw-alias-scrollbar-hover-l1': '#1c2c1c',
+      '--dsw-alias-scrollbar-hover-l2': '#00ff41',
+    })
+
+    /**
      * The themes this package registers, in menu order. Adding one is one entry
      * here plus its copy (`theme.<id>`, in both dictionaries); the registration
      * below is what makes it selectable, and the menu picks it up from the
@@ -839,6 +1021,13 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
         colorScheme: 'dark',
         tokens: MONOKAI_TOKENS,
         Icon: IconBracesOutline16,
+      }),
+      Object.freeze({
+        id: 'hacker',
+        label: 'theme.hacker',
+        colorScheme: 'dark',
+        tokens: HACKER_TOKENS,
+        Icon: IconTerminalOutline16,
       }),
     ])
 
@@ -1435,7 +1624,8 @@ html[data-dsh-screenshot] [role=tooltip]{visibility:hidden}
      *
      * The shipped three keep their own words and icons; an extension theme
      * carries its own (Nord: `theme.nord` and the snowflake; Monokai:
-     * `theme.monokai` and the braces); and a theme some OTHER plugin registered -
+     * `theme.monokai` and the braces; Hacker: `theme.hacker` and the prompt);
+     * and a theme some OTHER plugin registered -
      * a valid case, the registry is shared - is named by its id and wears the
      * generic appearance mark rather than a glyph this package would be
      * inventing for it.
